@@ -20,7 +20,7 @@ export interface UserDashboardStats {
   activeLinks: number;
   expiredLinks: number;
   totalClicks: number;
-  recentLinks: SinkLink[];
+  links: SinkLink[];
 }
 
 export const CustomId = {
