@@ -59,21 +59,35 @@ export async function fetchUserDashboardStats(
     totalClicks += link.clicks ?? 0;
   }
 
-  // Fallback calculation if count endpoints were unavailable but search returned links
-  if (!totalCountRes.success && userLinks.length > 0) {
-    activeLinks = 0;
-    expiredLinks = 0;
+  const countsUnavailable =
+    !totalCountRes.success ||
+    !activeCountRes.success ||
+    !expiredCountRes.success;
+
+  // Fallback calculation if any count endpoint was unavailable
+  if (countsUnavailable && userLinks.length > 0) {
+    let localActive = 0;
+    let localExpired = 0;
     for (const link of userLinks) {
       if (link.expiration) {
         const expTime = new Date(link.expiration).getTime();
         if (!isNaN(expTime) && expTime <= now) {
-          expiredLinks++;
+          localExpired++;
           continue;
         }
       }
-      activeLinks++;
+      localActive++;
     }
-    totalLinks = userLinks.length;
+
+    if (!totalCountRes.success) {
+      totalLinks = userLinks.length;
+    }
+    if (!activeCountRes.success) {
+      activeLinks = localActive;
+    }
+    if (!expiredCountRes.success) {
+      expiredLinks = localExpired;
+    }
   }
 
   return {
@@ -871,18 +885,27 @@ async function handleAdminCommand(
     const page = interaction.options.getInteger("page") || 1;
     const cleanTag = inputTag ? inputTag.replace(/^#/, "").trim() : undefined;
 
-    const res = query
-      ? await sinkClient.searchLinks({
-          q: query,
-          tag: cleanTag || undefined,
-          status: "all",
-          limit: 1000,
-        })
-      : await sinkClient.listLinks(
-          cleanTag ? { tag: cleanTag, status: "all", limit: 1000 } : undefined,
-          1,
-          1000,
-        );
+    const [countRes, res] = await Promise.all([
+      sinkClient.countLinks({
+        q: query,
+        tag: cleanTag || undefined,
+        status: "all",
+      }),
+      query
+        ? sinkClient.searchLinks({
+            q: query,
+            tag: cleanTag || undefined,
+            status: "all",
+            limit: 1000,
+          })
+        : sinkClient.listLinks(
+            cleanTag
+              ? { tag: cleanTag, status: "all", limit: 1000 }
+              : undefined,
+            1,
+            1000,
+          ),
+    ]);
 
     if (!res.success) {
       const errEmbed = ui.createErrorMessage(
@@ -944,8 +967,14 @@ async function handleAdminCommand(
       return `**${startIndex + idx + 1}.** [/${l.slug}](${full})${titlePart} ${clickPart}\n   ↳ [🌐 원본 열기 ↗](${l.url}) • \`${truncated}\``;
     });
 
+    const totalCount = countRes.success ? countRes.count : links.length;
+    const isCapped = totalCount > links.length;
+    const totalCountLabel = isCapped
+      ? `${totalCount.toLocaleString()}개 중 상위 ${links.length.toLocaleString()}개`
+      : `${links.length.toLocaleString()}개`;
+
     const listEmbed = ui.createSuccessMessage(
-      `전체 링크 목록 (총 ${links.length}개 / 페이지 ${currentPage}/${totalPages})`,
+      `전체 링크 목록 (총 ${totalCountLabel} / 페이지 ${currentPage}/${totalPages})`,
       lines.join("\n\n"),
     );
     await interaction.editReply({ embeds: [listEmbed] });
