@@ -1,4 +1,4 @@
-import { describe, expect, it, mock, spyOn } from "bun:test";
+import { describe, expect, it, mock } from "bun:test";
 import { sinkClient } from "@/services/sinkClient";
 import { fetchUserDashboardStats } from "@/commands/link";
 import { getUserHash } from "@/services/slugManager";
@@ -6,9 +6,9 @@ import { getUserHash } from "@/services/slugManager";
 describe("SinkClient New API Tests", () => {
   it("should query a link using /api/link/query", async () => {
     const originalFetch = globalThis.fetch;
+    let requestedUrl = "";
     globalThis.fetch = mock(async (url: RequestInfo | URL) => {
-      const urlStr = String(url);
-      expect(urlStr).toContain("/api/link/query?slug=my-test-slug");
+      requestedUrl = String(url);
       return new Response(
         JSON.stringify({
           data: {
@@ -23,6 +23,7 @@ describe("SinkClient New API Tests", () => {
 
     try {
       const res = await sinkClient.queryLink({ slug: "my-test-slug" });
+      expect(requestedUrl).toContain("/api/link/query?slug=my-test-slug");
       expect(res.success).toBe(true);
       expect(res.link?.slug).toBe("my-test-slug");
       expect(res.link?.url).toBe("https://example.com");
@@ -34,11 +35,9 @@ describe("SinkClient New API Tests", () => {
 
   it("should search links using /api/link/search", async () => {
     const originalFetch = globalThis.fetch;
+    let requestedUrl = "";
     globalThis.fetch = mock(async (url: RequestInfo | URL) => {
-      const urlStr = String(url);
-      expect(urlStr).toContain("/api/link/search");
-      expect(urlStr).toContain("q=testUser");
-      expect(urlStr).toContain("status=all");
+      requestedUrl = String(url);
       return new Response(
         JSON.stringify({
           list: [
@@ -57,6 +56,9 @@ describe("SinkClient New API Tests", () => {
         status: "all",
         limit: 100,
       });
+      expect(requestedUrl).toContain("/api/link/search");
+      expect(requestedUrl).toContain("q=testUser");
+      expect(requestedUrl).toContain("status=all");
       expect(res.success).toBe(true);
       expect(res.list.length).toBe(2);
       expect(res.total).toBe(2);
@@ -68,10 +70,9 @@ describe("SinkClient New API Tests", () => {
 
   it("should count links using /api/link/count", async () => {
     const originalFetch = globalThis.fetch;
+    let requestedUrl = "";
     globalThis.fetch = mock(async (url: RequestInfo | URL) => {
-      const urlStr = String(url);
-      expect(urlStr).toContain("/api/link/count");
-      expect(urlStr).toContain("status=active");
+      requestedUrl = String(url);
       return new Response(
         JSON.stringify({
           count: 15,
@@ -85,6 +86,8 @@ describe("SinkClient New API Tests", () => {
         q: "testUser",
         status: "active",
       });
+      expect(requestedUrl).toContain("/api/link/count");
+      expect(requestedUrl).toContain("status=active");
       expect(res.success).toBe(true);
       expect(res.count).toBe(15);
     } finally {
@@ -132,11 +135,54 @@ describe("SinkClient New API Tests", () => {
     }
   });
 
+  it("should find exact match in search fallback when other search results exist", async () => {
+    const originalFetch = globalThis.fetch;
+    let searchUrl = "";
+
+    globalThis.fetch = mock(async (url: RequestInfo | URL) => {
+      const urlStr = String(url);
+      if (urlStr.includes("/api/link/my-target")) {
+        return new Response(JSON.stringify({ error: "Not Found" }), {
+          status: 404,
+        });
+      }
+      if (urlStr.includes("/api/link/query?slug=my-target")) {
+        return new Response(JSON.stringify({ error: "Not Found" }), {
+          status: 404,
+        });
+      }
+      if (urlStr.includes("/api/link/search")) {
+        searchUrl = urlStr;
+        return new Response(
+          JSON.stringify({
+            list: [
+              { slug: "my-target-other", url: "https://other.com" },
+              { slug: "my-target", url: "https://correct.com" },
+            ],
+            total: 2,
+          }),
+          { status: 200 },
+        );
+      }
+      return new Response("{}", { status: 404 });
+    }) as unknown as typeof fetch;
+
+    try {
+      const res = await sinkClient.getLink("my-target");
+      expect(searchUrl).toContain("limit=10");
+      expect(res.success).toBe(true);
+      expect(res.link?.slug).toBe("my-target");
+      expect(res.link?.url).toBe("https://correct.com");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it("should cap listAllLinks pagination with maxPages", async () => {
     const originalFetch = globalThis.fetch;
     let pageRequests = 0;
 
-    globalThis.fetch = mock(async (url: RequestInfo | URL) => {
+    globalThis.fetch = mock(async () => {
       pageRequests++;
       return new Response(
         JSON.stringify({
@@ -213,6 +259,54 @@ describe("Dashboard Stats Optimization Tests", () => {
       expect(stats.links.every((l) => l.slug.endsWith(`-${userHash}`))).toBe(
         true,
       );
+    } finally {
+      sinkClient.countLinks = originalCount;
+      sinkClient.searchLinks = originalSearch;
+    }
+  });
+
+  it("should handle partial count endpoint failures with safe local fallback", async () => {
+    const userId = "481920391829381920";
+    const userHash = getUserHash(userId);
+
+    const originalCount = sinkClient.countLinks;
+    const originalSearch = sinkClient.searchLinks;
+
+    // totalCount succeeds, but active and expired fail
+    sinkClient.countLinks = mock(async (params) => {
+      if (params.status === "all")
+        return { success: true, count: 2, status: 200 };
+      return { success: false, count: 0, status: 500, error: "Service Error" };
+    });
+
+    sinkClient.searchLinks = mock(async () => {
+      return {
+        success: true,
+        list: [
+          {
+            slug: `active-${userHash}`,
+            url: "https://active.com",
+            clicks: 5,
+            expiration: null, // active
+          },
+          {
+            slug: `expired-${userHash}`,
+            url: "https://expired.com",
+            clicks: 10,
+            expiration: new Date(Date.now() - 10000).toISOString(), // expired
+          },
+        ],
+        total: 2,
+        status: 200,
+      };
+    });
+
+    try {
+      const stats = await fetchUserDashboardStats(userId);
+      expect(stats.totalLinks).toBe(2);
+      expect(stats.activeLinks).toBe(1);
+      expect(stats.expiredLinks).toBe(1);
+      expect(stats.totalClicks).toBe(15);
     } finally {
       sinkClient.countLinks = originalCount;
       sinkClient.searchLinks = originalSearch;
