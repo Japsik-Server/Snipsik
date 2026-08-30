@@ -219,6 +219,30 @@ function parseSinkListPayload(data: unknown): {
   let total = 0;
   let cursor: string | null | undefined = null;
 
+  const LIST_KEYS = [
+    "list",
+    "links",
+    "data",
+    "items",
+    "result",
+    "keys",
+  ] as const;
+
+  const pickArrayAndTotal = (
+    src: Record<string, unknown>,
+  ): { rawList: unknown[]; total: number } | null => {
+    for (const key of LIST_KEYS) {
+      if (Array.isArray(src[key])) {
+        const arr = src[key] as unknown[];
+        return {
+          rawList: arr,
+          total: typeof src.total === "number" ? src.total : arr.length,
+        };
+      }
+    }
+    return null;
+  };
+
   if (Array.isArray(data)) {
     rawList = data;
     total = rawList.length;
@@ -228,41 +252,19 @@ function parseSinkListPayload(data: unknown): {
       (typeof obj.cursor === "string" ? obj.cursor : null) ||
       (typeof obj.nextCursor === "string" ? obj.nextCursor : null);
 
-    if (Array.isArray(obj.list)) {
-      rawList = obj.list;
-      total = typeof obj.total === "number" ? obj.total : rawList.length;
-    } else if (Array.isArray(obj.links)) {
-      rawList = obj.links;
-      total = typeof obj.total === "number" ? obj.total : rawList.length;
-    } else if (Array.isArray(obj.data)) {
-      rawList = obj.data;
-      total = typeof obj.total === "number" ? obj.total : rawList.length;
-    } else if (Array.isArray(obj.items)) {
-      rawList = obj.items;
-      total = typeof obj.total === "number" ? obj.total : rawList.length;
-    } else if (Array.isArray(obj.result)) {
-      rawList = obj.result;
-      total = typeof obj.total === "number" ? obj.total : rawList.length;
-    } else if (Array.isArray(obj.keys)) {
-      rawList = obj.keys;
-      total = typeof obj.total === "number" ? obj.total : rawList.length;
+    const top = pickArrayAndTotal(obj);
+    if (top) {
+      rawList = top.rawList;
+      total = top.total;
     } else if (obj.data && typeof obj.data === "object") {
       const nested = obj.data as Record<string, unknown>;
       cursor =
         (typeof nested.cursor === "string" ? nested.cursor : null) || cursor;
 
-      if (Array.isArray(nested.list)) {
-        rawList = nested.list;
-        total =
-          typeof nested.total === "number" ? nested.total : rawList.length;
-      } else if (Array.isArray(nested.links)) {
-        rawList = nested.links;
-        total =
-          typeof nested.total === "number" ? nested.total : rawList.length;
-      } else if (Array.isArray(nested.data)) {
-        rawList = nested.data;
-        total =
-          typeof nested.total === "number" ? nested.total : rawList.length;
+      const inner = pickArrayAndTotal(nested);
+      if (inner) {
+        rawList = inner.rawList;
+        total = inner.total;
       }
     }
   }
@@ -560,8 +562,8 @@ class SinkClient {
       return { success: true, link: queryRes.link, status: queryRes.status };
     }
 
-    // 3. Fallback: Search /api/link/search?q=... (limit 1)
-    const searchRes = await this.searchLinks({ q: cleanSlug, limit: 1 });
+    // 3. Fallback: Search /api/link/search?q=... (limit 10)
+    const searchRes = await this.searchLinks({ q: cleanSlug, limit: 10 });
     if (searchRes.success && searchRes.list.length > 0) {
       const exactMatch = searchRes.list.find(
         (l) => l.slug.toLowerCase() === cleanSlug.toLowerCase(),
