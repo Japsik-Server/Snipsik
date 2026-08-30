@@ -1,6 +1,7 @@
 import { config } from "@/config";
 
-const BASE62_CHARS = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+const BASE62_CHARS =
+  "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
 /**
  * Pre-computed CRC32 lookup table for fast hashing.
@@ -79,15 +80,19 @@ export function generateSlug(userId: string): string {
 }
 
 /**
- * Verifies if the given user owns the slug.
- * Admin users have full ownership over all slugs.
+ * Verifies if the given user owns the slug by checking their userHash suffix.
+ * Always strictly matches the userHash to prevent unauthorized access.
  */
 export function verifyOwnership(slug: string, userId: string): boolean {
-  if (isAdmin(userId)) {
-    return true;
-  }
+  const cleanSlug = slug.startsWith("/") ? slug.substring(1) : slug;
   const userHash = getUserHash(userId);
-  return slug.endsWith(`-${userHash}`);
+  const cleanSlugLower = cleanSlug.trim().toLowerCase();
+  const userHashLower = userHash.trim().toLowerCase();
+
+  return (
+    cleanSlugLower.endsWith(`-${userHashLower}`) ||
+    cleanSlugLower === userHashLower
+  );
 }
 
 /**
@@ -95,12 +100,13 @@ export function verifyOwnership(slug: string, userId: string): boolean {
  */
 export function validateCustomSlug(
   slug: string,
-  userId: string
+  userId: string,
 ): { valid: boolean; error?: string } {
   if (!isAdmin(userId)) {
     return {
       valid: false,
-      error: "You do not have permission to create custom slugs. Only administrators can use custom slugs.",
+      error:
+        "You do not have permission to create custom slugs. Only administrators can use custom slugs.",
     };
   }
 
@@ -117,7 +123,8 @@ export function validateCustomSlug(
   if (!validSlugRegex.test(trimmed)) {
     return {
       valid: false,
-      error: "Custom slug can only contain letters, numbers, hyphens (-), and underscores (_).",
+      error:
+        "Custom slug can only contain letters, numbers, hyphens (-), and underscores (_).",
     };
   }
 
