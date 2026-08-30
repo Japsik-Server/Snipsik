@@ -255,6 +255,7 @@ export const linkCommand: Command = {
               opt
                 .setName("page")
                 .setDescription("조회할 페이지 번호")
+                .setMinValue(1)
                 .setRequired(false),
             ),
         )
@@ -278,6 +279,7 @@ export const linkCommand: Command = {
               opt
                 .setName("page")
                 .setDescription("조회할 페이지 번호")
+                .setMinValue(1)
                 .setRequired(false),
             ),
         )
@@ -506,7 +508,7 @@ export const linkCommand: Command = {
 
         const pageSize = 5;
         const totalPages = Math.ceil(userLinks.length / pageSize) || 1;
-        const currentPage = Math.min(page, totalPages);
+        const currentPage = Math.max(1, Math.min(page, totalPages));
         const startIndex = (currentPage - 1) * pageSize;
         const paginated = userLinks.slice(startIndex, startIndex + pageSize);
 
@@ -867,7 +869,7 @@ async function handleAdminCommand(
 
     const pageSize = 5;
     const totalPages = Math.ceil(links.length / pageSize) || 1;
-    const currentPage = Math.min(page, totalPages);
+    const currentPage = Math.max(1, Math.min(page, totalPages));
     const startIndex = (currentPage - 1) * pageSize;
     const paginated = links.slice(startIndex, startIndex + pageSize);
 
@@ -935,7 +937,7 @@ async function handleAdminCommand(
 
     const pageSize = 5;
     const totalPages = Math.ceil(userLinks.length / pageSize) || 1;
-    const currentPage = Math.min(page, totalPages);
+    const currentPage = Math.max(1, Math.min(page, totalPages));
     const startIndex = (currentPage - 1) * pageSize;
     const paginated = userLinks.slice(startIndex, startIndex + pageSize);
 
