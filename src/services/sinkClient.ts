@@ -314,9 +314,12 @@ class SinkClient {
   /**
    * Fetches details of a link by slug.
    */
-  async getLink(
-    slug: string,
-  ): Promise<{ success: boolean; link?: SinkLink; error?: string }> {
+  async getLink(slug: string): Promise<{
+    success: boolean;
+    link?: SinkLink;
+    error?: string;
+    status?: number;
+  }> {
     const cleanSlug = slug.startsWith("/") ? slug.substring(1) : slug;
     const res = await this.request<unknown>(
       `/api/link/${encodeURIComponent(cleanSlug)}`,
@@ -328,7 +331,7 @@ class SinkClient {
     if (res.success && res.data) {
       const link = normalizeSinkLink(res.data, cleanSlug);
       if (link.url) {
-        return { success: true, link };
+        return { success: true, link, status: res.status };
       }
     }
 
@@ -339,11 +342,15 @@ class SinkClient {
         (l) => l.slug.toLowerCase() === cleanSlug.toLowerCase(),
       );
       if (found) {
-        return { success: true, link: found };
+        return { success: true, link: found, status: 200 };
       }
     }
 
-    return { success: false, error: res.error || "Link not found" };
+    return {
+      success: false,
+      error: res.error || "Link not found",
+      status: res.status ?? 404,
+    };
   }
 
   /**
@@ -394,9 +401,19 @@ class SinkClient {
     // Check if the link exists before attempting deletion
     const existing = await this.getLink(cleanSlug);
     if (!existing.success || !existing.link) {
+      if (
+        existing.status === 404 ||
+        existing.error === "Link not found" ||
+        existing.error?.includes("404")
+      ) {
+        return {
+          success: false,
+          error: `단축 링크 '/${cleanSlug}'을(를) 찾을 수 없습니다. (존재하지 않는 링크)`,
+        };
+      }
       return {
         success: false,
-        error: `단축 링크 '/${cleanSlug}'을(를) 찾을 수 없습니다. (존재하지 않는 링크)`,
+        error: existing.error || "링크 정보를 조회하는 중 오류가 발생했습니다.",
       };
     }
 
