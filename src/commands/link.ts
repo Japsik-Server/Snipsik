@@ -23,11 +23,19 @@ export async function fetchUserDashboardStats(
 ): Promise<UserDashboardStats> {
   const userHash = getUserHash(userId);
 
-  const res = await sinkClient.listAllLinks();
-  const allLinks = res.list || [];
+  // Fetch count stats and user links in parallel without downloading entire database
+  const [totalCountRes, activeCountRes, expiredCountRes, searchRes] =
+    await Promise.all([
+      sinkClient.countLinks({ q: userHash, status: "all" }),
+      sinkClient.countLinks({ q: userHash, status: "active" }),
+      sinkClient.countLinks({ q: userHash, status: "expired" }),
+      sinkClient.searchLinks({ q: userHash, status: "all", limit: 100 }),
+    ]);
 
-  // Filter links belonging ONLY to this user (identified by userHash)
-  const userLinks = allLinks.filter((link) => {
+  const rawUserLinks = searchRes.success ? searchRes.list : [];
+
+  // Strictly verify user ownership
+  const userLinks = rawUserLinks.filter((link) => {
     if (!link.slug) return false;
     return link.slug.endsWith(`-${userHash}`) || link.slug === userHash;
   });
@@ -40,24 +48,36 @@ export async function fetchUserDashboardStats(
   });
 
   const now = Date.now();
-  let activeLinks = 0;
-  let expiredLinks = 0;
+  let activeLinks = activeCountRes.success ? activeCountRes.count : 0;
+  let expiredLinks = expiredCountRes.success ? expiredCountRes.count : 0;
+  let totalLinks = totalCountRes.success
+    ? totalCountRes.count
+    : userLinks.length;
   let totalClicks = 0;
 
   for (const link of userLinks) {
     totalClicks += link.clicks ?? 0;
-    if (link.expiration) {
-      const expTime = new Date(link.expiration).getTime();
-      if (!isNaN(expTime) && expTime <= now) {
-        expiredLinks++;
-        continue;
+  }
+
+  // Fallback calculation if count endpoints were unavailable but search returned links
+  if (!totalCountRes.success && userLinks.length > 0) {
+    activeLinks = 0;
+    expiredLinks = 0;
+    for (const link of userLinks) {
+      if (link.expiration) {
+        const expTime = new Date(link.expiration).getTime();
+        if (!isNaN(expTime) && expTime <= now) {
+          expiredLinks++;
+          continue;
+        }
       }
+      activeLinks++;
     }
-    activeLinks++;
+    totalLinks = userLinks.length;
   }
 
   return {
-    totalLinks: userLinks.length,
+    totalLinks,
     activeLinks,
     expiredLinks,
     totalClicks,
@@ -491,9 +511,19 @@ export const linkCommand: Command = {
         await interaction.deferReply({ ephemeral: true });
         const inputTag = interaction.options.getString("tag")?.trim();
         const page = interaction.options.getInteger("page") || 1;
+        const userHash = getUserHash(interaction.user.id);
+        const cleanTag = inputTag
+          ? inputTag.replace(/^#/, "").trim()
+          : undefined;
 
-        // Fetch all links from Sink without relying on server-side tag filtering
-        const res = await sinkClient.listAllLinks();
+        // Fetch user links directly using search endpoint
+        const res = await sinkClient.searchLinks({
+          q: userHash,
+          tag: cleanTag || undefined,
+          status: "all",
+          limit: 1000,
+        });
+
         if (!res.success) {
           const errEmbed = ui.createErrorMessage(
             "목록 조회 실패",
@@ -503,22 +533,20 @@ export const linkCommand: Command = {
           return;
         }
 
-        const userHash = getUserHash(interaction.user.id);
-
         // 1. Strictly filter only this user's links
         let userLinks = res.list.filter((l) => {
           if (!l.slug) return false;
           return l.slug.endsWith(`-${userHash}`) || l.slug === userHash;
         });
 
-        // 2. Filter by Tag if specified
-        if (inputTag) {
-          const cleanTag = inputTag.replace(/^#/, "").toLowerCase();
+        // 2. Filter by Tag if specified (client-side guarantee)
+        if (cleanTag) {
+          const lowerTag = cleanTag.toLowerCase();
           userLinks = userLinks.filter((l) => {
             if (!l.tag) return false;
             const linkTag = l.tag.toLowerCase().replace(/^#/, "");
             const tagList = linkTag.split(/[\s,]+/).map((t) => t.trim());
-            return tagList.includes(cleanTag) || linkTag.includes(cleanTag);
+            return tagList.includes(lowerTag) || linkTag.includes(lowerTag);
           });
         }
 
@@ -784,35 +812,29 @@ async function handleAdminCommand(
 
   // 1. /link admin overview
   if (subcommand === "overview") {
-    const res = await sinkClient.listAllLinks();
-    if (!res.success) {
-      const errEmbed = ui.createErrorMessage(
-        "통계 조회 실패",
-        res.error || "링크 목록을 가져오는 데 실패했습니다.",
-      );
-      await interaction.editReply({ embeds: [errEmbed] });
-      return;
-    }
+    const [totalCountRes, activeCountRes, expiredCountRes, topLinksRes] =
+      await Promise.all([
+        sinkClient.countLinks({ status: "all" }),
+        sinkClient.countLinks({ status: "active" }),
+        sinkClient.countLinks({ status: "expired" }),
+        sinkClient.listLinks(undefined, 1, 100),
+      ]);
 
-    const allLinks = res.list || [];
-    const now = Date.now();
+    const totalLinks = totalCountRes.success
+      ? totalCountRes.count
+      : topLinksRes.list?.length || 0;
+    const activeLinks = activeCountRes.success
+      ? activeCountRes.count
+      : totalLinks;
+    const expiredLinks = expiredCountRes.success ? expiredCountRes.count : 0;
+
+    const sampleLinks = topLinksRes.list || [];
     let totalClicks = 0;
-    let activeLinks = 0;
-    let expiredLinks = 0;
-
-    for (const l of allLinks) {
+    for (const l of sampleLinks) {
       totalClicks += l.clicks ?? 0;
-      if (l.expiration) {
-        const exp = new Date(l.expiration).getTime();
-        if (!isNaN(exp) && exp <= now) {
-          expiredLinks++;
-          continue;
-        }
-      }
-      activeLinks++;
     }
 
-    const topLinks = [...allLinks]
+    const topLinks = [...sampleLinks]
       .sort((a, b) => (b.clicks ?? 0) - (a.clicks ?? 0))
       .slice(0, 5);
 
@@ -824,12 +846,12 @@ async function handleAdminCommand(
     });
 
     const desc = [
-      `📊 **총 등록 링크 수:** \`${allLinks.length.toLocaleString()}\`개`,
+      `📊 **총 등록 링크 수:** \`${totalLinks.toLocaleString()}\`개`,
       `🟢 **활성 링크 수:** \`${activeLinks.toLocaleString()}\`개`,
       `🔴 **만료된 링크 수:** \`${expiredLinks.toLocaleString()}\`개`,
-      `🖱️ **인스턴스 누적 클릭 수:** \`${totalClicks.toLocaleString()}\`회`,
+      `🖱️ **상위 링크 샘플 클릭 수:** \`${totalClicks.toLocaleString()}\`회`,
       "",
-      "🏆 **최다 클릭 TOP 5 링크:**",
+      "🏆 **최다 클릭 TOP 5 링크 (상위 샘플 기준):**",
       topLines.length > 0 ? topLines.join("\n") : "_등록된 링크가 없습니다._",
     ].join("\n");
 
@@ -847,8 +869,21 @@ async function handleAdminCommand(
     const query =
       interaction.options.getString("query")?.toLowerCase().trim() || undefined;
     const page = interaction.options.getInteger("page") || 1;
+    const cleanTag = inputTag ? inputTag.replace(/^#/, "").trim() : undefined;
 
-    const res = await sinkClient.listAllLinks();
+    const res = query
+      ? await sinkClient.searchLinks({
+          q: query,
+          tag: cleanTag || undefined,
+          status: "all",
+          limit: 1000,
+        })
+      : await sinkClient.listLinks(
+          cleanTag ? { tag: cleanTag, status: "all", limit: 1000 } : undefined,
+          1,
+          1000,
+        );
+
     if (!res.success) {
       const errEmbed = ui.createErrorMessage(
         "목록 조회 실패",
@@ -860,18 +895,18 @@ async function handleAdminCommand(
 
     let links = res.list || [];
 
-    // Filter by tag
-    if (inputTag) {
-      const cleanTag = inputTag.replace(/^#/, "").toLowerCase();
+    // Filter by tag (client-side guarantee)
+    if (cleanTag) {
+      const lowerTag = cleanTag.toLowerCase();
       links = links.filter((l) => {
         if (!l.tag) return false;
         const linkTag = l.tag.toLowerCase().replace(/^#/, "");
         const tagList = linkTag.split(/[\s,]+/).map((t) => t.trim());
-        return tagList.includes(cleanTag) || linkTag.includes(cleanTag);
+        return tagList.includes(lowerTag) || linkTag.includes(lowerTag);
       });
     }
 
-    // Filter by query
+    // Filter by query (if any client-side extra match needed)
     if (query) {
       links = links.filter(
         (l) =>
@@ -922,10 +957,16 @@ async function handleAdminCommand(
     const targetUser = interaction.options.getUser("user", true);
     const inputTag = interaction.options.getString("tag")?.trim();
     const page = interaction.options.getInteger("page") || 1;
-
     const userHash = getUserHash(targetUser.id);
+    const cleanTag = inputTag ? inputTag.replace(/^#/, "").trim() : undefined;
 
-    const res = await sinkClient.listAllLinks();
+    const res = await sinkClient.searchLinks({
+      q: userHash,
+      tag: cleanTag || undefined,
+      status: "all",
+      limit: 1000,
+    });
+
     if (!res.success) {
       const errEmbed = ui.createErrorMessage(
         "유저 링크 조회 실패",
@@ -941,13 +982,13 @@ async function handleAdminCommand(
     });
 
     // Filter by tag
-    if (inputTag) {
-      const cleanTag = inputTag.replace(/^#/, "").toLowerCase();
+    if (cleanTag) {
+      const lowerTag = cleanTag.toLowerCase();
       userLinks = userLinks.filter((l) => {
         if (!l.tag) return false;
         const linkTag = l.tag.toLowerCase().replace(/^#/, "");
         const tagList = linkTag.split(/[\s,]+/).map((t) => t.trim());
-        return tagList.includes(cleanTag) || linkTag.includes(cleanTag);
+        return tagList.includes(lowerTag) || linkTag.includes(lowerTag);
       });
     }
 
