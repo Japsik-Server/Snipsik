@@ -78,11 +78,12 @@ export async function onMessageCreate(message: Message): Promise<void> {
       });
 
       if (res.success && res.link) {
-        const shortenedUrl = sinkClient.getFullShortUrl(slug);
+        const resolvedSlug = res.link.slug || slug;
+        const shortenedUrl = sinkClient.getFullShortUrl(resolvedSlug);
         shortenedItems.push({
           originalUrl,
           shortenedUrl,
-          slug,
+          slug: resolvedSlug,
         });
       } else {
         logger.warn(
@@ -98,11 +99,14 @@ export async function onMessageCreate(message: Message): Promise<void> {
 
   try {
     const dmChannel = await message.author.createDM();
+    let embedSent = false;
+    let textSentCount = 0;
 
     // 1. Send DM Card (Overview embed)
     try {
       const dmEmbed = ui.createWatchDmCard(shortenedItems, message.url);
       await dmChannel.send({ embeds: [dmEmbed] });
+      embedSent = true;
     } catch (embedErr) {
       logger.warn(
         `Failed to send watch DM embed card to ${message.author.tag}:`,
@@ -114,6 +118,7 @@ export async function onMessageCreate(message: Message): Promise<void> {
     for (const item of shortenedItems) {
       try {
         await dmChannel.send(item.shortenedUrl);
+        textSentCount++;
       } catch (textErr) {
         logger.warn(
           `Failed to send plain text URL ${item.shortenedUrl} to ${message.author.tag}:`,
@@ -122,9 +127,19 @@ export async function onMessageCreate(message: Message): Promise<void> {
       }
     }
 
-    logger.success(
-      `Successfully sent ${shortenedItems.length} auto-shortened link(s) DM to ${message.author.tag}`,
-    );
+    if (embedSent && textSentCount === shortenedItems.length) {
+      logger.success(
+        `Successfully sent all ${shortenedItems.length} auto-shortened link(s) DM to ${message.author.tag}`,
+      );
+    } else if (embedSent || textSentCount > 0) {
+      logger.warn(
+        `Partially sent auto-shortened link(s) DM to ${message.author.tag} (Embed: ${embedSent ? "OK" : "Failed"}, URLs: ${textSentCount}/${shortenedItems.length})`,
+      );
+    } else {
+      logger.error(
+        `Failed to deliver any auto-shortened link(s) DM to ${message.author.tag}`,
+      );
+    }
   } catch (err) {
     logger.error(`Failed to open DM channel with ${message.author.tag}:`, err);
   }
