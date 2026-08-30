@@ -335,8 +335,8 @@ class SinkClient {
       }
     }
 
-    // Fallback: search in listLinks
-    const listRes = await this.listLinks(undefined, 1, 1000);
+    // Fallback: search in listAllLinks
+    const listRes = await this.listAllLinks();
     if (listRes.success && listRes.list.length > 0) {
       const found = listRes.list.find(
         (l) => l.slug.toLowerCase() === cleanSlug.toLowerCase(),
@@ -562,6 +562,44 @@ class SinkClient {
       success: true,
       list,
       total: total || list.length,
+    };
+  }
+
+  /**
+   * Fetches all links across all pages from the Sink instance.
+   */
+  async listAllLinks(tag?: string): Promise<{
+    success: boolean;
+    list: SinkLink[];
+    total: number;
+    error?: string;
+  }> {
+    const firstPage = await this.listLinks(tag, 1, 1000);
+    if (!firstPage.success) {
+      return firstPage;
+    }
+
+    const allLinks = [...firstPage.list];
+    const total = firstPage.total;
+
+    // If total exceeds the first page, fetch subsequent pages sequentially
+    if (total > allLinks.length) {
+      const pageSize = 1000;
+      const totalPages = Math.ceil(total / pageSize);
+      for (let page = 2; page <= totalPages; page++) {
+        const pageRes = await this.listLinks(tag, page, pageSize);
+        if (pageRes.success && pageRes.list.length > 0) {
+          allLinks.push(...pageRes.list);
+        } else {
+          break;
+        }
+      }
+    }
+
+    return {
+      success: true,
+      list: allLinks,
+      total: allLinks.length,
     };
   }
 

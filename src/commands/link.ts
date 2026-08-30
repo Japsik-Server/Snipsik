@@ -23,7 +23,7 @@ export async function fetchUserDashboardStats(
 ): Promise<UserDashboardStats> {
   const userHash = getUserHash(userId);
 
-  const res = await sinkClient.listLinks(undefined, 1, 1000);
+  const res = await sinkClient.listAllLinks();
   const allLinks = res.list || [];
 
   // Filter links belonging ONLY to this user (identified by userHash)
@@ -493,7 +493,7 @@ export const linkCommand: Command = {
         const page = interaction.options.getInteger("page") || 1;
 
         // Fetch all links from Sink without relying on server-side tag filtering
-        const res = await sinkClient.listLinks(undefined, 1, 1000);
+        const res = await sinkClient.listAllLinks();
         if (!res.success) {
           const errEmbed = ui.createErrorMessage(
             "목록 조회 실패",
@@ -784,7 +784,7 @@ async function handleAdminCommand(
 
   // 1. /link admin overview
   if (subcommand === "overview") {
-    const res = await sinkClient.listLinks(undefined, 1, 1000);
+    const res = await sinkClient.listAllLinks();
     if (!res.success) {
       const errEmbed = ui.createErrorMessage(
         "통계 조회 실패",
@@ -848,7 +848,7 @@ async function handleAdminCommand(
       interaction.options.getString("query")?.toLowerCase().trim() || undefined;
     const page = interaction.options.getInteger("page") || 1;
 
-    const res = await sinkClient.listLinks(undefined, 1, 1000);
+    const res = await sinkClient.listAllLinks();
     if (!res.success) {
       const errEmbed = ui.createErrorMessage(
         "목록 조회 실패",
@@ -925,7 +925,7 @@ async function handleAdminCommand(
 
     const userHash = getUserHash(targetUser.id);
 
-    const res = await sinkClient.listLinks(undefined, 1, 1000);
+    const res = await sinkClient.listAllLinks();
     if (!res.success) {
       const errEmbed = ui.createErrorMessage(
         "유저 링크 조회 실패",
