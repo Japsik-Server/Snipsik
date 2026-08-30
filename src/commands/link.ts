@@ -383,6 +383,15 @@ export const linkCommand: Command = {
         const description = interaction.options.getString("description");
         const unsafe = interaction.options.getBoolean("unsafe") || false;
 
+        if (targetUrl.length > 2048) {
+          const errEmbed = ui.createErrorMessage(
+            "URL 길이 초과",
+            "URL 길이는 최대 2,048자까지 허용됩니다.",
+          );
+          await interaction.editReply({ embeds: [errEmbed] });
+          return;
+        }
+
         const slug = generateSlug(interaction.user.id);
         const expiration = parseExpiration(expStr);
 
@@ -422,6 +431,24 @@ export const linkCommand: Command = {
         const title = interaction.options.getString("title");
         const description = interaction.options.getString("description");
         const unsafe = interaction.options.getBoolean("unsafe") || false;
+
+        if (targetUrl.length > 2048) {
+          const errEmbed = ui.createErrorMessage(
+            "URL 길이 초과",
+            "URL 길이는 최대 2,048자까지 허용됩니다.",
+          );
+          await interaction.editReply({ embeds: [errEmbed] });
+          return;
+        }
+
+        if (customSlug.length > 2048) {
+          const errEmbed = ui.createErrorMessage(
+            "슬러그 길이 초과",
+            "슬러그 길이는 최대 2,048자까지 허용됩니다.",
+          );
+          await interaction.editReply({ embeds: [errEmbed] });
+          return;
+        }
 
         const validation = validateCustomSlug(customSlug, interaction.user.id);
         if (!validation.valid) {

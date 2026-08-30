@@ -232,6 +232,19 @@ export async function onInteractionCreate(
         const tag = interaction.fields.getTextInputValue("tag");
         const title = interaction.fields.getTextInputValue("title");
 
+        if (url && url.length > 2048) {
+          await interaction.followUp({
+            embeds: [
+              ui.createErrorMessage(
+                "URL 길이 초과",
+                "URL 길이는 최대 2,048자까지 허용됩니다.",
+              ),
+            ],
+            ephemeral: true,
+          });
+          return;
+        }
+
         const slug = generateSlug(interaction.user.id);
         const expiration = parseExpiration(expStr);
 
@@ -291,6 +304,19 @@ export async function onInteractionCreate(
         const tag = interaction.fields.getTextInputValue("tag");
         const title = interaction.fields.getTextInputValue("title");
         const description = interaction.fields.getTextInputValue("description");
+
+        if (url && url.length > 2048) {
+          await interaction.followUp({
+            embeds: [
+              ui.createErrorMessage(
+                "URL 길이 초과",
+                "URL 길이는 최대 2,048자까지 허용됩니다.",
+              ),
+            ],
+            ephemeral: true,
+          });
+          return;
+        }
 
         let passwordPayload: string | null | undefined = undefined;
         if (

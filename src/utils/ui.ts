@@ -119,7 +119,9 @@ export const ui = {
         .setTitle(`📌 선택된 링크: /${selectedLink.slug}`)
         .setURL(fullShortUrl)
         .setDescription(
-          `**단축 URL:** [🔗 /${selectedLink.slug}](${fullShortUrl}) • \`${fullShortUrl}\`\n**원본 링크:** [🌐 원본 웹사이트 열기 ↗](${selectedLink.url})\n↳ \`${truncatedUrl}\``,
+          safeDescription(
+            `**단축 URL:** [🔗 /${selectedLink.slug}](${fullShortUrl}) • \`${fullShortUrl}\`\n**원본 링크:** [🌐 원본 웹사이트 열기 ↗](${selectedLink.url})\n↳ \`${truncatedUrl}\``,
+          ),
         )
         .addFields(
           {
@@ -274,7 +276,9 @@ export const ui = {
       .setTitle(`🔗 단축 링크: /${link.slug}`)
       .setURL(fullShortUrl)
       .setDescription(
-        `**단축 URL:** [🔗 /${link.slug}](${fullShortUrl}) • \`${fullShortUrl}\`\n**원본 링크:** [🌐 원본 웹사이트 열기 ↗](${link.url})\n↳ \`${truncatedUrl}\``,
+        safeDescription(
+          `**단축 URL:** [🔗 /${link.slug}](${fullShortUrl}) • \`${fullShortUrl}\`\n**원본 링크:** [🌐 원본 웹사이트 열기 ↗](${link.url})\n↳ \`${truncatedUrl}\``,
+        ),
       )
       .addFields(
         {
@@ -328,7 +332,9 @@ export const ui = {
       .setTitle(`📊 링크 통계: /${stats.slug}`)
       .setURL(fullShortUrl)
       .setDescription(
-        `**단축 URL:** [🔗 /${stats.slug}](${fullShortUrl}) • \`${fullShortUrl}\`\n**원본 타겟:** [🌐 원본 웹사이트 열기 ↗](${stats.url})\n↳ \`${truncatedUrl}\``,
+        safeDescription(
+          `**단축 URL:** [🔗 /${stats.slug}](${fullShortUrl}) • \`${fullShortUrl}\`\n**원본 타겟:** [🌐 원본 웹사이트 열기 ↗](${stats.url})\n↳ \`${truncatedUrl}\``,
+        ),
       )
       .addFields(
         {
