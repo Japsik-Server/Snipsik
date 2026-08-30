@@ -42,7 +42,7 @@
 
 모든 링크 관련 명령어는 최상위 `/link` 아래의 서브커맨드로 구성됩니다.
 
-### 3.1 `/link` 서브커맨드
+### 3.1 `/link` 서브커맨드 및 서브커맨드 그룹
 
 | 명령어 | 매개변수 | 설명 | 권한 |
 | :--- | :--- | :--- | :--- |
@@ -53,14 +53,9 @@
 | `/link stats` | `slug` (필수) | 특정 슬러그의 클릭 수 및 방문 통계 조회 | 본인 소유 링크 또는 관리자 |
 | `/link delete` | `slug` (필수) | 단축 링크 영구 삭제 | 본인 소유 링크 또는 관리자 |
 | `/link check` | `url` (필수) | 대상 웹사이트의 생존 여부(HTTP 상태코드) 헬스체크 | 전체 유저 |
-
-### 3.2 `/watch` 서버 관리자 커맨드
-
-| 명령어 | 매개변수 | 설명 | 권한 |
-| :--- | :--- | :--- | :--- |
-| `/watch add` | `channel` (필수) | 해당 채널을 URL 감시 대상에 추가 | 서버 관리자 (`ManageGuild`) |
-| `/watch remove` | `channel` (필수) | 해당 채널을 URL 감시 대상에서 제거 | 서버 관리자 (`ManageGuild`) |
-| `/watch list` | 없음 | 현재 서버의 감시 대상 채널 목록 조회 | 서버 관리자 (`ManageGuild`) |
+| `/link watch add` | `channel` (필수) | 해당 채널을 URL 감시 대상에 추가 | 서버 관리자 (`ManageGuild`) |
+| `/link watch remove` | `channel` (필수) | 해당 채널을 URL 감시 대상에서 제거 | 서버 관리자 (`ManageGuild`) |
+| `/link watch list` | 없음 | 현재 서버의 감시 대상 채널 목록 조회 | 서버 관리자 (`ManageGuild`) |
 
 ---
 

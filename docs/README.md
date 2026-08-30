@@ -9,7 +9,7 @@ Snipsik은 Cloudflare 기반 오픈소스 링크 단축기인 **Sink([Japsik-Ser
 1. **[상세 사양서 (Specification)](./SPECIFICATION.md)**
    - 프로젝트 요구사항 및 핵심 원칙
    - 슬러그(Slug) 생성 및 유저 분리 엔진
-   - 슬래시 커맨드(`/link`, `/watch`) 상세 명세
+   - 슬래시 커맨드(`/link`, `/link watch`) 상세 명세
    - 개인 전용 대시보드 인터랙션 흐름
    - 채널 감시(Watcher) 및 DM 발송 규격
    - 데이터베이스 스키마 (Supabase + Drizzle ORM)
