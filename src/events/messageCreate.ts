@@ -97,26 +97,35 @@ export async function onMessageCreate(message: Message): Promise<void> {
   if (shortenedItems.length === 0) return;
 
   try {
-    const messageUrl = message.url;
-
-    // 1. Send DM Card (Components v2 UI)
-    const dmEmbed = ui.createWatchDmCard(shortenedItems, messageUrl);
-
     const dmChannel = await message.author.createDM();
-    await dmChannel.send({ embeds: [dmEmbed] });
+
+    // 1. Send DM Card (Overview embed)
+    try {
+      const dmEmbed = ui.createWatchDmCard(shortenedItems, message.url);
+      await dmChannel.send({ embeds: [dmEmbed] });
+    } catch (embedErr) {
+      logger.warn(
+        `Failed to send watch DM embed card to ${message.author.tag}:`,
+        embedErr,
+      );
+    }
 
     // 2. Send Pure Plain Text URLs sequentially (Mobile Long-press copy optimization)
     for (const item of shortenedItems) {
-      await dmChannel.send(item.shortenedUrl);
+      try {
+        await dmChannel.send(item.shortenedUrl);
+      } catch (textErr) {
+        logger.warn(
+          `Failed to send plain text URL ${item.shortenedUrl} to ${message.author.tag}:`,
+          textErr,
+        );
+      }
     }
 
     logger.success(
       `Successfully sent ${shortenedItems.length} auto-shortened link(s) DM to ${message.author.tag}`,
     );
   } catch (err) {
-    logger.error(
-      `Failed to send auto-shorten DM to ${message.author.tag}:`,
-      err,
-    );
+    logger.error(`Failed to open DM channel with ${message.author.tag}:`, err);
   }
 }

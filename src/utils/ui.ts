@@ -31,6 +31,14 @@ function safeDescription(text: unknown, maxLen = 4000): string {
   return str;
 }
 
+function truncateMiddle(str: string, maxLength = 50): string {
+  if (str.length <= maxLength) return str;
+  const keep = Math.max(0, maxLength - 3);
+  const front = Math.ceil(keep / 2);
+  const back = Math.floor(keep / 2);
+  return `${str.substring(0, front)}...${str.substring(str.length - back)}`;
+}
+
 export const ui = {
   /**
    * Builds the Ephemeral Personal Dashboard view.
@@ -388,38 +396,24 @@ export const ui = {
     items: Array<{ originalUrl: string; shortenedUrl: string; slug: string }>,
     messageUrl: string,
   ): EmbedBuilder {
-    const originalLines = items
-      .map((item, idx) => {
-        const truncated =
-          item.originalUrl.length > 60
-            ? `${item.originalUrl.substring(0, 57)}...`
-            : item.originalUrl;
-        return `**${idx + 1}.** [🌐 원본 열기 ↗](${item.originalUrl}) • \`${truncated}\``;
-      })
-      .join("\n");
-
-    const shortenedLines = items
-      .map((item, idx) => {
-        return `**${idx + 1}.** [🔗 /${item.slug}](${item.shortenedUrl}) • \`${item.shortenedUrl}\``;
-      })
-      .join("\n");
+    const lines = items.map((item, idx) => {
+      const origTrunc = truncateMiddle(item.originalUrl, 48);
+      return `**${idx + 1}.** \`${item.shortenedUrl}\`\n   ↳ 원본: \`${origTrunc}\``;
+    });
 
     const description = [
-      `## ${messageUrl}`,
+      `> 📍 **원본 메시지:** ${messageUrl}`,
       "",
-      "**원본 링크:**",
-      originalLines,
-      "",
-      "**단축된 링크:**",
-      shortenedLines,
+      "**단축된 링크 목록:**",
+      ...lines,
     ].join("\n");
 
     return new EmbedBuilder()
       .setColor(COLORS.PRIMARY)
       .setTitle("✂️ 긴 URL이 자동으로 단축되었습니다!")
-      .setDescription(description)
+      .setDescription(safeDescription(description))
       .setFooter({
-        text: "아래 메시지에서 단축 URL만 빠르게 길게 터치하여 복사할 수 있습니다.",
+        text: "아래 메시지에서 단축 URL만 빠르게 복사할 수 있습니다.",
       })
       .setTimestamp();
   },
