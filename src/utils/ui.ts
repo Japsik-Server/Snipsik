@@ -16,10 +16,20 @@ const COLORS = {
   PRIMARY: 0x5865f2, // Discord Blurple
   SUCCESS: 0x57f287, // Discord Green
   WARNING: 0xfee75c, // Discord Yellow
-  DANGER: 0xed4245,  // Discord Red
-  DARK: 0x2b2d31,    // Discord Dark Container
-  MUTED: 0x949ba4,   // Discord Gray
+  DANGER: 0xed4245, // Discord Red
+  DARK: 0x2b2d31, // Discord Dark Container
+  MUTED: 0x949ba4, // Discord Gray
 };
+
+function safeDescription(text: unknown, maxLen = 4000): string {
+  const str = typeof text === "string" ? text : String(text || "");
+  if (str.length > maxLen) {
+    return (
+      str.substring(0, maxLen - 30) + "\n\n...*(내용이 너무 길어 일부 생략됨)*"
+    );
+  }
+  return str;
+}
 
 export const ui = {
   /**
@@ -28,13 +38,22 @@ export const ui = {
   createDashboardView(
     user: User,
     dashboardStats: UserDashboardStats,
-    selectedSlug?: string
+    selectedSlug?: string,
+    currentPage: number = 1,
   ): {
     embeds: EmbedBuilder[];
     components: ActionRowBuilder<ButtonBuilder | StringSelectMenuBuilder>[];
   } {
     const userHash = getUserHash(user.id);
     const embeds: EmbedBuilder[] = [];
+
+    const PAGE_SIZE = 20;
+    const allUserLinks = dashboardStats.links || [];
+    const totalLinks = allUserLinks.length;
+    const totalPages = Math.ceil(totalLinks / PAGE_SIZE) || 1;
+    const page = Math.max(1, Math.min(currentPage, totalPages));
+    const startIndex = (page - 1) * PAGE_SIZE;
+    const currentLinks = allUserLinks.slice(startIndex, startIndex + PAGE_SIZE);
 
     // Main Summary Card
     const summaryEmbed = new EmbedBuilder()
@@ -44,7 +63,7 @@ export const ui = {
         iconURL: user.displayAvatarURL(),
       })
       .setDescription(
-        `> **개인 전용 링크 대시보드**에 오신 것을 환영합니다.\n> 고유 유저 해시: \`${userHash}\``
+        `> **개인 전용 링크 대시보드**에 오신 것을 환영합니다.\n> 고유 유저 해시: \`${userHash}\` ${totalPages > 1 ? `• 페이지: \`${page} / ${totalPages}\`` : ""}`,
       )
       .addFields(
         {
@@ -66,26 +85,35 @@ export const ui = {
           name: "🖱️ 누적 클릭 수",
           value: `\`${dashboardStats.totalClicks.toLocaleString()}\` 회`,
           inline: true,
-        }
+        },
       )
-      .setFooter({ text: "Snipsik • Powered by Sink" })
+      .setFooter({
+        text: `Snipsik • Powered by Sink ${totalPages > 1 ? `(페이지 ${page}/${totalPages})` : ""}`,
+      })
       .setTimestamp();
 
     embeds.push(summaryEmbed);
 
     // If a link is selected, add its detailed view
     const selectedLink = selectedSlug
-      ? dashboardStats.recentLinks.find((l) => l.slug === selectedSlug)
+      ? allUserLinks.find(
+          (l) => l.slug.toLowerCase() === selectedSlug.toLowerCase(),
+        )
       : undefined;
 
     if (selectedLink) {
       const fullShortUrl = sinkClient.getFullShortUrl(selectedLink.slug);
+      const truncatedUrl =
+        selectedLink.url.length > 70
+          ? `${selectedLink.url.substring(0, 67)}...`
+          : selectedLink.url;
+
       const linkEmbed = new EmbedBuilder()
         .setColor(COLORS.SUCCESS)
         .setTitle(`📌 선택된 링크: /${selectedLink.slug}`)
         .setURL(fullShortUrl)
         .setDescription(
-          `**단축 URL:** [${fullShortUrl}](${fullShortUrl})\n**원본 URL:** ${selectedLink.url.length > 80 ? `${selectedLink.url.substring(0, 77)}...` : selectedLink.url}`
+          `**단축 URL:** [🔗 /${selectedLink.slug}](${fullShortUrl}) • \`${fullShortUrl}\`\n**원본 링크:** [🌐 원본 웹사이트 열기 ↗](${selectedLink.url})\n↳ \`${truncatedUrl}\``,
         )
         .addFields(
           {
@@ -114,42 +142,81 @@ export const ui = {
               ? `<t:${Math.floor(new Date(selectedLink.expiration).getTime() / 1000)}:R>`
               : "♾️ 무제한",
             inline: true,
-          }
+          },
         );
       embeds.push(linkEmbed);
     }
 
-    const components: ActionRowBuilder<ButtonBuilder | StringSelectMenuBuilder>[] = [];
+    const components: ActionRowBuilder<
+      ButtonBuilder | StringSelectMenuBuilder
+    >[] = [];
 
     // Select Menu Row (if user has links)
-    if (dashboardStats.recentLinks.length > 0) {
+    if (totalLinks > 0) {
       const selectMenu = new StringSelectMenuBuilder()
         .setCustomId(CustomId.DASHBOARD_SELECT_LINK)
-        .setPlaceholder("📋 관리할 링크를 선택하세요...")
+        .setPlaceholder(
+          totalPages > 1
+            ? `📋 관리할 링크 선택... (페이지 ${page}/${totalPages}, 총 ${totalLinks}개)`
+            : `📋 관리할 링크를 선택하세요... (총 ${totalLinks}개)`,
+        )
         .setMinValues(1)
         .setMaxValues(1);
 
-      const options = dashboardStats.recentLinks.slice(0, 25).map((l) => {
-        const fullUrl = sinkClient.getFullShortUrl(l.slug);
-        const opt = new StringSelectMenuOptionBuilder()
-          .setLabel(`/${l.slug} ${l.title ? `(${l.title.substring(0, 40)})` : ""}`)
-          .setDescription(l.url.substring(0, 95))
-          .setValue(l.slug);
+      const options: StringSelectMenuOptionBuilder[] = [];
 
-        if (selectedSlug === l.slug) {
+      // Top: Previous Page Option (if not first page)
+      if (page > 1) {
+        options.push(
+          new StringSelectMenuOptionBuilder()
+            .setLabel(`⬅️ 이전 페이지 (${page - 1}/${totalPages})`)
+            .setDescription(`이전 20개 링크 목록으로 이동합니다.`)
+            .setEmoji("⬅️")
+            .setValue(`nav:page:${page - 1}`),
+        );
+      }
+
+      // Middle: Current Page Links (Max 20)
+      for (const l of currentLinks) {
+        const labelText = `/${l.slug}`;
+        const descText = (l.url || "URL 정보 없음").substring(0, 100);
+
+        const opt = new StringSelectMenuOptionBuilder()
+          .setLabel(labelText)
+          .setDescription(descText)
+          .setValue(`slug:${l.slug}:${page}`);
+
+        if (
+          selectedSlug &&
+          l.slug.toLowerCase() === selectedSlug.toLowerCase()
+        ) {
           opt.setDefault(true);
         }
-        return opt;
-      });
+        options.push(opt);
+      }
+
+      // Bottom: Next Page Option (if not last page)
+      if (page < totalPages) {
+        options.push(
+          new StringSelectMenuOptionBuilder()
+            .setLabel(`다음 페이지 ➡️ (${page + 1}/${totalPages})`)
+            .setDescription(`다음 20개 링크 목록으로 이동합니다.`)
+            .setEmoji("➡️")
+            .setValue(`nav:page:${page + 1}`),
+        );
+      }
 
       selectMenu.addOptions(options);
       components.push(
-        new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu)
+        new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
+          selectMenu,
+        ),
       );
     }
 
     // Buttons Row
     const hasSelection = Boolean(selectedLink);
+    const resolvedSlug = selectedLink?.slug;
     const buttonRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
       new ButtonBuilder()
         .setCustomId(CustomId.DASHBOARD_CREATE_BTN)
@@ -158,9 +225,9 @@ export const ui = {
         .setStyle(ButtonStyle.Success),
       new ButtonBuilder()
         .setCustomId(
-          hasSelection && selectedSlug
-            ? `${CustomId.DASHBOARD_EDIT_BTN}:${selectedSlug}`
-            : CustomId.DASHBOARD_EDIT_BTN
+          hasSelection && resolvedSlug
+            ? `${CustomId.DASHBOARD_EDIT_BTN}:${resolvedSlug}`
+            : CustomId.DASHBOARD_EDIT_BTN,
         )
         .setLabel("수정")
         .setEmoji("✏️")
@@ -168,19 +235,19 @@ export const ui = {
         .setDisabled(!hasSelection),
       new ButtonBuilder()
         .setCustomId(
-          hasSelection && selectedSlug
-            ? `${CustomId.DASHBOARD_DELETE_BTN}:${selectedSlug}`
-            : CustomId.DASHBOARD_DELETE_BTN
+          hasSelection && resolvedSlug
+            ? `${CustomId.DASHBOARD_DELETE_BTN}:${resolvedSlug}`
+            : CustomId.DASHBOARD_DELETE_BTN,
         )
         .setLabel("삭제")
         .setEmoji("🗑️")
         .setStyle(ButtonStyle.Danger)
         .setDisabled(!hasSelection),
       new ButtonBuilder()
-        .setCustomId(CustomId.DASHBOARD_REFRESH_BTN)
+        .setCustomId(`${CustomId.DASHBOARD_REFRESH_BTN}:${page}`)
         .setLabel("새로고침")
         .setEmoji("🔄")
-        .setStyle(ButtonStyle.Secondary)
+        .setStyle(ButtonStyle.Secondary),
     );
 
     components.push(buttonRow);
@@ -196,13 +263,15 @@ export const ui = {
     components: ActionRowBuilder<ButtonBuilder>[];
   } {
     const fullShortUrl = sinkClient.getFullShortUrl(link.slug);
+    const truncatedUrl =
+      link.url.length > 70 ? `${link.url.substring(0, 67)}...` : link.url;
 
     const embed = new EmbedBuilder()
       .setColor(COLORS.SUCCESS)
       .setTitle(`🔗 단축 링크: /${link.slug}`)
       .setURL(fullShortUrl)
       .setDescription(
-        `**단축 URL:** [${fullShortUrl}](${fullShortUrl})\n**원본 URL:** ${link.url}`
+        `**단축 URL:** [🔗 /${link.slug}](${fullShortUrl}) • \`${fullShortUrl}\`\n**원본 링크:** [🌐 원본 웹사이트 열기 ↗](${link.url})\n↳ \`${truncatedUrl}\``,
       )
       .addFields(
         {
@@ -221,7 +290,7 @@ export const ui = {
             ? `<t:${Math.floor(new Date(link.expiration).getTime() / 1000)}:R>`
             : "무제한",
           inline: true,
-        }
+        },
       )
       .setFooter({ text: "Snipsik • URL Shortener" })
       .setTimestamp();
@@ -234,7 +303,7 @@ export const ui = {
       new ButtonBuilder()
         .setLabel("링크 바로가기")
         .setStyle(ButtonStyle.Link)
-        .setURL(fullShortUrl)
+        .setURL(fullShortUrl),
     );
 
     return { embeds: [embed], components: [buttonRow] };
@@ -248,12 +317,16 @@ export const ui = {
     components: ActionRowBuilder<ButtonBuilder>[];
   } {
     const fullShortUrl = sinkClient.getFullShortUrl(stats.slug);
+    const truncatedUrl =
+      stats.url.length > 70 ? `${stats.url.substring(0, 67)}...` : stats.url;
 
     const embed = new EmbedBuilder()
       .setColor(COLORS.PRIMARY)
       .setTitle(`📊 링크 통계: /${stats.slug}`)
       .setURL(fullShortUrl)
-      .setDescription(`**단축 URL:** [${fullShortUrl}](${fullShortUrl})\n**원본 타겟:** ${stats.url}`)
+      .setDescription(
+        `**단축 URL:** [🔗 /${stats.slug}](${fullShortUrl}) • \`${fullShortUrl}\`\n**원본 타겟:** [🌐 원본 웹사이트 열기 ↗](${stats.url})\n↳ \`${truncatedUrl}\``,
+      )
       .addFields(
         {
           name: "🖱️ 총 클릭 수",
@@ -266,7 +339,7 @@ export const ui = {
             ? `<t:${Math.floor(new Date(stats.lastClickedAt).getTime() / 1000)}:R>`
             : "*클릭 기록 없음*",
           inline: true,
-        }
+        },
       )
       .setFooter({ text: "Snipsik • Realtime Analytics" })
       .setTimestamp();
@@ -283,7 +356,11 @@ export const ui = {
         .slice(0, 5)
         .map(([c, count]) => `• **${c}**: \`${count}\``)
         .join("\n");
-      embed.addFields({ name: "🌍 상위 국가", value: countryStr, inline: true });
+      embed.addFields({
+        name: "🌍 상위 국가",
+        value: countryStr,
+        inline: true,
+      });
     }
 
     if (stats.referrers && Object.keys(stats.referrers).length > 0) {
@@ -298,7 +375,7 @@ export const ui = {
       new ButtonBuilder()
         .setLabel("링크 열기")
         .setStyle(ButtonStyle.Link)
-        .setURL(fullShortUrl)
+        .setURL(fullShortUrl),
     );
 
     return { embeds: [embed], components: [buttonRow] };
@@ -308,18 +385,42 @@ export const ui = {
    * Creates a card for DM notifications sent when watching channels.
    */
   createWatchDmCard(
-    originalUrl: string,
-    shortenedUrl: string,
-    guildName: string,
-    channelName: string
+    items: Array<{ originalUrl: string; shortenedUrl: string; slug: string }>,
+    messageUrl: string,
   ): EmbedBuilder {
+    const originalLines = items
+      .map((item, idx) => {
+        const truncated =
+          item.originalUrl.length > 60
+            ? `${item.originalUrl.substring(0, 57)}...`
+            : item.originalUrl;
+        return `**${idx + 1}.** [🌐 원본 열기 ↗](${item.originalUrl}) • \`${truncated}\``;
+      })
+      .join("\n");
+
+    const shortenedLines = items
+      .map((item, idx) => {
+        return `**${idx + 1}.** [🔗 /${item.slug}](${item.shortenedUrl}) • \`${item.shortenedUrl}\``;
+      })
+      .join("\n");
+
+    const description = [
+      `## ${messageUrl}`,
+      "",
+      "**원본 링크:**",
+      originalLines,
+      "",
+      "**단축된 링크:**",
+      shortenedLines,
+    ].join("\n");
+
     return new EmbedBuilder()
       .setColor(COLORS.PRIMARY)
       .setTitle("✂️ 긴 URL이 자동으로 단축되었습니다!")
-      .setDescription(
-        `**서버:** \`${guildName}\`\n**채널:** \`#${channelName}\`\n\n**원본 링크:**\n${originalUrl}\n\n**단축된 링크:**\n[${shortenedUrl}](${shortenedUrl})`
-      )
-      .setFooter({ text: "아래 메시지에서 단축 URL만 빠르게 길게 터치하여 복사할 수 있습니다." })
+      .setDescription(description)
+      .setFooter({
+        text: "아래 메시지에서 단축 URL만 빠르게 길게 터치하여 복사할 수 있습니다.",
+      })
       .setTimestamp();
   },
 
@@ -330,7 +431,7 @@ export const ui = {
     return new EmbedBuilder()
       .setColor(COLORS.SUCCESS)
       .setTitle(`✅ ${title}`)
-      .setDescription(description)
+      .setDescription(safeDescription(description))
       .setTimestamp();
   },
 
@@ -341,7 +442,7 @@ export const ui = {
     return new EmbedBuilder()
       .setColor(COLORS.DANGER)
       .setTitle(`❌ ${title}`)
-      .setDescription(description)
+      .setDescription(safeDescription(description || "오류가 발생했습니다."))
       .setTimestamp();
   },
 
@@ -352,7 +453,7 @@ export const ui = {
     return new EmbedBuilder()
       .setColor(COLORS.WARNING)
       .setTitle(`ℹ️ ${title}`)
-      .setDescription(description)
+      .setDescription(safeDescription(description))
       .setTimestamp();
   },
 
@@ -367,7 +468,7 @@ export const ui = {
       .setColor(COLORS.DANGER)
       .setTitle("⚠️ 링크 영구 삭제 확인")
       .setDescription(
-        `정말로 단축 링크 \`/${slug}\`을(를) 삭제하시겠습니까?\n삭제된 링크는 복구할 수 없으며 기존 공유된 연결이 끊어집니다.`
+        `정말로 단축 링크 \`/${slug}\`을(를) 삭제하시겠습니까?\n삭제된 링크는 복구할 수 없으며 기존 공유된 연결이 끊어집니다.`,
       );
 
     const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
@@ -379,7 +480,7 @@ export const ui = {
       new ButtonBuilder()
         .setCustomId(CustomId.DASHBOARD_CANCEL_DELETE_BTN)
         .setLabel("취소")
-        .setStyle(ButtonStyle.Secondary)
+        .setStyle(ButtonStyle.Secondary),
     );
 
     return { embeds: [embed], components: [row] };
