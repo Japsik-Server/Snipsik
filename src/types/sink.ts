@@ -49,6 +49,35 @@ export interface SinkListResponse {
   total: number;
   page?: number;
   pageSize?: number;
+  cursor?: string | null;
+}
+
+export interface SinkQueryParams {
+  slug?: string;
+  url?: string;
+}
+
+export interface SinkSearchParams {
+  q?: string;
+  url?: string;
+  tag?: string;
+  status?: "active" | "expired" | "all";
+  limit?: number;
+}
+
+export interface SinkCountParams {
+  q?: string;
+  url?: string;
+  tag?: string;
+  status?: "active" | "expired" | "all";
+}
+
+export interface SinkListParams {
+  limit?: number;
+  cursor?: string;
+  sort?: "newest" | "oldest" | "az" | "za";
+  tag?: string;
+  status?: "active" | "expired" | "all";
 }
 
 export interface UrlCheckResult {

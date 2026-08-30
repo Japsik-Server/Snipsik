@@ -4,6 +4,10 @@ import type {
   UpdateLinkPayload,
   SinkLink,
   SinkStats,
+  SinkQueryParams,
+  SinkSearchParams,
+  SinkCountParams,
+  SinkListParams,
   UrlCheckResult,
 } from "@/types/sink";
 import { logger } from "@/utils/logger";
@@ -206,6 +210,66 @@ function normalizeSinkLink(
   };
 }
 
+function parseSinkListPayload(data: unknown): {
+  rawList: unknown[];
+  total: number;
+  cursor?: string | null;
+} {
+  let rawList: unknown[] = [];
+  let total = 0;
+  let cursor: string | null | undefined = null;
+
+  if (Array.isArray(data)) {
+    rawList = data;
+    total = rawList.length;
+  } else if (data && typeof data === "object") {
+    const obj = data as Record<string, unknown>;
+    cursor =
+      (typeof obj.cursor === "string" ? obj.cursor : null) ||
+      (typeof obj.nextCursor === "string" ? obj.nextCursor : null);
+
+    if (Array.isArray(obj.list)) {
+      rawList = obj.list;
+      total = typeof obj.total === "number" ? obj.total : rawList.length;
+    } else if (Array.isArray(obj.links)) {
+      rawList = obj.links;
+      total = typeof obj.total === "number" ? obj.total : rawList.length;
+    } else if (Array.isArray(obj.data)) {
+      rawList = obj.data;
+      total = typeof obj.total === "number" ? obj.total : rawList.length;
+    } else if (Array.isArray(obj.items)) {
+      rawList = obj.items;
+      total = typeof obj.total === "number" ? obj.total : rawList.length;
+    } else if (Array.isArray(obj.result)) {
+      rawList = obj.result;
+      total = typeof obj.total === "number" ? obj.total : rawList.length;
+    } else if (Array.isArray(obj.keys)) {
+      rawList = obj.keys;
+      total = typeof obj.total === "number" ? obj.total : rawList.length;
+    } else if (obj.data && typeof obj.data === "object") {
+      const nested = obj.data as Record<string, unknown>;
+      cursor =
+        (typeof nested.cursor === "string" ? nested.cursor : null) || cursor;
+
+      if (Array.isArray(nested.list)) {
+        rawList = nested.list;
+        total =
+          typeof nested.total === "number" ? nested.total : rawList.length;
+      } else if (Array.isArray(nested.links)) {
+        rawList = nested.links;
+        total =
+          typeof nested.total === "number" ? nested.total : rawList.length;
+      } else if (Array.isArray(nested.data)) {
+        rawList = nested.data;
+        total =
+          typeof nested.total === "number" ? nested.total : rawList.length;
+      }
+    }
+  }
+
+  return { rawList, total, cursor };
+}
+
 class SinkClient {
   private readonly baseUrl: string;
   private readonly token: string;
@@ -312,6 +376,159 @@ class SinkClient {
   }
 
   /**
+   * Queries a link by slug or url using /api/link/query.
+   */
+  async queryLink(params: SinkQueryParams): Promise<{
+    success: boolean;
+    link?: SinkLink;
+    error?: string;
+    status: number;
+  }> {
+    const query = new URLSearchParams();
+    if (params.slug) {
+      const cleanSlug = params.slug.startsWith("/")
+        ? params.slug.substring(1)
+        : params.slug;
+      query.append("slug", cleanSlug);
+    }
+    if (params.url) {
+      query.append("url", params.url);
+    }
+
+    const endpoint = `/api/link/query?${query.toString()}`;
+    const res = await this.request<unknown>(endpoint, {
+      method: "GET",
+    });
+
+    if (!res.success || !res.data) {
+      return {
+        success: false,
+        error: res.error || "Link not found",
+        status: res.status,
+      };
+    }
+
+    const link = normalizeSinkLink(res.data, params.slug, params.url);
+    if (!link.slug && !link.url) {
+      return {
+        success: false,
+        error: "Link not found",
+        status: 404,
+      };
+    }
+
+    return {
+      success: true,
+      link,
+      status: res.status,
+    };
+  }
+
+  /**
+   * Searches links using /api/link/search.
+   */
+  async searchLinks(params: SinkSearchParams = {}): Promise<{
+    success: boolean;
+    list: SinkLink[];
+    total: number;
+    error?: string;
+    status: number;
+  }> {
+    const queryParams = new URLSearchParams();
+    if (params.q) queryParams.append("q", params.q);
+    if (params.url) queryParams.append("url", params.url);
+    if (params.tag) queryParams.append("tag", params.tag);
+    if (params.status) queryParams.append("status", params.status);
+    if (params.limit && params.limit > 0)
+      queryParams.append("limit", params.limit.toString());
+
+    const queryString = queryParams.toString();
+    const endpoint = `/api/link/search${queryString ? `?${queryString}` : ""}`;
+
+    const res = await this.request<unknown>(endpoint, {
+      method: "GET",
+    });
+
+    if (!res.success || res.data === undefined) {
+      return {
+        success: false,
+        list: [],
+        total: 0,
+        error: res.error || "Failed to search links",
+        status: res.status,
+      };
+    }
+
+    const { rawList, total } = parseSinkListPayload(res.data);
+    const list = rawList
+      .map((item) => normalizeSinkLink(item))
+      .filter((l) => Boolean(l.slug));
+
+    return {
+      success: true,
+      list,
+      total: total || list.length,
+      status: res.status,
+    };
+  }
+
+  /**
+   * Counts links matching filters using /api/link/count.
+   */
+  async countLinks(params: SinkCountParams = {}): Promise<{
+    success: boolean;
+    count: number;
+    error?: string;
+    status: number;
+  }> {
+    const queryParams = new URLSearchParams();
+    if (params.q) queryParams.append("q", params.q);
+    if (params.url) queryParams.append("url", params.url);
+    if (params.tag) queryParams.append("tag", params.tag);
+    if (params.status) queryParams.append("status", params.status);
+
+    const queryString = queryParams.toString();
+    const endpoint = `/api/link/count${queryString ? `?${queryString}` : ""}`;
+
+    const res = await this.request<unknown>(endpoint, {
+      method: "GET",
+    });
+
+    if (!res.success || res.data === undefined) {
+      return {
+        success: false,
+        count: 0,
+        error: res.error || "Failed to count links",
+        status: res.status,
+      };
+    }
+
+    let count = 0;
+    if (typeof res.data === "number") {
+      count = res.data;
+    } else if (res.data && typeof res.data === "object") {
+      const obj = res.data as Record<string, unknown>;
+      if (typeof obj.count === "number") {
+        count = obj.count;
+      } else if (typeof obj.total === "number") {
+        count = obj.total;
+      } else if (typeof obj.data === "number") {
+        count = obj.data;
+      } else if (obj.data && typeof obj.data === "object") {
+        const nested = obj.data as Record<string, unknown>;
+        if (typeof nested.count === "number") count = nested.count;
+        else if (typeof nested.total === "number") count = nested.total;
+      }
+    }
+
+    return {
+      success: true,
+      count,
+      status: res.status,
+    };
+  }
+
+  /**
    * Fetches details of a link by slug.
    */
   async getLink(slug: string): Promise<{
@@ -321,6 +538,8 @@ class SinkClient {
     status?: number;
   }> {
     const cleanSlug = slug.startsWith("/") ? slug.substring(1) : slug;
+
+    // 1. Try GET /api/link/:slug
     const res = await this.request<unknown>(
       `/api/link/${encodeURIComponent(cleanSlug)}`,
       {
@@ -335,14 +554,20 @@ class SinkClient {
       }
     }
 
-    // Fallback: search in listAllLinks
-    const listRes = await this.listAllLinks();
-    if (listRes.success && listRes.list.length > 0) {
-      const found = listRes.list.find(
+    // 2. Fallback: Query /api/link/query?slug=...
+    const queryRes = await this.queryLink({ slug: cleanSlug });
+    if (queryRes.success && queryRes.link && queryRes.link.url) {
+      return { success: true, link: queryRes.link, status: queryRes.status };
+    }
+
+    // 3. Fallback: Search /api/link/search?q=... (limit 1)
+    const searchRes = await this.searchLinks({ q: cleanSlug, limit: 1 });
+    if (searchRes.success && searchRes.list.length > 0) {
+      const exactMatch = searchRes.list.find(
         (l) => l.slug.toLowerCase() === cleanSlug.toLowerCase(),
       );
-      if (found) {
-        return { success: true, link: found, status: 200 };
+      if (exactMatch) {
+        return { success: true, link: exactMatch, status: 200 };
       }
     }
 
@@ -463,22 +688,38 @@ class SinkClient {
   }
 
   /**
-   * Lists links with optional tag and pagination.
+   * Lists links with optional tag/options and pagination.
    */
   async listLinks(
-    tag?: string,
+    tagOrOptions?: string | SinkListParams,
     page: number = 1,
     limit: number = 1000,
   ): Promise<{
     success: boolean;
     list: SinkLink[];
     total: number;
+    cursor?: string | null;
     error?: string;
   }> {
     const params = new URLSearchParams();
-    if (tag) params.append("tag", tag);
-    if (page > 1) params.append("page", page.toString());
-    if (limit > 0) params.append("limit", limit.toString());
+
+    if (typeof tagOrOptions === "string") {
+      if (tagOrOptions) params.append("tag", tagOrOptions);
+      if (page > 1) params.append("page", page.toString());
+      if (limit > 0) params.append("limit", limit.toString());
+    } else if (tagOrOptions && typeof tagOrOptions === "object") {
+      if (tagOrOptions.tag) params.append("tag", tagOrOptions.tag);
+      if (tagOrOptions.cursor) params.append("cursor", tagOrOptions.cursor);
+      if (tagOrOptions.sort) params.append("sort", tagOrOptions.sort);
+      if (tagOrOptions.status) params.append("status", tagOrOptions.status);
+      const effectiveLimit = tagOrOptions.limit ?? limit;
+      if (effectiveLimit > 0) params.append("limit", effectiveLimit.toString());
+      if (page > 1 && !tagOrOptions.cursor)
+        params.append("page", page.toString());
+    } else {
+      if (page > 1) params.append("page", page.toString());
+      if (limit > 0) params.append("limit", limit.toString());
+    }
 
     const queryString = params.toString();
     const endpoint = `/api/link/list${queryString ? `?${queryString}` : ""}`;
@@ -506,50 +747,7 @@ class SinkClient {
       };
     }
 
-    let rawList: unknown[] = [];
-    let total = 0;
-
-    if (Array.isArray(res.data)) {
-      rawList = res.data;
-      total = rawList.length;
-    } else if (res.data && typeof res.data === "object") {
-      const obj = res.data as Record<string, unknown>;
-      if (Array.isArray(obj.list)) {
-        rawList = obj.list;
-        total = typeof obj.total === "number" ? obj.total : rawList.length;
-      } else if (Array.isArray(obj.links)) {
-        rawList = obj.links;
-        total = typeof obj.total === "number" ? obj.total : rawList.length;
-      } else if (Array.isArray(obj.data)) {
-        rawList = obj.data;
-        total = typeof obj.total === "number" ? obj.total : rawList.length;
-      } else if (Array.isArray(obj.items)) {
-        rawList = obj.items;
-        total = typeof obj.total === "number" ? obj.total : rawList.length;
-      } else if (Array.isArray(obj.result)) {
-        rawList = obj.result;
-        total = typeof obj.total === "number" ? obj.total : rawList.length;
-      } else if (Array.isArray(obj.keys)) {
-        rawList = obj.keys;
-        total = typeof obj.total === "number" ? obj.total : rawList.length;
-      } else if (obj.data && typeof obj.data === "object") {
-        const nested = obj.data as Record<string, unknown>;
-        if (Array.isArray(nested.list)) {
-          rawList = nested.list;
-          total =
-            typeof nested.total === "number" ? nested.total : rawList.length;
-        } else if (Array.isArray(nested.links)) {
-          rawList = nested.links;
-          total =
-            typeof nested.total === "number" ? nested.total : rawList.length;
-        } else if (Array.isArray(nested.data)) {
-          rawList = nested.data;
-          total =
-            typeof nested.total === "number" ? nested.total : rawList.length;
-        }
-      }
-    }
-
+    const { rawList, total, cursor } = parseSinkListPayload(res.data);
     const list = rawList
       .map((item) => normalizeSinkLink(item))
       .filter((l) => Boolean(l.slug));
@@ -562,16 +760,22 @@ class SinkClient {
       success: true,
       list,
       total: total || list.length,
+      cursor,
     };
   }
 
   /**
-   * Fetches all links across all pages from the Sink instance.
+   * @deprecated Prefer `searchLinks`, `countLinks`, or `queryLink` for scalable operations.
+   * Unbounded full listing risks severe latency and memory pressure on large instances.
    */
-  async listAllLinks(tag?: string): Promise<{
+  async listAllLinks(
+    tag?: string,
+    maxPages: number = 5,
+  ): Promise<{
     success: boolean;
     list: SinkLink[];
     total: number;
+    truncated?: boolean;
     error?: string;
   }> {
     const firstPage = await this.listLinks(tag, 1, 1000);
@@ -582,10 +786,10 @@ class SinkClient {
     const allLinks = [...firstPage.list];
     const total = firstPage.total;
 
-    // If total exceeds the first page, fetch subsequent pages sequentially
+    // If total exceeds the first page, fetch subsequent pages sequentially up to maxPages
     if (total > allLinks.length) {
       const pageSize = 1000;
-      const totalPages = Math.ceil(total / pageSize);
+      const totalPages = Math.min(Math.ceil(total / pageSize), maxPages);
       for (let page = 2; page <= totalPages; page++) {
         const pageRes = await this.listLinks(tag, page, pageSize);
         if (pageRes.success && pageRes.list.length > 0) {
@@ -596,10 +800,18 @@ class SinkClient {
       }
     }
 
+    const truncated = total > allLinks.length;
+    if (truncated) {
+      logger.warn(
+        `listAllLinks capped results at ${allLinks.length}/${total} links (maxPages: ${maxPages})`,
+      );
+    }
+
     return {
       success: true,
       list: allLinks,
       total: allLinks.length,
+      truncated,
     };
   }
 
