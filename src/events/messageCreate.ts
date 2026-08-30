@@ -29,7 +29,10 @@ export async function onMessageCreate(message: Message): Promise<void> {
 
   const sinkHostname = new URL(config.SINK_BASE_URL).hostname.toLowerCase();
 
-  // Process the first detected long URL
+  // 1. Extract valid URLs in order of appearance (deduplicating identical URLs while preserving order)
+  const seenUrls = new Set<string>();
+  const validUrls: string[] = [];
+
   for (const rawUrl of matches) {
     try {
       const parsedUrl = new URL(rawUrl);
@@ -44,46 +47,76 @@ export async function onMessageCreate(message: Message): Promise<void> {
         continue;
       }
 
-      logger.info(
-        `Watched channel URL detected from user ${message.author.tag} in #${(message.channel as { name?: string }).name || message.channelId}: ${rawUrl}`
-      );
+      if (!seenUrls.has(rawUrl)) {
+        seenUrls.add(rawUrl);
+        validUrls.push(rawUrl);
+      }
+    } catch {
+      // Ignore malformed URLs
+    }
+  }
 
-      // Generate slug with user hash
+  if (validUrls.length === 0) return;
+
+  logger.info(
+    `Watched channel detected ${validUrls.length} URL(s) from user ${message.author.tag} in #${(message.channel as { name?: string }).name || message.channelId}`,
+  );
+
+  // 2. Shorten URLs sequentially to strictly guarantee order
+  const shortenedItems: Array<{
+    originalUrl: string;
+    shortenedUrl: string;
+    slug: string;
+  }> = [];
+
+  for (const originalUrl of validUrls) {
+    try {
       const slug = generateSlug(message.author.id);
-
-      // Create link in Sink
       const res = await sinkClient.createLink({
-        url: rawUrl,
+        url: originalUrl,
         slug,
       });
 
-      if (!res.success || !res.link) {
-        logger.warn(`Failed to auto-shorten URL for ${message.author.tag}: ${res.error}`);
-        continue;
+      if (res.success && res.link) {
+        const shortenedUrl = sinkClient.getFullShortUrl(slug);
+        shortenedItems.push({
+          originalUrl,
+          shortenedUrl,
+          slug,
+        });
+      } else {
+        logger.warn(
+          `Failed to auto-shorten URL for ${message.author.tag}: ${res.error}`,
+        );
       }
-
-      const shortenedUrl = sinkClient.getFullShortUrl(slug);
-      const guildName = message.guild.name;
-      const channelName = (message.channel as { name?: string }).name || "채널";
-
-      // 1. Send DM Card (Components v2 UI)
-      const dmEmbed = ui.createWatchDmCard(
-        rawUrl,
-        shortenedUrl,
-        guildName,
-        channelName
-      );
-
-      const dmChannel = await message.author.createDM();
-      await dmChannel.send({ embeds: [dmEmbed] });
-
-      // 2. Send Pure Plain Text URL (Mobile Long-press copy optimization)
-      await dmChannel.send(shortenedUrl);
-
-      logger.success(`Successfully sent auto-shortened DM to ${message.author.tag}`);
-      break; // Only shorten first URL per message to avoid spam
     } catch (err) {
-      logger.error(`Error processing auto-shorten for message:`, err);
+      logger.error(`Error auto-shortening URL ${originalUrl}:`, err);
     }
+  }
+
+  if (shortenedItems.length === 0) return;
+
+  try {
+    const messageUrl = message.url;
+
+    // 1. Send DM Card (Components v2 UI)
+    const dmEmbed = ui.createWatchDmCard(shortenedItems, messageUrl);
+
+    const dmChannel = await message.author.createDM();
+    await dmChannel.send({ embeds: [dmEmbed] });
+
+    // 2. Send Pure Plain Text URLs sequentially (Mobile Long-press copy optimization)
+    for (const item of shortenedItems) {
+      await dmChannel.send(item.shortenedUrl);
+    }
+
+    logger.success(
+      `Successfully sent ${shortenedItems.length} auto-shortened link(s) DM to ${message.author.tag}`,
+    );
+  } catch (err) {
+    logger.error(
+      `Failed to send auto-shorten DM to ${message.author.tag}:`,
+      err,
+    );
   }
 }
