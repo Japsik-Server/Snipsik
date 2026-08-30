@@ -61,7 +61,6 @@ function normalizeSinkLink(
     obj.alias,
     obj.name,
     obj.id,
-    obj.shortUrl,
     meta.slug,
     meta.key,
     meta.alias,
