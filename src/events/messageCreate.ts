@@ -91,7 +91,7 @@ export async function onMessageCreate(message: Message): Promise<void> {
         );
       }
     } catch (err) {
-      logger.error(`Error auto-shortening URL ${originalUrl}:`, err);
+      logger.error("Error auto-shortening URL:", err);
     }
   }
 
