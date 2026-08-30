@@ -22,7 +22,6 @@ export async function fetchUserDashboardStats(
   userId: string,
 ): Promise<UserDashboardStats> {
   const userHash = getUserHash(userId);
-  const userHashLower = userHash.toLowerCase();
 
   const res = await sinkClient.listLinks(undefined, 1, 1000);
   const allLinks = res.list || [];
@@ -30,10 +29,7 @@ export async function fetchUserDashboardStats(
   // Filter links belonging ONLY to this user (identified by userHash)
   const userLinks = allLinks.filter((link) => {
     if (!link.slug) return false;
-    const slugLower = link.slug.toLowerCase();
-    return (
-      slugLower.endsWith(`-${userHashLower}`) || slugLower === userHashLower
-    );
+    return link.slug.endsWith(`-${userHash}`) || link.slug === userHash;
   });
 
   // Sort by createdAt descending (most recent first)
@@ -479,16 +475,11 @@ export const linkCommand: Command = {
         }
 
         const userHash = getUserHash(interaction.user.id);
-        const userHashLower = userHash.toLowerCase();
 
         // 1. Strictly filter only this user's links
         let userLinks = res.list.filter((l) => {
           if (!l.slug) return false;
-          const slugLower = l.slug.toLowerCase();
-          return (
-            slugLower.endsWith(`-${userHashLower}`) ||
-            slugLower === userHashLower
-          );
+          return l.slug.endsWith(`-${userHash}`) || l.slug === userHash;
         });
 
         // 2. Filter by Tag if specified
@@ -904,7 +895,6 @@ async function handleAdminCommand(
     const page = interaction.options.getInteger("page") || 1;
 
     const userHash = getUserHash(targetUser.id);
-    const userHashLower = userHash.toLowerCase();
 
     const res = await sinkClient.listLinks(undefined, 1, 1000);
     if (!res.success) {
@@ -918,10 +908,7 @@ async function handleAdminCommand(
 
     let userLinks = res.list.filter((l) => {
       if (!l.slug) return false;
-      const slugLower = l.slug.toLowerCase();
-      return (
-        slugLower.endsWith(`-${userHashLower}`) || slugLower === userHashLower
-      );
+      return l.slug.endsWith(`-${userHash}`) || l.slug === userHash;
     });
 
     // Filter by tag
