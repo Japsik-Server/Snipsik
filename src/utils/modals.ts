@@ -17,6 +17,7 @@ export function createLinkModal(): ModalBuilder {
     .setLabel("타겟 URL (필수)")
     .setStyle(TextInputStyle.Short)
     .setPlaceholder("https://example.com/very-long-url")
+    .setMaxLength(2048)
     .setRequired(true);
 
   const expirationInput = new TextInputBuilder()
@@ -68,6 +69,7 @@ export function createEditLinkModal(link: SinkLink): ModalBuilder {
     .setLabel("타겟 URL (필수)")
     .setStyle(TextInputStyle.Short)
     .setPlaceholder("https://example.com")
+    .setMaxLength(2048)
     .setRequired(true);
   if (link.url) {
     urlInput.setValue(link.url);
