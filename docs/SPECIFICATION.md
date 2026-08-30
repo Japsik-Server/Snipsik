@@ -17,11 +17,13 @@
 ## 2. 슬러그(Slug) 생성 및 유저 분리 엔진
 
 ### 2.1 유저 해시 생성 알고리즘
+
 1. 디스코드 유저의 Snowflake ID (예: `294123456789012345`)를 문자열로 수신.
 2. 32-bit CRC32 (또는 FNV-1a) 해시 알고리즘을 적용하여 32비트 부호 없는 정수(Unsigned Int) 계산.
 3. 이를 Base62(`0-9`, `a-z`, `A-Z`) 문자열로 인코딩하여 **3~4글자의 고유 유저 해시**(`userHash`) 생성. (예: `8wA`, `3mX`)
 
 ### 2.2 슬러그 포맷
+
 - **일반 링크 생성 (`/link create` 및 자동 단축)**:
   - 포맷: `{랜덤 문자열}-{유저 해시}`
   - 랜덤 문자열 길이: `.env`의 `RANDOM_SLUG_LENGTH` (기본값: `3`)
@@ -31,6 +33,7 @@
   - 권한: `.env`의 `ADMIN_USER_IDS`에 등록된 관리자 유저만 생성 가능.
 
 ### 2.3 링크 소유권 검증 로직
+
 - 링크 조회/수정/삭제/통계 조회 시:
   1. 관리자 유저(`ADMIN_USER_IDS`)는 모든 링크 조작 가능.
   2. 일반 유저는 슬러그의 끝부분이 본인의 `userHash`와 일치하는지 검사 (`slug.endsWith("-" + userHash)`).
@@ -44,18 +47,22 @@
 
 ### 3.1 `/link` 서브커맨드 및 서브커맨드 그룹
 
-| 명령어 | 매개변수 | 설명 | 권한 |
-| :--- | :--- | :--- | :--- |
-| `/link dashboard` | 없음 | 유저 개인 전용 일시성(Ephemeral) 인터랙티브 대시보드 열기 | 전체 유저 |
-| `/link create` | `url` (필수)<br>`expiration` (선택, 초/분/시간 단위)<br>`password` (선택)<br>`tag` (선택)<br>`title` (선택)<br>`description` (선택)<br>`unsafe` (선택) | 일반 단축 링크 생성 (`{랜덤N}-{유저해시}`) | 전체 유저 |
-| `/link custom` | `url` (필수)<br>`custom_slug` (필수)<br>기타 옵션 동일 | 순수 커스텀 슬러그 링크 생성 | `ADMIN_USER_IDS` 등록 유저 전용 |
-| `/link list` | `tag` (선택)<br>`page` (선택, 기본 1) | 본인의 `userHash`가 포함된 생성 링크 목록 조회 | 전체 유저 (본인 링크만) |
-| `/link stats` | `slug` (필수) | 특정 슬러그의 클릭 수 및 방문 통계 조회 | 본인 소유 링크 또는 관리자 |
-| `/link delete` | `slug` (필수) | 단축 링크 영구 삭제 | 본인 소유 링크 또는 관리자 |
-| `/link check` | `url` (필수) | 대상 웹사이트의 생존 여부(HTTP 상태코드) 헬스체크 | 전체 유저 |
-| `/link watch add` | `channel` (필수) | 해당 채널을 URL 감시 대상에 추가 | 서버 관리자 (`ManageGuild`) |
-| `/link watch remove` | `channel` (필수) | 해당 채널을 URL 감시 대상에서 제거 | 서버 관리자 (`ManageGuild`) |
-| `/link watch list` | 없음 | 현재 서버의 감시 대상 채널 목록 조회 | 서버 관리자 (`ManageGuild`) |
+| 명령어                 | 매개변수                                                                                                                                               | 설명                                                      | 권한                            |
+| :--------------------- | :----------------------------------------------------------------------------------------------------------------------------------------------------- | :-------------------------------------------------------- | :------------------------------ |
+| `/link dashboard`      | 없음                                                                                                                                                   | 유저 개인 전용 일시성(Ephemeral) 인터랙티브 대시보드 열기 | 전체 유저                       |
+| `/link create`         | `url` (필수)<br>`expiration` (선택, 초/분/시간 단위)<br>`password` (선택)<br>`tag` (선택)<br>`title` (선택)<br>`description` (선택)<br>`unsafe` (선택) | 일반 단축 링크 생성 (`{랜덤N}-{유저해시}`)                | 전체 유저                       |
+| `/link custom`         | `url` (필수)<br>`custom_slug` (필수)<br>기타 옵션 동일                                                                                                 | 순수 커스텀 슬러그 링크 생성                              | `ADMIN_USER_IDS` 등록 유저 전용 |
+| `/link list`           | `tag` (선택)<br>`page` (선택, 기본 1)                                                                                                                  | 본인의 `userHash`가 포함된 생성 링크 목록 조회            | 전체 유저 (본인 링크만)         |
+| `/link stats`          | `slug` (필수)                                                                                                                                          | 특정 슬러그의 클릭 수 및 방문 통계 조회                   | 본인 소유 링크 또는 관리자      |
+| `/link delete`         | `slug` (필수)                                                                                                                                          | 단축 링크 영구 삭제                                       | 본인 소유 링크 또는 관리자      |
+| `/link check`          | `url` (필수)                                                                                                                                           | 대상 웹사이트의 생존 여부(HTTP 상태코드) 헬스체크         | 전체 유저                       |
+| `/link watch add`      | `channel` (필수)                                                                                                                                       | 해당 채널을 URL 감시 대상에 추가                          | 서버 관리자 (`ManageGuild`)     |
+| `/link watch remove`   | `channel` (필수)                                                                                                                                       | 해당 채널을 URL 감시 대상에서 제거                        | 서버 관리자 (`ManageGuild`)     |
+| `/link watch list`     | 없음                                                                                                                                                   | 현재 서버의 감시 대상 채널 목록 조회                      | 서버 관리자 (`ManageGuild`)     |
+| `/link admin overview` | 없음                                                                                                                                                   | Sink 인스턴스 전체 링크/클릭 종합 현황 및 TOP 5 링크 조회 | 봇 관리자 (`ADMIN_USER_IDS`)    |
+| `/link admin list`     | `tag` (선택)<br>`query` (선택, 검색어)<br>`page` (선택, 기본 1)                                                                                        | 인스턴스의 모든 단축 링크 목록 검색 및 페이징 조회        | 봇 관리자 (`ADMIN_USER_IDS`)    |
+| `/link admin user`     | `user` (필수)<br>`tag` (선택)<br>`page` (선택, 기본 1)                                                                                                 | 특정 대상 유저가 생성한 링크 목록 조회                    | 봇 관리자 (`ADMIN_USER_IDS`)    |
+| `/link admin delete`   | `slug` (필수)                                                                                                                                          | 소유권과 무관하게 지정한 슬러그 링크 강제 영구 삭제       | 봇 관리자 (`ADMIN_USER_IDS`)    |
 
 ---
 
@@ -79,6 +86,7 @@
 ## 5. 채널 감시(Watcher) 및 DM 발송 규격
 
 ### 5.1 감시 흐름
+
 1. `messageCreate` 이벤트 수신.
 2. 메시지가 발송된 `(guildId, channelId)`가 Supabase의 `watch_channels`에 등록되어 있는지 검사.
 3. 봇 자신의 메시지이거나 Sink 도메인 자체의 URL인 경우 스킵.
@@ -87,6 +95,7 @@
 6. 작성자의 **Discord DM**으로 2단계 포맷 메시지 발송.
 
 ### 5.2 DM 메시지 전송 포맷 (모바일 최적화)
+
 1. **1차 메시지 (Components v2 카드)**:
    - 원본 긴 URL, 발송된 채널 정보, 생성 시각을 포함한 인터랙티브 UI 카드.
 2. **2차 메시지 (순수 Plain Text URL)**:
