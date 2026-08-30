@@ -1,0 +1,11 @@
+services:
+  snipsik:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: snipsik-bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - NODE_ENV=production
