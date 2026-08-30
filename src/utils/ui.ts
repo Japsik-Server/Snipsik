@@ -104,9 +104,7 @@ export const ui = {
 
     // If a link is selected, add its detailed view
     const selectedLink = selectedSlug
-      ? allUserLinks.find(
-          (l) => l.slug.toLowerCase() === selectedSlug.toLowerCase(),
-        )
+      ? allUserLinks.find((l) => l.slug === selectedSlug)
       : undefined;
 
     if (selectedLink) {
@@ -194,10 +192,7 @@ export const ui = {
           .setDescription(descText)
           .setValue(`slug:${l.slug}:${page}`);
 
-        if (
-          selectedSlug &&
-          l.slug.toLowerCase() === selectedSlug.toLowerCase()
-        ) {
+        if (selectedSlug && l.slug === selectedSlug) {
           opt.setDefault(true);
         }
         options.push(opt);
