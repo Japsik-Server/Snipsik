@@ -33,14 +33,30 @@ describe("SlugManager Unit Tests", () => {
     expect(slug.endsWith(`-${userHash}`)).toBe(true);
   });
 
-  it("should verify ownership accurately", () => {
+  it("should verify ownership accurately and enforce case-sensitivity", () => {
     const userA = "111111111111111111";
     const userB = "222222222222222222";
 
+    const hashA = getUserHash(userA);
     const slugA = generateSlug(userA);
 
     expect(verifyOwnership(slugA, userA)).toBe(true);
     expect(verifyOwnership(slugA, userB)).toBe(false);
+
+    // Case-altered hash should not match because Base62 is case-sensitive
+    const invertedHash = hashA
+      .split("")
+      .map((c) =>
+        c >= "a" && c <= "z"
+          ? c.toUpperCase()
+          : c >= "A" && c <= "Z"
+            ? c.toLowerCase()
+            : c,
+      )
+      .join("");
+    if (invertedHash !== hashA) {
+      expect(verifyOwnership(`test-${invertedHash}`, userA)).toBe(false);
+    }
   });
 
   it("should validate custom slugs properly", () => {

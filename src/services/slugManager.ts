@@ -84,15 +84,10 @@ export function generateSlug(userId: string): string {
  * Always strictly matches the userHash to prevent unauthorized access.
  */
 export function verifyOwnership(slug: string, userId: string): boolean {
-  const cleanSlug = slug.startsWith("/") ? slug.substring(1) : slug;
-  const userHash = getUserHash(userId);
-  const cleanSlugLower = cleanSlug.trim().toLowerCase();
-  const userHashLower = userHash.trim().toLowerCase();
+  const cleanSlug = (slug.startsWith("/") ? slug.substring(1) : slug).trim();
+  const userHash = getUserHash(userId).trim();
 
-  return (
-    cleanSlugLower.endsWith(`-${userHashLower}`) ||
-    cleanSlugLower === userHashLower
-  );
+  return cleanSlug.endsWith(`-${userHash}`) || cleanSlug === userHash;
 }
 
 /**
