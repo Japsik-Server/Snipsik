@@ -79,14 +79,30 @@ export async function fetchUserDashboardStats(
       localActive++;
     }
 
-    if (!totalCountRes.success) {
-      totalLinks = userLinks.length;
-    }
-    if (!activeCountRes.success) {
-      activeLinks = localActive;
-    }
-    if (!expiredCountRes.success) {
-      expiredLinks = localExpired;
+    if (totalCountRes.success) {
+      if (activeCountRes.success && !expiredCountRes.success) {
+        expiredLinks = Math.max(0, totalLinks - activeLinks);
+      } else if (!activeCountRes.success && expiredCountRes.success) {
+        activeLinks = Math.max(0, totalLinks - expiredLinks);
+      } else if (!activeCountRes.success && !expiredCountRes.success) {
+        if (totalLinks <= userLinks.length) {
+          activeLinks = localActive;
+          expiredLinks = localExpired;
+        } else {
+          // Bounded sample: derive proportional estimate across totalLinks
+          const activeRatio = localActive / userLinks.length;
+          activeLinks = Math.round(totalLinks * activeRatio);
+          expiredLinks = Math.max(0, totalLinks - activeLinks);
+        }
+      }
+    } else {
+      if (activeCountRes.success && expiredCountRes.success) {
+        totalLinks = activeLinks + expiredLinks;
+      } else {
+        if (!activeCountRes.success) activeLinks = localActive;
+        if (!expiredCountRes.success) expiredLinks = localExpired;
+        totalLinks = Math.max(userLinks.length, activeLinks + expiredLinks);
+      }
     }
   }
 
