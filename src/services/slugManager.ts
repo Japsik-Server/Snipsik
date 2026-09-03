@@ -42,11 +42,12 @@ export function toBase62(num: number): string {
 }
 
 /**
- * Generates a deterministic 3~6 character unique user hash from a Discord Snowflake User ID.
+ * Generates a deterministic unique lowercase user hash from a Discord Snowflake User ID.
+ * Normalized to lowercase for compatibility with Sink backend which enforces case-insensitive lowercase slugs.
  */
 export function getUserHash(userId: string): string {
   const hash = crc32(userId);
-  return toBase62(hash);
+  return toBase62(hash).toLowerCase();
 }
 
 /**
@@ -71,21 +72,25 @@ export function isAdmin(userId: string): boolean {
 }
 
 /**
- * Generates a full slug formatted as `{random}-{userHash}`.
+ * Generates a full slug formatted as `{random}-{userHash}` in all-lowercase.
  */
 export function generateSlug(userId: string): string {
-  const randomPart = generateRandomString(config.RANDOM_SLUG_LENGTH);
+  const randomPart = generateRandomString(
+    config.RANDOM_SLUG_LENGTH,
+  ).toLowerCase();
   const userHash = getUserHash(userId);
   return `${randomPart}-${userHash}`;
 }
 
 /**
  * Verifies if the given user owns the slug by checking their userHash suffix.
- * Always strictly matches the userHash to prevent unauthorized access.
+ * Uses case-insensitive comparison to support both mixed-case user input and lowercase-normalized storage in Sink.
  */
 export function verifyOwnership(slug: string, userId: string): boolean {
-  const cleanSlug = (slug.startsWith("/") ? slug.substring(1) : slug).trim();
-  const userHash = getUserHash(userId).trim();
+  const cleanSlug = (slug.startsWith("/") ? slug.substring(1) : slug)
+    .trim()
+    .toLowerCase();
+  const userHash = getUserHash(userId).trim().toLowerCase();
 
   return cleanSlug.endsWith(`-${userHash}`) || cleanSlug === userHash;
 }
