@@ -25,14 +25,30 @@ docker pull "$IMAGE_URI"
 
 echo "==> 4. Preparing container switch..."
 BACKUP_CONTAINER="${CONTAINER_NAME}-backup"
-docker rm -f "$BACKUP_CONTAINER" 2>/dev/null || true
+
+HAS_PRIMARY=0
+if docker container inspect "$CONTAINER_NAME" >/dev/null 2>&1; then
+  HAS_PRIMARY=1
+fi
+
+HAS_BACKUP=0
+if docker container inspect "$BACKUP_CONTAINER" >/dev/null 2>&1; then
+  HAS_BACKUP=1
+fi
 
 HAS_OLD=0
-if docker ps -a --format '{{.Names}}' | grep -Eq "^${CONTAINER_NAME}\$"; then
-  HAS_OLD=1
+if [ "$HAS_PRIMARY" -eq 1 ]; then
+  # Remove previous leftover backup only when primary container is available to be backed up
+  docker rm -f "$BACKUP_CONTAINER" 2>/dev/null || true
   echo "Backing up existing container to ${BACKUP_CONTAINER}..."
   docker rename "$CONTAINER_NAME" "$BACKUP_CONTAINER"
   docker stop "$BACKUP_CONTAINER" || true
+  HAS_OLD=1
+elif [ "$HAS_BACKUP" -eq 1 ]; then
+  # Preserve leftover backup as rollback target if primary container is missing
+  echo "Warning: No primary container found, but found existing backup container. Preserving as rollback target."
+  docker stop "$BACKUP_CONTAINER" || true
+  HAS_OLD=1
 fi
 
 echo "==> 5. Starting new container..."
