@@ -12,6 +12,8 @@ concurrency:
 
 env:
   GCP_PROJECT_ID: japsik-507607
+  WIF_PROVIDER: projects/992944582728/locations/global/workloadIdentityPools/github-pool/providers/github-provider
+  WIF_SERVICE_ACCOUNT: github-actions@japsik-507607.iam.gserviceaccount.com
   GAR_LOCATION: us-central1
   GAR_REPOSITORY: snipsik
   IMAGE_NAME: snipsik
@@ -24,6 +26,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      id-token: write
 
     steps:
       - name: Checkout repository
@@ -34,7 +37,8 @@ jobs:
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@71f986410dfbc7added4569d411d040a91dc6935 # v2.1.8
         with:
-          credentials_json: ${{ secrets.GCP_SA_KEY }}
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.WIF_SERVICE_ACCOUNT }}
 
       - name: Set up Cloud SDK
         uses: google-github-actions/setup-gcloud@6189d56e4096ee891640bb02ac264be376592d6a # v2.1.2
