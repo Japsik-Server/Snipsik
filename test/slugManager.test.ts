@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import {
   crc32,
+  toBase36,
   toBase62,
   getUserHash,
   generateSlug,
@@ -9,7 +10,18 @@ import {
 } from "@/services/slugManager";
 
 describe("SlugManager Unit Tests", () => {
-  it("should calculate deterministic CRC32 and lowercase user hashes", () => {
+  it("should encode 32-bit integers to 7-character lowercase Base36 injectively", () => {
+    expect(toBase36(0)).toBe("0000000");
+    expect(toBase36(4294967295)).toBe("1z141z3");
+    expect(toBase36(123456789)).toBe("021i3v9");
+
+    // Injective check: different numbers must produce different Base36 strings
+    expect(toBase36(10)).not.toBe(toBase36(36));
+    expect(toBase36(10)).toBe("000000a");
+    expect(toBase36(36)).toBe("0000010");
+  });
+
+  it("should calculate deterministic CRC32 and 7-character lowercase Base36 user hashes", () => {
     const userId1 = "294123456789012345";
     const userId2 = "294123456789012346";
 
@@ -17,10 +29,10 @@ describe("SlugManager Unit Tests", () => {
     const hash2 = getUserHash(userId2);
 
     expect(typeof hash1).toBe("string");
-    expect(hash1.length).toBeGreaterThanOrEqual(3);
+    expect(hash1.length).toBe(7);
     expect(hash1).not.toBe(hash2);
     expect(hash1).toBe(hash1.toLowerCase());
-    expect(/^[0-9a-z]+$/.test(hash1)).toBe(true);
+    expect(/^[0-9a-z]{7}$/.test(hash1)).toBe(true);
 
     // Deterministic check
     expect(getUserHash(userId1)).toBe(hash1);

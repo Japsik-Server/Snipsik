@@ -1,5 +1,6 @@
 import { config } from "@/config";
 
+const BASE36_CHARS = "0123456789abcdefghijklmnopqrstuvwxyz";
 const BASE62_CHARS =
   "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
@@ -28,6 +29,14 @@ export function crc32(str: string): number {
 }
 
 /**
+ * Encodes an unsigned integer to a 7-character fixed-length lowercase Base36 string.
+ * This is strictly injective for all 32-bit unsigned integers (0 to 4294967295) without case-folding collisions.
+ */
+export function toBase36(num: number): string {
+  return (num >>> 0).toString(36).padStart(7, "0");
+}
+
+/**
  * Encodes an unsigned integer to a Base62 string.
  */
 export function toBase62(num: number): string {
@@ -43,15 +52,15 @@ export function toBase62(num: number): string {
 
 /**
  * Generates a deterministic unique lowercase user hash from a Discord Snowflake User ID.
- * Normalized to lowercase for compatibility with Sink backend which enforces case-insensitive lowercase slugs.
+ * Uses 7-character Base36 encoding for collision-free, injective 32-bit hash representation.
  */
 export function getUserHash(userId: string): string {
   const hash = crc32(userId);
-  return toBase62(hash).toLowerCase();
+  return toBase36(hash);
 }
 
 /**
- * Generates a secure random alphanumeric string of the specified length.
+ * Generates a secure random lowercase alphanumeric string of the specified length.
  */
 export function generateRandomString(length: number): string {
   const bytes = new Uint8Array(length);
@@ -59,7 +68,7 @@ export function generateRandomString(length: number): string {
   let result = "";
   for (let i = 0; i < length; i++) {
     const byte = bytes[i]!;
-    result += BASE62_CHARS[byte % 62];
+    result += BASE36_CHARS[byte % 36];
   }
   return result;
 }
@@ -75,9 +84,7 @@ export function isAdmin(userId: string): boolean {
  * Generates a full slug formatted as `{random}-{userHash}` in all-lowercase.
  */
 export function generateSlug(userId: string): string {
-  const randomPart = generateRandomString(
-    config.RANDOM_SLUG_LENGTH,
-  ).toLowerCase();
+  const randomPart = generateRandomString(config.RANDOM_SLUG_LENGTH);
   const userHash = getUserHash(userId);
   return `${randomPart}-${userHash}`;
 }
