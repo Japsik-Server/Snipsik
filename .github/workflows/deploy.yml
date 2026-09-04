@@ -24,6 +24,7 @@ env:
   VM_NAME: snipsik
   VM_ZONE: us-central1-a
   CONTAINER_NAME: snipsik-bot
+  ENV_FILE_PATH: /home/thecats1105/snipsik/.env
 
 jobs:
   build-and-deploy:
@@ -102,4 +103,4 @@ jobs:
             --zone=${{ env.VM_ZONE }} \
             --project=${{ env.GCP_PROJECT_ID }} \
             --quiet \
-            --command="bash ~/snipsik/deploy.sh '$IMAGE_URI' '${{ env.CONTAINER_NAME }}' '${{ env.GAR_LOCATION }}'"
+            --command="bash ~/snipsik/deploy.sh '$IMAGE_URI' '${{ env.CONTAINER_NAME }}' '${{ env.GAR_LOCATION }}' '${{ env.ENV_FILE_PATH }}'"

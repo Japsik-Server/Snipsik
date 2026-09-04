@@ -4,25 +4,20 @@ set -euo pipefail
 IMAGE_URI="${1:?Error: IMAGE_URI argument is required}"
 CONTAINER_NAME="${2:-snipsik-bot}"
 GAR_LOCATION="${3:-us-central1}"
+ENV_FILE="${4:-/home/thecats1105/snipsik/.env}"
 
 echo "=========================================="
 echo "Starting deployment for ${CONTAINER_NAME}"
 echo "Image: ${IMAGE_URI}"
+echo "Env file: ${ENV_FILE}"
 echo "=========================================="
 
 echo "==> 1. Checking prerequisites..."
-ENV_FILE="${HOME}/snipsik/.env"
 if [ ! -f "$ENV_FILE" ]; then
-  if [ -f "/home/runner/snipsik/.env" ]; then
-    ENV_FILE="/home/runner/snipsik/.env"
-  elif [ -f "/home/thecats1105/snipsik/.env" ]; then
-    ENV_FILE="/home/thecats1105/snipsik/.env"
-  else
-    echo "Error: Environment file not found in ${HOME}/snipsik/.env, /home/runner/snipsik/.env, or /home/thecats1105/snipsik/.env!" >&2
-    exit 1
-  fi
+  echo "Error: Environment file not found at ${ENV_FILE}!" >&2
+  exit 1
 fi
-echo "Using environment file: $ENV_FILE"
+echo "Environment file verified: $ENV_FILE"
 
 echo "==> 2. Detecting Docker permissions..."
 DOCKER="docker"
