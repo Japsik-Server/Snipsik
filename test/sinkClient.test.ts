@@ -356,4 +356,45 @@ describe("Dashboard Stats Optimization Tests", () => {
       sinkClient.searchLinks = originalSearch;
     }
   });
+
+  it("should match user links case-insensitively in fetchUserDashboardStats", async () => {
+    const userId = "581920391829381920";
+    const userHash = getUserHash(userId);
+
+    const originalCount = sinkClient.countLinks;
+    const originalSearch = sinkClient.searchLinks;
+
+    sinkClient.countLinks = mock(async () => ({
+      success: true,
+      count: 2,
+      status: 200,
+    }));
+
+    sinkClient.searchLinks = mock(async () => ({
+      success: true,
+      list: [
+        {
+          slug: `UPPER-${userHash.toUpperCase()}`,
+          url: "https://example-upper.com",
+          clicks: 5,
+        },
+        {
+          slug: `lower-${userHash.toLowerCase()}`,
+          url: "https://example-lower.com",
+          clicks: 10,
+        },
+      ],
+      total: 2,
+      status: 200,
+    }));
+
+    try {
+      const stats = await fetchUserDashboardStats(userId);
+      expect(stats.links.length).toBe(2);
+      expect(stats.totalClicks).toBe(15);
+    } finally {
+      sinkClient.countLinks = originalCount;
+      sinkClient.searchLinks = originalSearch;
+    }
+  });
 });

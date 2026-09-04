@@ -103,8 +103,9 @@ export const ui = {
     embeds.push(summaryEmbed);
 
     // If a link is selected, add its detailed view
-    const selectedLink = selectedSlug
-      ? allUserLinks.find((l) => l.slug === selectedSlug)
+    const selectedSlugLower = selectedSlug?.toLowerCase();
+    const selectedLink = selectedSlugLower
+      ? allUserLinks.find((l) => l.slug.toLowerCase() === selectedSlugLower)
       : undefined;
 
     if (selectedLink) {
@@ -194,7 +195,7 @@ export const ui = {
           .setDescription(descText)
           .setValue(`slug:${l.slug}:${page}`);
 
-        if (selectedSlug && l.slug === selectedSlug) {
+        if (selectedSlugLower && l.slug.toLowerCase() === selectedSlugLower) {
           opt.setDefault(true);
         }
         options.push(opt);

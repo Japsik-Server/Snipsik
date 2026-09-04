@@ -34,10 +34,14 @@ export async function fetchUserDashboardStats(
 
   const rawUserLinks = searchRes.success ? searchRes.list : [];
 
-  // Strictly verify user ownership
+  // Strictly verify user ownership (case-insensitive for slug/hash consistency)
+  const userHashLower = userHash.toLowerCase();
   const userLinks = rawUserLinks.filter((link) => {
     if (!link.slug) return false;
-    return link.slug.endsWith(`-${userHash}`) || link.slug === userHash;
+    const slugLower = link.slug.toLowerCase();
+    return (
+      slugLower.endsWith(`-${userHashLower}`) || slugLower === userHashLower
+    );
   });
 
   // Sort by createdAt descending (most recent first)
@@ -563,10 +567,15 @@ export const linkCommand: Command = {
           return;
         }
 
-        // 1. Strictly filter only this user's links
+        // 1. Strictly filter only this user's links (case-insensitive)
+        const userHashLower = userHash.toLowerCase();
         let userLinks = res.list.filter((l) => {
           if (!l.slug) return false;
-          return l.slug.endsWith(`-${userHash}`) || l.slug === userHash;
+          const slugLower = l.slug.toLowerCase();
+          return (
+            slugLower.endsWith(`-${userHashLower}`) ||
+            slugLower === userHashLower
+          );
         });
 
         // 2. Filter by Tag if specified (client-side guarantee)
@@ -1021,9 +1030,13 @@ async function handleAdminCommand(
       return;
     }
 
+    const userHashLower = userHash.toLowerCase();
     let userLinks = res.list.filter((l) => {
       if (!l.slug) return false;
-      return l.slug.endsWith(`-${userHash}`) || l.slug === userHash;
+      const slugLower = l.slug.toLowerCase();
+      return (
+        slugLower.endsWith(`-${userHashLower}`) || slugLower === userHashLower
+      );
     });
 
     // Filter by tag
