@@ -24,7 +24,6 @@ env:
   VM_NAME: snipsik
   VM_ZONE: us-central1-a
   CONTAINER_NAME: snipsik-bot
-  ENV_FILE_PATH: /home/thecats1105/snipsik/.env
 
 jobs:
   build-and-deploy:
@@ -81,6 +80,17 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      - name: Prepare environment file
+        env:
+          APP_ENV: ${{ secrets.ENV_FILE }}
+        run: |
+          if [ -z "$APP_ENV" ]; then
+            echo "Error: ENV_FILE secret is not configured in GitHub repository secrets!" >&2
+            exit 1
+          fi
+          echo "$APP_ENV" > .env.prod
+          chmod 600 .env.prod
+
       - name: Deploy container to GCP VM via gcloud compute ssh
         run: |
           IMAGE_URI="${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.GAR_REPOSITORY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}"
@@ -92,7 +102,12 @@ jobs:
             --quiet \
             --command="mkdir -p ~/snipsik"
 
-          echo "==> Uploading deployment script..."
+          echo "==> Uploading environment file and deployment script..."
+          gcloud compute scp .env.prod ${{ env.VM_NAME }}:~/snipsik/.env \
+            --zone=${{ env.VM_ZONE }} \
+            --project=${{ env.GCP_PROJECT_ID }} \
+            --quiet
+
           gcloud compute scp scripts/deploy.sh ${{ env.VM_NAME }}:~/snipsik/deploy.sh \
             --zone=${{ env.VM_ZONE }} \
             --project=${{ env.GCP_PROJECT_ID }} \
@@ -103,4 +118,9 @@ jobs:
             --zone=${{ env.VM_ZONE }} \
             --project=${{ env.GCP_PROJECT_ID }} \
             --quiet \
-            --command="bash ~/snipsik/deploy.sh '$IMAGE_URI' '${{ env.CONTAINER_NAME }}' '${{ env.GAR_LOCATION }}' '${{ env.ENV_FILE_PATH }}'"
+            --command="bash ~/snipsik/deploy.sh '$IMAGE_URI' '${{ env.CONTAINER_NAME }}' '${{ env.GAR_LOCATION }}' '~/snipsik/.env'"
+
+      - name: Clean up temporary files on runner
+        if: always()
+        run: |
+          rm -f .env.prod
