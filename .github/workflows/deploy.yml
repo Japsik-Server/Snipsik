@@ -4,6 +4,10 @@ on:
   push:
     branches:
       - main
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - ".gitignore"
   workflow_dispatch:
 
 concurrency:
@@ -43,14 +47,29 @@ jobs:
       - name: Set up Cloud SDK
         uses: google-github-actions/setup-gcloud@6189d56e4096ee891640bb02ac264be376592d6a # v2.1.2
 
+      - name: Check if image already exists in Artifact Registry
+        id: check-image
+        run: |
+          TARGET_IMAGE="${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.GAR_REPOSITORY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}"
+          if gcloud artifacts docker images describe "$TARGET_IMAGE" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Image $TARGET_IMAGE already exists in Artifact Registry. Skipping build and push."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "Image $TARGET_IMAGE does not exist. Proceeding with build and push."
+          fi
+
       - name: Configure Docker authentication for Artifact Registry
+        if: steps.check-image.outputs.exists != 'true'
         run: |
           gcloud auth configure-docker ${{ env.GAR_LOCATION }}-docker.pkg.dev --quiet
 
       - name: Set up Docker Buildx
+        if: steps.check-image.outputs.exists != 'true'
         uses: docker/setup-buildx-action@b5ca514318bd6ebac0fb2aedd5d36ec1b5c232a2 # v3.10.0
 
       - name: Build and push Docker image
+        if: steps.check-image.outputs.exists != 'true'
         uses: docker/build-push-action@471d1dc4e07e5cdedd4c2171150001c434f0b7a4 # v6.15.0
         with:
           context: .
