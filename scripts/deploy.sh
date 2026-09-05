@@ -30,8 +30,17 @@ rollback_container() {
   if [ "$HAS_OLD" -eq 1 ]; then
     echo "Rolling back to previous container..." >&2
     dcmd rm -f "$CONTAINER_NAME" 2>/dev/null || true
-    dcmd start "$BACKUP_CONTAINER" || true
-    dcmd rename "$BACKUP_CONTAINER" "$CONTAINER_NAME" || true
+
+    if ! dcmd start "$BACKUP_CONTAINER"; then
+      echo "Fatal: Failed to start backup container '$BACKUP_CONTAINER' during rollback!" >&2
+      return 1
+    fi
+
+    if ! dcmd rename "$BACKUP_CONTAINER" "$CONTAINER_NAME"; then
+      echo "Fatal: Failed to rename backup container '$BACKUP_CONTAINER' to '$CONTAINER_NAME' during rollback!" >&2
+      return 1
+    fi
+
     echo "Rollback complete." >&2
   fi
 }
