@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { execSync } from "child_process";
+import { execFileSync } from "child_process";
 import fs from "fs";
 import os from "os";
 import path from "path";
@@ -17,7 +17,7 @@ PLAIN_TOKEN=plain_value # inline comment
 DATABASE_URL="postgresql://user:pass@localhost:5432/db"
 `;
 
-    execSync(`bun run scripts/parse-env.js "${tmpFile}"`, {
+    execFileSync("bun", ["run", "scripts/parse-env.js", tmpFile], {
       env: { ...process.env, APP_ENV: input },
     });
 
@@ -41,12 +41,21 @@ VALID_KEY="valid"
 MULTILINE_KEY="line1\\nline2"
 `;
 
-    expect(() => {
-      execSync(`bun run scripts/parse-env.js "${tmpFile}"`, {
+    let caughtError: unknown;
+    try {
+      execFileSync("bun", ["run", "scripts/parse-env.js", tmpFile], {
         env: { ...process.env, APP_ENV: inputWithNewline },
         stdio: "pipe",
       });
-    }).toThrow();
+    } catch (err) {
+      caughtError = err;
+    }
+
+    expect(caughtError).toBeDefined();
+    const stderr =
+      (caughtError as { stderr?: Buffer })?.stderr?.toString() || "";
+    expect(stderr).toContain("contains newline characters");
+    expect(fs.existsSync(tmpFile)).toBe(false);
 
     if (fs.existsSync(tmpFile)) {
       fs.unlinkSync(tmpFile);
