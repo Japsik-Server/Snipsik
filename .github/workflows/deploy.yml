@@ -89,7 +89,7 @@ jobs:
             echo "Error: ENV_FILE secret is not configured in GitHub repository secrets!" >&2
             exit 1
           fi
-          npm install --no-save dotenv
+          npm install --no-save dotenv@17.4.2
           node scripts/parse-env.js .env.prod
 
       - name: Deploy container to GCP VM via gcloud compute ssh

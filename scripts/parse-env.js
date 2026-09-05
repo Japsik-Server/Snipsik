@@ -21,9 +21,14 @@ try {
   }
 
   const lines = keys.map((key) => {
-    let val = parsed[key];
-    // Docker --env-file requires single-line entries per key
-    val = val.replace(/\r\n|\r|\n/g, "\\n");
+    const val = parsed[key];
+    // Docker --env-file requires single-line entries per key and does not support multiline values
+    if (/[\r\n]/.test(val)) {
+      console.error(
+        `Error: Environment variable "${key}" contains newline characters. Multiline values are not supported by Docker --env-file.`,
+      );
+      process.exit(1);
+    }
     return `${key}=${val}`;
   });
 

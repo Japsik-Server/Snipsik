@@ -15,7 +15,6 @@ SINK_API_TOKEN="complex$#@!\\"with\\"quotes"
 SINGLE_TOKEN='raw$#@!\\"no_escape\\"'
 PLAIN_TOKEN=plain_value # inline comment
 DATABASE_URL="postgresql://user:pass@localhost:5432/db"
-MULTILINE="line1\\nline2"
 `;
 
     execSync(`bun run scripts/parse-env.js "${tmpFile}"`, {
@@ -33,6 +32,24 @@ MULTILINE="line1\\nline2"
     expect(lines).toContain(
       "DATABASE_URL=postgresql://user:pass@localhost:5432/db",
     );
-    expect(lines).toContain("MULTILINE=line1\\nline2");
+  });
+
+  it("rejects environment variables with newline characters to preserve Docker env-file contract", () => {
+    const tmpFile = path.join(os.tmpdir(), `test-parse-fail-${Date.now()}.txt`);
+    const inputWithNewline = `
+VALID_KEY="valid"
+MULTILINE_KEY="line1\\nline2"
+`;
+
+    expect(() => {
+      execSync(`bun run scripts/parse-env.js "${tmpFile}"`, {
+        env: { ...process.env, APP_ENV: inputWithNewline },
+        stdio: "pipe",
+      });
+    }).toThrow();
+
+    if (fs.existsSync(tmpFile)) {
+      fs.unlinkSync(tmpFile);
+    }
   });
 });
