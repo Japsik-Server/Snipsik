@@ -81,7 +81,7 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Prepare environment file
+      - name: Prepare environment file with dotenv
         env:
           APP_ENV: ${{ secrets.ENV_FILE }}
         run: |
@@ -89,8 +89,8 @@ jobs:
             echo "Error: ENV_FILE secret is not configured in GitHub repository secrets!" >&2
             exit 1
           fi
-          echo "$APP_ENV" > .env.prod
-          chmod 600 .env.prod
+          npm install --no-save dotenv@17.4.2
+          node scripts/parse-env.js .env.prod
 
       - name: Deploy container to GCP VM via gcloud compute ssh
         run: |
