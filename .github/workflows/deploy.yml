@@ -95,31 +95,41 @@ jobs:
       - name: Deploy container to GCP VM via gcloud compute ssh
         run: |
           IMAGE_URI="${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.GAR_REPOSITORY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}"
+          DEPLOY_TMP="/tmp/snipsik-deploy-${{ github.sha }}"
 
-          echo "==> Ensuring deployment directory exists on VM..."
+          echo "==> Creating temporary deployment directory on VM..."
           gcloud compute ssh ${{ env.VM_USER }}@${{ env.VM_NAME }} \
             --zone=${{ env.VM_ZONE }} \
             --project=${{ env.GCP_PROJECT_ID }} \
             --quiet \
-            --command="mkdir -p ~/snipsik && rm -f ~/snipsik/.env"
+            --command="mkdir -p $DEPLOY_TMP"
 
-          echo "==> Uploading environment file and deployment script..."
-          gcloud compute scp .env.prod ${{ env.VM_USER }}@${{ env.VM_NAME }}:~/snipsik/.env \
+          echo "==> Uploading environment file and deployment script to temporary directory..."
+          gcloud compute scp .env.prod ${{ env.VM_USER }}@${{ env.VM_NAME }}:$DEPLOY_TMP/.env \
             --zone=${{ env.VM_ZONE }} \
             --project=${{ env.GCP_PROJECT_ID }} \
             --quiet
 
-          gcloud compute scp scripts/deploy.sh ${{ env.VM_USER }}@${{ env.VM_NAME }}:~/snipsik/deploy.sh \
+          gcloud compute scp scripts/deploy.sh ${{ env.VM_USER }}@${{ env.VM_NAME }}:$DEPLOY_TMP/deploy.sh \
             --zone=${{ env.VM_ZONE }} \
             --project=${{ env.GCP_PROJECT_ID }} \
             --quiet
 
-          echo "==> Executing deployment script on VM..."
+          echo "==> Atomically applying files and executing deployment script on VM..."
           gcloud compute ssh ${{ env.VM_USER }}@${{ env.VM_NAME }} \
             --zone=${{ env.VM_ZONE }} \
             --project=${{ env.GCP_PROJECT_ID }} \
             --quiet \
-            --command="bash ~/snipsik/deploy.sh '$IMAGE_URI' '${{ env.CONTAINER_NAME }}' '${{ env.GAR_LOCATION }}' '~/snipsik/.env'"
+            --command="
+              set -e
+              mkdir -p ~/snipsik
+              chmod 600 '$DEPLOY_TMP/.env'
+              mv -f '$DEPLOY_TMP/.env' ~/snipsik/.env
+              chmod +x '$DEPLOY_TMP/deploy.sh'
+              mv -f '$DEPLOY_TMP/deploy.sh' ~/snipsik/deploy.sh
+              rm -rf '$DEPLOY_TMP'
+              bash ~/snipsik/deploy.sh '$IMAGE_URI' '${{ env.CONTAINER_NAME }}' '${{ env.GAR_LOCATION }}' '~/snipsik/.env'
+            "
 
       - name: Clean up temporary files on runner
         if: always()
