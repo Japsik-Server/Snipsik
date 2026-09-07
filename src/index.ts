@@ -3,6 +3,8 @@ import { config } from "@/config";
 import { onReady } from "@/events/ready";
 import { onInteractionCreate } from "@/events/interactionCreate";
 import { onMessageCreate } from "@/events/messageCreate";
+import { onChannelDelete } from "@/events/channelDelete";
+import { onThreadDelete } from "@/events/threadDelete";
 import { logger } from "@/utils/logger";
 
 logger.info("Starting Snipsik Discord Bot...");
@@ -28,6 +30,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
 client.on(Events.MessageCreate, async (message) => {
   await onMessageCreate(message);
+});
+
+client.on(Events.ChannelDelete, async (channel) => {
+  await onChannelDelete(channel);
+});
+
+client.on(Events.ThreadDelete, async (thread) => {
+  await onThreadDelete(thread);
 });
 
 // Global Error Handlers

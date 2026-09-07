@@ -3,6 +3,14 @@ import { db } from "@/db";
 import { watchChannels, type WatchChannel } from "@/db/schema";
 import { logger } from "@/utils/logger";
 
+export interface WatchableChannelLike {
+  id: string;
+  parentId?: string | null;
+  isThread?: () => boolean;
+  parent?: { parentId?: string | null } | null;
+  guild?: { channels?: { cache?: { get?: (id: string) => any } } } | null;
+}
+
 class WatchService {
   // In-memory cache formatted as "guildId:channelId"
   private watchedChannelKeys: Set<string> = new Set();
@@ -19,7 +27,9 @@ class WatchService {
       const records = await db.select().from(watchChannels);
       this.watchedChannelKeys.clear();
       for (const record of records) {
-        this.watchedChannelKeys.add(this.getKey(record.guildId, record.channelId));
+        this.watchedChannelKeys.add(
+          this.getKey(record.guildId, record.channelId),
+        );
       }
       logger.info(`Loaded ${records.length} watched channels into cache.`);
     } catch (error) {
@@ -35,15 +45,86 @@ class WatchService {
   }
 
   /**
+   * Checks whether a channel, its parent channel (e.g. forum or text channel for threads),
+   * or its parent category is being watched.
+   */
+  isChannelWatched(guildId: string, channel: WatchableChannelLike): boolean {
+    if (this.isWatched(guildId, channel.id)) {
+      return true;
+    }
+
+    if (channel.parentId && this.isWatched(guildId, channel.parentId)) {
+      return true;
+    }
+
+    if (channel.isThread?.()) {
+      const directParentCategory = channel.parent?.parentId;
+      if (
+        directParentCategory &&
+        this.isWatched(guildId, directParentCategory)
+      ) {
+        return true;
+      }
+      if (channel.parentId && channel.guild?.channels?.cache?.get) {
+        const cachedParent = channel.guild.channels.cache.get(channel.parentId);
+        if (
+          cachedParent?.parentId &&
+          this.isWatched(guildId, cachedParent.parentId)
+        ) {
+          return true;
+        }
+      }
+    }
+
+    return false;
+  }
+
+  /**
+   * Identifies which parent (parent channel or category) is causing this channel to be watched, if any.
+   */
+  findWatchingParent(
+    guildId: string,
+    channel: WatchableChannelLike,
+  ): string | null {
+    if (channel.parentId && this.isWatched(guildId, channel.parentId)) {
+      return channel.parentId;
+    }
+
+    if (channel.isThread?.()) {
+      const directParentCategory = channel.parent?.parentId;
+      if (
+        directParentCategory &&
+        this.isWatched(guildId, directParentCategory)
+      ) {
+        return directParentCategory;
+      }
+      if (channel.parentId && channel.guild?.channels?.cache?.get) {
+        const cachedParent = channel.guild.channels.cache.get(channel.parentId);
+        if (
+          cachedParent?.parentId &&
+          this.isWatched(guildId, cachedParent.parentId)
+        ) {
+          return cachedParent.parentId;
+        }
+      }
+    }
+
+    return null;
+  }
+
+  /**
    * Adds a channel to the watch list.
    */
   async addWatchChannel(
     guildId: string,
     channelId: string,
-    createdBy: string
+    createdBy: string,
   ): Promise<{ success: boolean; error?: string; channel?: WatchChannel }> {
     if (this.isWatched(guildId, channelId)) {
-      return { success: false, error: "This channel is already being watched." };
+      return {
+        success: false,
+        error: "This channel is already being watched.",
+      };
     }
 
     try {
@@ -62,7 +143,10 @@ class WatchService {
         return { success: true, channel: inserted };
       }
 
-      return { success: false, error: "Failed to insert record into database." };
+      return {
+        success: false,
+        error: "Failed to insert record into database.",
+      };
     } catch (error) {
       logger.error("Database error while adding watch channel:", error);
       return {
@@ -77,17 +161,23 @@ class WatchService {
    */
   async removeWatchChannel(
     guildId: string,
-    channelId: string
+    channelId: string,
   ): Promise<{ success: boolean; error?: string }> {
     if (!this.isWatched(guildId, channelId)) {
-      return { success: false, error: "This channel is not currently being watched." };
+      return {
+        success: false,
+        error: "This channel is not currently being watched.",
+      };
     }
 
     try {
       await db
         .delete(watchChannels)
         .where(
-          and(eq(watchChannels.guildId, guildId), eq(watchChannels.channelId, channelId))
+          and(
+            eq(watchChannels.guildId, guildId),
+            eq(watchChannels.channelId, channelId),
+          ),
         );
 
       this.watchedChannelKeys.delete(this.getKey(guildId, channelId));
@@ -112,7 +202,10 @@ class WatchService {
         .from(watchChannels)
         .where(eq(watchChannels.guildId, guildId));
     } catch (error) {
-      logger.error(`Failed to get watched channels for guild ${guildId}:`, error);
+      logger.error(
+        `Failed to get watched channels for guild ${guildId}:`,
+        error,
+      );
       return [];
     }
   }
