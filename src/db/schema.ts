@@ -17,7 +17,7 @@ export const watchChannels = pgTable("watch_channels", {
   createdAt: timestamp("created_at", { withTimezone: true })
     .defaultNow()
     .notNull(),
-});
+}).enableRLS();
 
 export const guildConfigs = pgTable(
   "guild_configs",
@@ -38,7 +38,7 @@ export const guildConfigs = pgTable(
       sql`${table.autoShortenMinUrlLength} >= 0 AND ${table.autoShortenMinUrlLength} <= 2048`,
     ),
   ],
-);
+).enableRLS();
 
 export const userConfigs = pgTable(
   "user_configs",
@@ -60,7 +60,7 @@ export const userConfigs = pgTable(
       sql`${table.autoShortenMinUrlLength} >= 0 AND ${table.autoShortenMinUrlLength} <= 2048`,
     ),
   ],
-);
+).enableRLS();
 
 export type WatchChannel = typeof watchChannels.$inferSelect;
 export type NewWatchChannel = typeof watchChannels.$inferInsert;
