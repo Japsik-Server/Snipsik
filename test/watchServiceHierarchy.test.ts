@@ -1,10 +1,12 @@
 import { describe, expect, it, beforeEach } from "bun:test";
+import { ChannelType, PermissionFlagsBits } from "discord.js";
 import {
   watchService,
   type WatchableChannelLike,
 } from "@/services/watchService";
 import { onChannelDelete } from "@/events/channelDelete";
 import { onThreadDelete } from "@/events/threadDelete";
+import { validateBotChannelAccess } from "@/commands/link";
 
 describe("WatchService Hierarchy & Special Channel Tests", () => {
   const guildId = "guild-123456";
@@ -244,6 +246,137 @@ describe("WatchService Hierarchy & Special Channel Tests", () => {
       } finally {
         watchService.removeWatchChannel = originalRemove;
       }
+    });
+  });
+
+  describe("validateBotChannelAccess", () => {
+    const mockBotMember = { id: "bot-user-123" };
+
+    it("returns canAccess: true if botMember is null or permissionsFor is absent", async () => {
+      const res1 = await validateBotChannelAccess({ id: "ch-1" }, null);
+      expect(res1.canAccess).toBe(true);
+
+      const res2 = await validateBotChannelAccess(
+        { id: "ch-2" },
+        mockBotMember,
+      );
+      expect(res2.canAccess).toBe(true);
+    });
+
+    it("returns canAccess: false if ViewChannel permission is missing", async () => {
+      const mockChannel = {
+        id: "ch-no-view",
+        type: ChannelType.GuildText,
+        permissionsFor: () => ({
+          has: (perm: bigint) => perm !== PermissionFlagsBits.ViewChannel,
+        }),
+      };
+
+      const res = await validateBotChannelAccess(mockChannel, mockBotMember);
+      expect(res.canAccess).toBe(false);
+      expect(res.errorTitle).toBe("봇 권한 부족");
+    });
+
+    it("returns canAccess: true for normal channel with ViewChannel", async () => {
+      const mockChannel = {
+        id: "ch-ok",
+        type: ChannelType.GuildText,
+        permissionsFor: () => ({
+          has: (perm: bigint) => perm === PermissionFlagsBits.ViewChannel,
+        }),
+      };
+
+      const res = await validateBotChannelAccess(mockChannel, mockBotMember);
+      expect(res.canAccess).toBe(true);
+    });
+
+    it("rejects PrivateThread if bot lacks ManageThreads and is not a member", async () => {
+      const mockPrivateThread = {
+        id: "private-thread-inaccessible",
+        type: ChannelType.PrivateThread,
+        permissionsFor: () => ({
+          has: (perm: bigint) => perm === PermissionFlagsBits.ViewChannel,
+        }),
+        members: {
+          cache: {
+            has: () => false,
+          },
+          fetchMe: async () => null,
+        },
+      };
+
+      const res = await validateBotChannelAccess(
+        mockPrivateThread,
+        mockBotMember,
+      );
+      expect(res.canAccess).toBe(false);
+      expect(res.errorTitle).toBe("비공개 스레드 접근 불가");
+    });
+
+    it("allows PrivateThread if bot has ManageThreads permission", async () => {
+      const mockPrivateThread = {
+        id: "private-thread-manage-perms",
+        type: ChannelType.PrivateThread,
+        permissionsFor: () => ({
+          has: (perm: bigint) =>
+            perm === PermissionFlagsBits.ViewChannel ||
+            perm === PermissionFlagsBits.ManageThreads,
+        }),
+        members: {
+          cache: {
+            has: () => false,
+          },
+        },
+      };
+
+      const res = await validateBotChannelAccess(
+        mockPrivateThread,
+        mockBotMember,
+      );
+      expect(res.canAccess).toBe(true);
+    });
+
+    it("allows PrivateThread if bot is confirmed in members cache", async () => {
+      const mockPrivateThread = {
+        id: "private-thread-member-cached",
+        type: ChannelType.PrivateThread,
+        permissionsFor: () => ({
+          has: (perm: bigint) => perm === PermissionFlagsBits.ViewChannel,
+        }),
+        members: {
+          cache: {
+            has: (id: string) => id === mockBotMember.id,
+          },
+        },
+      };
+
+      const res = await validateBotChannelAccess(
+        mockPrivateThread,
+        mockBotMember,
+      );
+      expect(res.canAccess).toBe(true);
+    });
+
+    it("allows PrivateThread if bot membership is fetched via fetchMe", async () => {
+      const mockPrivateThread = {
+        id: "private-thread-member-fetched",
+        type: ChannelType.PrivateThread,
+        permissionsFor: () => ({
+          has: (perm: bigint) => perm === PermissionFlagsBits.ViewChannel,
+        }),
+        members: {
+          cache: {
+            has: () => false,
+          },
+          fetchMe: async () => ({ id: mockBotMember.id }),
+        },
+      };
+
+      const res = await validateBotChannelAccess(
+        mockPrivateThread,
+        mockBotMember,
+      );
+      expect(res.canAccess).toBe(true);
     });
   });
 });

@@ -814,6 +814,67 @@ export const linkCommand: Command = {
 };
 
 /**
+ * Validates whether the bot has required access to monitor messages in the given channel or thread.
+ * For regular channels and categories, ViewChannel permission is required.
+ * For private threads, either ManageThreads permission or confirmed thread membership is required in addition to ViewChannel.
+ */
+export async function validateBotChannelAccess(
+  channel: {
+    id: string;
+    type?: ChannelType | number;
+    permissionsFor?: (member: any) => { has: (perm: bigint) => boolean } | null;
+    members?: {
+      cache: { has: (id: string) => boolean };
+      fetchMe?: () => Promise<any>;
+    };
+  },
+  botMember: { id: string } | null,
+): Promise<{ canAccess: boolean; errorTitle?: string; errorMessage?: string }> {
+  if (!botMember || !channel.permissionsFor) {
+    return { canAccess: true };
+  }
+
+  const perms = channel.permissionsFor(botMember);
+  if (perms && !perms.has(PermissionFlagsBits.ViewChannel)) {
+    return {
+      canAccess: false,
+      errorTitle: "봇 권한 부족",
+      errorMessage: `<#${channel.id}> 대상에 대해 봇에게 \`채널 보기(ViewChannel)\` 권한이 없습니다.\n봇이 메시지를 감지할 수 있도록 해당 채널 또는 카테고리의 권한을 먼저 허용해주세요.`,
+    };
+  }
+
+  // PrivateThread access check: bot must have ManageThreads OR confirmed membership
+  if (channel.type === ChannelType.PrivateThread) {
+    const hasManageThreads =
+      perms?.has(PermissionFlagsBits.ManageThreads) ?? false;
+    let isThreadMember = false;
+
+    if (!hasManageThreads && channel.members) {
+      if (channel.members.cache.has(botMember.id)) {
+        isThreadMember = true;
+      } else if (typeof channel.members.fetchMe === "function") {
+        try {
+          const member = await channel.members.fetchMe();
+          isThreadMember = Boolean(member);
+        } catch {
+          isThreadMember = false;
+        }
+      }
+    }
+
+    if (!hasManageThreads && !isThreadMember) {
+      return {
+        canAccess: false,
+        errorTitle: "비공개 스레드 접근 불가",
+        errorMessage: `<#${channel.id}> 비공개 스레드의 메시지를 감지하려면 봇에게 \`스레드 관리(ManageThreads)\` 권한이 있거나, 봇이 해당 스레드에 멤버로 추가되어 있어야 합니다.`,
+      };
+    }
+  }
+
+  return { canAccess: true };
+}
+
+/**
  * Handles /link watch [add|remove|list|min-length] subcommands.
  *
  * @param interaction - Chat input command interaction
@@ -855,19 +916,20 @@ async function handleWatchCommand(
   if (subcommand === "add") {
     const channel = interaction.options.getChannel("channel", true);
 
-    // Bot ViewChannel permission check (strict mode)
+    // Bot channel/thread access check (strict mode)
     const botMember =
       guild.members.me ?? (await guild.members.fetchMe().catch(() => null));
-    if (botMember && "permissionsFor" in channel) {
-      const perms = channel.permissionsFor(botMember);
-      if (perms && !perms.has(PermissionFlagsBits.ViewChannel)) {
-        const errEmbed = ui.createErrorMessage(
-          "봇 권한 부족",
-          `<#${channel.id}> 대상에 대해 봇에게 \`채널 보기(ViewChannel)\` 권한이 없습니다.\n봇이 메시지를 감지할 수 있도록 해당 채널 또는 카테고리의 권한을 먼저 허용해주세요.`,
-        );
-        await interaction.editReply(errEmbed);
-        return;
-      }
+    const accessCheck = await validateBotChannelAccess(
+      channel as any,
+      botMember,
+    );
+    if (!accessCheck.canAccess) {
+      const errEmbed = ui.createErrorMessage(
+        accessCheck.errorTitle ?? "봇 권한 부족",
+        accessCheck.errorMessage ?? "채널에 접근할 수 없습니다.",
+      );
+      await interaction.editReply(errEmbed);
+      return;
     }
 
     const res = await watchService.addWatchChannel(
