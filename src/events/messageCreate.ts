@@ -204,10 +204,10 @@ export async function onMessageCreate(message: Message): Promise<void> {
   // Only check guild messages
   if (!message.guildId || !message.guild) return;
 
-  // Fast O(1) in-memory check if user wants DM (tri-state override + channel watch)
-  const isChannelWatched = watchService.isWatched(
+  // Fast in-memory check if user wants DM (tri-state override + channel/parent watch)
+  const isChannelWatched = watchService.isChannelWatched(
     message.guildId,
-    message.channelId,
+    message.channel,
   );
   if (
     !userConfigService.shouldProcessUser(message.author.id, isChannelWatched)

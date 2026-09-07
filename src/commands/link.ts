@@ -408,10 +408,18 @@ export const linkCommand: Command = {
             .addChannelOption((opt) =>
               opt
                 .setName("channel")
-                .setDescription("감시할 텍스트 채널")
+                .setDescription("감시할 채널 또는 카테고리")
                 .addChannelTypes(
                   ChannelType.GuildText,
                   ChannelType.GuildAnnouncement,
+                  ChannelType.GuildForum,
+                  ChannelType.GuildMedia,
+                  ChannelType.GuildVoice,
+                  ChannelType.GuildStageVoice,
+                  ChannelType.PublicThread,
+                  ChannelType.PrivateThread,
+                  ChannelType.AnnouncementThread,
+                  ChannelType.GuildCategory,
                 )
                 .setRequired(true),
             ),
@@ -423,10 +431,18 @@ export const linkCommand: Command = {
             .addChannelOption((opt) =>
               opt
                 .setName("channel")
-                .setDescription("해제할 채널")
+                .setDescription("해제할 채널 또는 카테고리")
                 .addChannelTypes(
                   ChannelType.GuildText,
                   ChannelType.GuildAnnouncement,
+                  ChannelType.GuildForum,
+                  ChannelType.GuildMedia,
+                  ChannelType.GuildVoice,
+                  ChannelType.GuildStageVoice,
+                  ChannelType.PublicThread,
+                  ChannelType.PrivateThread,
+                  ChannelType.AnnouncementThread,
+                  ChannelType.GuildCategory,
                 )
                 .setRequired(true),
             ),
@@ -816,6 +832,8 @@ async function handleWatchCommand(
     return;
   }
 
+  const guild = interaction.guild;
+
   // Permission Check: ManageGuild
   const member = interaction.member;
   if (
@@ -836,6 +854,22 @@ async function handleWatchCommand(
 
   if (subcommand === "add") {
     const channel = interaction.options.getChannel("channel", true);
+
+    // Bot ViewChannel permission check (strict mode)
+    const botMember =
+      guild.members.me ?? (await guild.members.fetchMe().catch(() => null));
+    if (botMember && "permissionsFor" in channel) {
+      const perms = channel.permissionsFor(botMember);
+      if (perms && !perms.has(PermissionFlagsBits.ViewChannel)) {
+        const errEmbed = ui.createErrorMessage(
+          "봇 권한 부족",
+          `<#${channel.id}> 대상에 대해 봇에게 \`채널 보기(ViewChannel)\` 권한이 없습니다.\n봇이 메시지를 감지할 수 있도록 해당 채널 또는 카테고리의 권한을 먼저 허용해주세요.`,
+        );
+        await interaction.editReply(errEmbed);
+        return;
+      }
+    }
+
     const res = await watchService.addWatchChannel(
       interaction.guildId,
       channel.id,
@@ -851,9 +885,21 @@ async function handleWatchCommand(
       return;
     }
 
+    const isCategory = channel.type === ChannelType.GuildCategory;
+    const isForum =
+      channel.type === ChannelType.GuildForum ||
+      channel.type === ChannelType.GuildMedia;
+    let successDetail = `<#${channel.id}> 채널이 URL 자동 단축 감시 대상에 등록되었습니다.\n이제 해당 채널에 긴 URL이 올라오면 작성자의 DM으로 즉시 단축 URL이 전송됩니다.`;
+
+    if (isCategory) {
+      successDetail = `<#${channel.id}> 카테고리가 URL 자동 단축 감시 대상에 등록되었습니다.\n해당 카테고리 내의 모든 하위 채널과 스레드(향후 생성 채널 포함)의 URL이 자동 감시됩니다.`;
+    } else if (isForum) {
+      successDetail = `<#${channel.id}> 포럼이 URL 자동 단축 감시 대상에 등록되었습니다.\n포럼 내 모든 게시글 및 댓글의 URL이 자동 감시됩니다.`;
+    }
+
     const successEmbed = ui.createSuccessMessage(
-      "감시 채널 등록 완료",
-      `<#${channel.id}> 채널이 URL 자동 단축 감시 대상에 등록되었습니다.\n이제 해당 채널에 긴 URL이 올라오면 작성자의 DM으로 즉시 단축 URL이 전송됩니다.`,
+      "감시 대상 등록 완료",
+      successDetail,
     );
     await interaction.editReply(successEmbed);
     return;
@@ -867,17 +913,24 @@ async function handleWatchCommand(
     );
 
     if (!res.success) {
-      const errEmbed = ui.createErrorMessage(
-        "감시 채널 해제 실패",
-        res.error || "오류가 발생했습니다.",
+      const watchingParentId = watchService.findWatchingParent(
+        interaction.guildId,
+        channel,
       );
+
+      let errorMsg = res.error || "오류가 발생했습니다.";
+      if (watchingParentId) {
+        errorMsg = `<#${channel.id}> 대상은 직접 등록되어 있지 않지만, 상위 대상(<#${watchingParentId}>)을 통해 상속 감시 중입니다.\n감시를 해제하려면 상위 대상(<#${watchingParentId}>)을 지정하여 삭제해주세요.`;
+      }
+
+      const errEmbed = ui.createErrorMessage("감시 채널 해제 실패", errorMsg);
       await interaction.editReply(errEmbed);
       return;
     }
 
     const successEmbed = ui.createSuccessMessage(
       "감시 채널 해제 완료",
-      `<#${channel.id}> 채널이 URL 감시 대상에서 해제되었습니다.`,
+      `<#${channel.id}> 대상이 URL 감시 대상에서 해제되었습니다.`,
     );
     await interaction.editReply(successEmbed);
     return;
@@ -895,15 +948,43 @@ async function handleWatchCommand(
       return;
     }
 
+    const getBadge = (channelId: string) => {
+      const ch = guild.channels.cache.get(channelId);
+      if (!ch) {
+        return { icon: "❓", label: "알 수 없음/삭제됨" };
+      }
+      switch (ch.type) {
+        case ChannelType.GuildCategory:
+          return { icon: "📁", label: "카테고리" };
+        case ChannelType.GuildForum:
+          return { icon: "📌", label: "포럼" };
+        case ChannelType.GuildMedia:
+          return { icon: "🖼️", label: "미디어" };
+        case ChannelType.GuildVoice:
+          return { icon: "🗣️", label: "음성 채팅" };
+        case ChannelType.GuildStageVoice:
+          return { icon: "🎭", label: "스테이지" };
+        case ChannelType.GuildAnnouncement:
+          return { icon: "📢", label: "공지" };
+        case ChannelType.AnnouncementThread:
+        case ChannelType.PublicThread:
+        case ChannelType.PrivateThread:
+          return { icon: "🧵", label: "스레드" };
+        case ChannelType.GuildText:
+        default:
+          return { icon: "💬", label: "텍스트" };
+      }
+    };
+
     const channelListStr = channels
-      .map(
-        (c, i) =>
-          `${i + 1}. <#${c.channelId}> (등록자: <@${c.createdBy}>, 등록일: <t:${Math.floor(new Date(c.createdAt).getTime() / 1000)}:d>)`,
-      )
+      .map((c, i) => {
+        const badge = getBadge(c.channelId);
+        return `${i + 1}. ${badge.icon} **[${badge.label}]** <#${c.channelId}> (등록자: <@${c.createdBy}>, 등록일: <t:${Math.floor(new Date(c.createdAt).getTime() / 1000)}:d>)`;
+      })
       .join("\n");
 
     const listEmbed = ui.createSuccessMessage(
-      `현재 서버의 감시 채널 목록 (${channels.length}개)`,
+      `현재 서버의 감시 대상 목록 (${channels.length}개)`,
       channelListStr,
     );
     await interaction.editReply(listEmbed);
