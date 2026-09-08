@@ -3,6 +3,7 @@ import {
   normalizeAutoDmMode,
   normalizeDmFormat,
   normalizeMinUrlLength,
+  normalizeIgnoredDomains,
   userConfigService,
   DEFAULT_USER_CONFIG,
 } from "@/services/userConfigService";
@@ -98,6 +99,47 @@ describe("UserConfigService Unit Tests", () => {
         value: null,
       });
       expect(normalizeMinUrlLength({})).toEqual({ valid: false, value: null });
+    });
+
+    it("should normalize ignored domains properly", () => {
+      // Empty / Reset / Inherit
+      expect(normalizeIgnoredDomains(null)).toEqual({ valid: true, value: [] });
+      expect(normalizeIgnoredDomains(undefined)).toEqual({
+        valid: true,
+        value: [],
+      });
+      expect(normalizeIgnoredDomains("")).toEqual({ valid: true, value: [] });
+      expect(normalizeIgnoredDomains("reset")).toEqual({
+        valid: true,
+        value: [],
+      });
+      expect(normalizeIgnoredDomains("clear")).toEqual({
+        valid: true,
+        value: [],
+      });
+      expect(normalizeIgnoredDomains("inherit")).toEqual({
+        valid: true,
+        value: [],
+      });
+
+      // Valid string list
+      expect(
+        normalizeIgnoredDomains("tenor.com, GIPHY.COM, https://example.com/"),
+      ).toEqual({
+        valid: true,
+        value: ["tenor.com", "giphy.com", "example.com"],
+      });
+
+      // Valid array
+      expect(normalizeIgnoredDomains(["tenor.com", "discordapp.com"])).toEqual({
+        valid: true,
+        value: ["tenor.com", "discordapp.com"],
+      });
+
+      // Invalid domain inside list
+      const invalidRes = normalizeIgnoredDomains("valid.com, not a domain");
+      expect(invalidRes.valid).toBe(false);
+      expect(invalidRes.error).toContain("유효하지 않은 도메인");
     });
   });
 

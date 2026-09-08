@@ -5,6 +5,7 @@ import { userConfigService } from "@/services/userConfigService";
 import { guildConfigService } from "@/services/guildConfigService";
 import { generateSlug, verifyOwnership } from "@/services/slugManager";
 import { sinkClient } from "@/services/sinkClient";
+import { isDomainIgnored } from "@/utils/domain";
 import { ui } from "@/utils/ui";
 import { logger } from "@/utils/logger";
 
@@ -241,6 +242,11 @@ export async function onMessageCreate(message: Message): Promise<void> {
     message.guildId,
     message.author.id,
   );
+  const effectiveIgnoredDomains =
+    guildConfigService.resolveEffectiveIgnoredDomains(
+      message.guildId,
+      message.author.id,
+    );
 
   // 1. Extract valid URLs in order of appearance (deduplicating identical URLs while preserving order)
   const seenUrls = new Set<string>();
@@ -253,6 +259,11 @@ export async function onMessageCreate(message: Message): Promise<void> {
 
       // Skip if URL is already pointing to our Sink instance (prevent loop)
       if (parsedUrl.hostname.toLowerCase() === sinkHostname) {
+        continue;
+      }
+
+      // Skip URLs whose domain is in effective ignored domains (GIF / Discord CDN / custom ignored domains)
+      if (isDomainIgnored(parsedUrl.hostname, effectiveIgnoredDomains)) {
         continue;
       }
 

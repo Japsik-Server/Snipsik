@@ -1,5 +1,6 @@
 import { db } from "@/db";
 import { userConfigs } from "@/db/schema";
+import { normalizeDomain, MAX_CUSTOM_IGNORED_DOMAINS } from "@/utils/domain";
 import { logger } from "@/utils/logger";
 
 export type AutoDmMode = "inherit" | "on" | "off";
@@ -10,13 +11,84 @@ export interface UserConfigData {
   autoDmMode: AutoDmMode;
   dmFormat: DmFormat;
   autoShortenMinUrlLength: number | null;
+  ignoredDomains: string[];
 }
 
 export const DEFAULT_USER_CONFIG: Readonly<UserConfigData> = {
   autoDmMode: "inherit",
   dmFormat: "replace",
   autoShortenMinUrlLength: null,
+  ignoredDomains: [],
 };
+
+/**
+ * Normalizes input value for custom ignored domains.
+ * Accepts comma-separated string or array of strings.
+ * - "reset", "clear", "inherit", "default", "", null, undefined, []: returns { valid: true, value: [] }
+ * - Otherwise parses and normalizes each domain via normalizeDomain().
+ * - Rejects if any domain is invalid or if unique count exceeds MAX_CUSTOM_IGNORED_DOMAINS.
+ *
+ * @param value - The raw input value to normalize.
+ * @returns An object indicating validity, normalized string array, and optional error message.
+ */
+export function normalizeIgnoredDomains(value: unknown): {
+  valid: boolean;
+  value: string[];
+  error?: string;
+} {
+  if (value === null || value === undefined) {
+    return { valid: true, value: [] };
+  }
+
+  let candidates: string[] = [];
+
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (
+      !trimmed ||
+      trimmed.toLowerCase() === "reset" ||
+      trimmed.toLowerCase() === "clear" ||
+      trimmed.toLowerCase() === "inherit" ||
+      trimmed.toLowerCase() === "default"
+    ) {
+      return { valid: true, value: [] };
+    }
+    candidates = trimmed.split(/[\s,]+/);
+  } else if (Array.isArray(value)) {
+    candidates = value.map((v) => String(v));
+  } else {
+    return {
+      valid: false,
+      value: [],
+      error: "도메인 목록은 쉼표로 구분된 문자열 또는 배열이어야 합니다.",
+    };
+  }
+
+  const result = new Set<string>();
+  for (const raw of candidates) {
+    const item = raw.trim();
+    if (!item) continue;
+    const normalized = normalizeDomain(item);
+    if (!normalized) {
+      return {
+        valid: false,
+        value: [],
+        error: `유효하지 않은 도메인 형식입니다: '${item}'`,
+      };
+    }
+    result.add(normalized);
+  }
+
+  if (result.size > MAX_CUSTOM_IGNORED_DOMAINS) {
+    return {
+      valid: false,
+      value: [],
+      error: `제외 도메인은 최대 ${MAX_CUSTOM_IGNORED_DOMAINS}개까지 등록할 수 있습니다. (입력: ${result.size}개)`,
+    };
+  }
+
+  return { valid: true, value: Array.from(result) };
+}
 
 /**
  * Normalizes input value for minimum URL length threshold.
@@ -186,6 +258,7 @@ class UserConfigService {
             autoDmMode,
             dmFormat,
             autoShortenMinUrlLength: record.autoShortenMinUrlLength ?? null,
+            ignoredDomains: record.ignoredDomains ?? [],
           });
         }
       } else {
@@ -200,6 +273,7 @@ class UserConfigService {
               autoDmMode,
               dmFormat,
               autoShortenMinUrlLength: record.autoShortenMinUrlLength ?? null,
+              ignoredDomains: record.ignoredDomains ?? [],
             });
           }
         }
@@ -243,7 +317,7 @@ class UserConfigService {
     updates: Partial<
       Pick<
         UserConfigData,
-        "autoDmMode" | "dmFormat" | "autoShortenMinUrlLength"
+        "autoDmMode" | "dmFormat" | "autoShortenMinUrlLength" | "ignoredDomains"
       >
     >,
   ): Promise<{ success: boolean; error?: string; config: UserConfigData }> {
@@ -257,6 +331,7 @@ class UserConfigService {
       autoDmMode?: AutoDmMode;
       dmFormat?: DmFormat;
       autoShortenMinUrlLength?: number | null;
+      ignoredDomains?: string[];
       updatedAt: Date;
     } = {
       userId,
@@ -295,6 +370,19 @@ class UserConfigService {
       insertValues.autoShortenMinUrlLength = normalizedLen.value;
     }
 
+    if (updates.ignoredDomains !== undefined) {
+      const normalizedDomains = normalizeIgnoredDomains(updates.ignoredDomains);
+      if (!normalizedDomains.valid) {
+        return {
+          success: false,
+          error: normalizedDomains.error || "Invalid ignoredDomains.",
+          config: current,
+        };
+      }
+      setClause.ignoredDomains = normalizedDomains.value;
+      insertValues.ignoredDomains = normalizedDomains.value;
+    }
+
     try {
       const [saved] = await db
         .insert(userConfigs)
@@ -314,6 +402,7 @@ class UserConfigService {
         autoDmMode: normalizeAutoDmMode(saved.autoDmMode) ?? "inherit",
         dmFormat: normalizeDmFormat(saved.dmFormat) ?? "replace",
         autoShortenMinUrlLength: saved.autoShortenMinUrlLength ?? null,
+        ignoredDomains: saved.ignoredDomains ?? [],
       };
 
       this.cacheEpoch++;
@@ -322,7 +411,7 @@ class UserConfigService {
         this.triggerBackgroundReload();
       }
       logger.info(
-        `Updated user config for ${userId}: autoDmMode=${savedConfig.autoDmMode}, dmFormat=${savedConfig.dmFormat}, autoShortenMinUrlLength=${savedConfig.autoShortenMinUrlLength}`,
+        `Updated user config for ${userId}: autoDmMode=${savedConfig.autoDmMode}, dmFormat=${savedConfig.dmFormat}, autoShortenMinUrlLength=${savedConfig.autoShortenMinUrlLength}, ignoredDomains=${savedConfig.ignoredDomains.length}`,
       );
       return { success: true, config: savedConfig };
     } catch (error) {

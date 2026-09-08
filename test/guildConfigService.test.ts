@@ -37,11 +37,13 @@ describe("GuildConfigService Unit Tests", () => {
         guildId: testGuildId,
         autoShortenEnabled: true,
         autoShortenMinUrlLength: 50,
+        ignoredDomains: ["custom.example.com"],
       });
 
       const result = guildConfigService.getGuildConfig(testGuildId);
       expect(result.guildId).toBe(testGuildId);
       expect(result.autoShortenMinUrlLength).toBe(50);
+      expect(result.ignoredDomains).toEqual(["custom.example.com"]);
     });
   });
 
@@ -164,6 +166,47 @@ describe("GuildConfigService Unit Tests", () => {
       expect(
         guildConfigService.resolveEffectiveMinUrlLength(undefined, testUserId),
       ).toBe(config.AUTO_SHORTEN_MIN_URL_LENGTH);
+    });
+  });
+
+  describe("resolveEffectiveIgnoredDomains (Cumulative Union)", () => {
+    it("includes system defaults when neither guild nor user has additions", () => {
+      const effective = guildConfigService.resolveEffectiveIgnoredDomains(
+        testGuildId,
+        testUserId,
+      );
+      expect(effective.has("tenor.com")).toBe(true);
+      expect(effective.has("giphy.com")).toBe(true);
+      expect(effective.has("cdn.discordapp.com")).toBe(true);
+      expect(effective.has("media.discordapp.net")).toBe(true);
+      expect(effective.has("imgur.com")).toBe(true);
+    });
+
+    it("unions system defaults, guild additions, and user additions", () => {
+      // @ts-expect-error accessing private cache for test setup
+      guildConfigService.cache.set(testGuildId, {
+        guildId: testGuildId,
+        autoShortenEnabled: true,
+        autoShortenMinUrlLength: null,
+        ignoredDomains: ["guild-custom.org"],
+      });
+
+      // @ts-expect-error accessing private cache for test setup
+      userConfigService.cache.set(testUserId, {
+        userId: testUserId,
+        autoDmMode: "inherit",
+        dmFormat: "replace",
+        autoShortenMinUrlLength: null,
+        ignoredDomains: ["user-custom.net"],
+      });
+
+      const effective = guildConfigService.resolveEffectiveIgnoredDomains(
+        testGuildId,
+        testUserId,
+      );
+      expect(effective.has("tenor.com")).toBe(true);
+      expect(effective.has("guild-custom.org")).toBe(true);
+      expect(effective.has("user-custom.net")).toBe(true);
     });
   });
 

@@ -5,17 +5,25 @@ import {
   userConfigService,
   normalizeMinUrlLength,
 } from "@/services/userConfigService";
+import {
+  getAllSystemDefaultDomains,
+  isSystemDefaultDomain,
+  normalizeDomain,
+  MAX_CUSTOM_IGNORED_DOMAINS,
+} from "@/utils/domain";
 import { logger } from "@/utils/logger";
 
 export interface GuildConfigData {
   guildId?: string;
   autoShortenEnabled: boolean;
   autoShortenMinUrlLength: number | null;
+  ignoredDomains: string[];
 }
 
 export const DEFAULT_GUILD_CONFIG: Readonly<GuildConfigData> = {
   autoShortenEnabled: true,
   autoShortenMinUrlLength: null,
+  ignoredDomains: [],
 };
 
 class GuildConfigService {
@@ -91,6 +99,7 @@ class GuildConfigService {
             guildId: record.guildId,
             autoShortenEnabled: record.autoShortenEnabled,
             autoShortenMinUrlLength: record.autoShortenMinUrlLength ?? null,
+            ignoredDomains: record.ignoredDomains ?? [],
           });
         }
       } else {
@@ -101,6 +110,7 @@ class GuildConfigService {
               guildId: record.guildId,
               autoShortenEnabled: record.autoShortenEnabled,
               autoShortenMinUrlLength: record.autoShortenMinUrlLength ?? null,
+              ignoredDomains: record.ignoredDomains ?? [],
             });
           }
         }
@@ -144,7 +154,10 @@ class GuildConfigService {
   async setGuildConfig(
     guildId: string,
     updates: Partial<
-      Pick<GuildConfigData, "autoShortenEnabled" | "autoShortenMinUrlLength">
+      Pick<
+        GuildConfigData,
+        "autoShortenEnabled" | "autoShortenMinUrlLength" | "ignoredDomains"
+      >
     >,
   ): Promise<{ success: boolean; error?: string; config: GuildConfigData }> {
     const current = this.getGuildConfig(guildId);
@@ -156,6 +169,7 @@ class GuildConfigService {
       guildId: string;
       autoShortenEnabled?: boolean;
       autoShortenMinUrlLength?: number | null;
+      ignoredDomains?: string[];
       updatedAt: Date;
     } = {
       guildId,
@@ -183,6 +197,27 @@ class GuildConfigService {
       insertValues.autoShortenMinUrlLength = normalizedLen.value;
     }
 
+    if (updates.ignoredDomains !== undefined) {
+      const normalizedList: string[] = [];
+      const seen = new Set<string>();
+      for (const d of updates.ignoredDomains) {
+        const norm = normalizeDomain(d);
+        if (norm && !seen.has(norm)) {
+          seen.add(norm);
+          normalizedList.push(norm);
+        }
+      }
+      if (normalizedList.length > MAX_CUSTOM_IGNORED_DOMAINS) {
+        return {
+          success: false,
+          error: `제외 도메인은 최대 ${MAX_CUSTOM_IGNORED_DOMAINS}개까지 등록할 수 있습니다.`,
+          config: current,
+        };
+      }
+      setClause.ignoredDomains = normalizedList;
+      insertValues.ignoredDomains = normalizedList;
+    }
+
     try {
       const [saved] = await db
         .insert(guildConfigs)
@@ -201,6 +236,7 @@ class GuildConfigService {
         guildId: saved.guildId,
         autoShortenEnabled: saved.autoShortenEnabled,
         autoShortenMinUrlLength: saved.autoShortenMinUrlLength ?? null,
+        ignoredDomains: saved.ignoredDomains ?? [],
       };
 
       this.cacheEpoch++;
@@ -209,7 +245,7 @@ class GuildConfigService {
         this.triggerBackgroundReload();
       }
       logger.info(
-        `Updated guild config for ${guildId}: autoShortenEnabled=${savedConfig.autoShortenEnabled}, autoShortenMinUrlLength=${savedConfig.autoShortenMinUrlLength}`,
+        `Updated guild config for ${guildId}: autoShortenEnabled=${savedConfig.autoShortenEnabled}, autoShortenMinUrlLength=${savedConfig.autoShortenMinUrlLength}, ignoredDomains=${savedConfig.ignoredDomains.length}`,
       );
       return { success: true, config: savedConfig };
     } catch (error) {
@@ -220,6 +256,144 @@ class GuildConfigService {
         config: current,
       };
     }
+  }
+
+  /**
+   * Adds an ignored domain to a guild configuration.
+   *
+   * @param guildId - Discord guild snowflake ID.
+   * @param rawDomain - Raw domain string to add.
+   * @returns Operation status with reason or updated config.
+   */
+  async addIgnoredDomain(
+    guildId: string,
+    rawDomain: string,
+  ): Promise<{ success: boolean; error?: string; config: GuildConfigData }> {
+    const current = this.getGuildConfig(guildId);
+    const normalized = normalizeDomain(rawDomain);
+    if (!normalized) {
+      return {
+        success: false,
+        error: `유효하지 않은 도메인 형식입니다: '${rawDomain}'`,
+        config: current,
+      };
+    }
+
+    if (isSystemDefaultDomain(normalized)) {
+      return {
+        success: false,
+        error: "is_system_default",
+        config: current,
+      };
+    }
+
+    if (current.ignoredDomains.includes(normalized)) {
+      return {
+        success: false,
+        error: "already_exists",
+        config: current,
+      };
+    }
+
+    if (current.ignoredDomains.length >= MAX_CUSTOM_IGNORED_DOMAINS) {
+      return {
+        success: false,
+        error: "limit_exceeded",
+        config: current,
+      };
+    }
+
+    const nextDomains = [...current.ignoredDomains, normalized];
+    return this.setGuildConfig(guildId, { ignoredDomains: nextDomains });
+  }
+
+  /**
+   * Removes an ignored domain from a guild configuration.
+   *
+   * @param guildId - Discord guild snowflake ID.
+   * @param rawDomain - Raw domain string to remove.
+   * @returns Operation status with reason or updated config.
+   */
+  async removeIgnoredDomain(
+    guildId: string,
+    rawDomain: string,
+  ): Promise<{ success: boolean; error?: string; config: GuildConfigData }> {
+    const current = this.getGuildConfig(guildId);
+    const normalized = normalizeDomain(rawDomain);
+    if (!normalized) {
+      return {
+        success: false,
+        error: `유효하지 않은 도메인 형식입니다: '${rawDomain}'`,
+        config: current,
+      };
+    }
+
+    if (isSystemDefaultDomain(normalized)) {
+      return {
+        success: false,
+        error: "is_system_default",
+        config: current,
+      };
+    }
+
+    if (!current.ignoredDomains.includes(normalized)) {
+      return {
+        success: false,
+        error: "not_found",
+        config: current,
+      };
+    }
+
+    const nextDomains = current.ignoredDomains.filter((d) => d !== normalized);
+    return this.setGuildConfig(guildId, { ignoredDomains: nextDomains });
+  }
+
+  /**
+   * Resets all custom ignored domains for a guild.
+   *
+   * @param guildId - Discord guild snowflake ID.
+   * @returns Operation status and reset config.
+   */
+  async resetIgnoredDomains(
+    guildId: string,
+  ): Promise<{ success: boolean; error?: string; config: GuildConfigData }> {
+    return this.setGuildConfig(guildId, { ignoredDomains: [] });
+  }
+
+  /**
+   * Resolves the cumulative set of ignored domains for a message:
+   * System Defaults (Tenor, Giphy, Discord CDN, Imgur + ENV) + Guild Additions + User Additions.
+   *
+   * @param guildId - Discord guild snowflake ID (or null/undefined)
+   * @param userId - Discord user snowflake ID
+   * @returns Combined Set of effective ignored domains
+   */
+  resolveEffectiveIgnoredDomains(
+    guildId: string | null | undefined,
+    userId: string,
+  ): Set<string> {
+    const effective = new Set<string>(getAllSystemDefaultDomains());
+
+    if (guildId) {
+      if (!this.cacheLoaded) {
+        this.triggerBackgroundReload();
+      }
+      const guildCfg = this.getGuildConfig(guildId);
+      if (Array.isArray(guildCfg.ignoredDomains)) {
+        for (const d of guildCfg.ignoredDomains) {
+          effective.add(d);
+        }
+      }
+    }
+
+    const userCfg = userConfigService.getUserConfig(userId);
+    if (Array.isArray(userCfg.ignoredDomains)) {
+      for (const d of userCfg.ignoredDomains) {
+        effective.add(d);
+      }
+    }
+
+    return effective;
   }
 
   /**
