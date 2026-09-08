@@ -7,6 +7,7 @@ import { generateSlug, verifyOwnership } from "@/services/slugManager";
 import { sinkClient } from "@/services/sinkClient";
 import { ui } from "@/utils/ui";
 import { logger } from "@/utils/logger";
+import { isAutoShortenExcludedMediaUrl } from "@/utils/mediaUrl";
 
 // URL extraction regex (permits query string pipes | while excluding whitespace, angle/curly brackets, backticks, quotes, and backslashes)
 const URL_REGEX = /https?:\/\/[^\s<>"^`{}\\]+/gi;
@@ -250,6 +251,11 @@ export async function onMessageCreate(message: Message): Promise<void> {
     const rawUrl = cleanExtractedUrl(rawMatch, isEnclosedInSpoiler);
     try {
       const parsedUrl = new URL(rawUrl);
+
+      // Avoid unnecessary shortening and DMs for GIF and known media links.
+      if (isAutoShortenExcludedMediaUrl(parsedUrl)) {
+        continue;
+      }
 
       // Skip if URL is already pointing to our Sink instance (prevent loop)
       if (parsedUrl.hostname.toLowerCase() === sinkHostname) {

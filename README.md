@@ -11,6 +11,7 @@
 - 👑 **커스텀 슬러그 권한 제어**: `ADMIN_USER_IDS`에 지정된 관리자만 `/link custom` 생성 허용
 - 📊 **유저 개인 전용 일시성(Ephemeral) 대시보드**: 누적 클릭 통계 요약, 링크 선택 드롭다운, Modal 팝업 생성/수정, 삭제 확인
 - 👁️ **채널 감시(Watcher) & 모바일 최적화 DM**: 감시 채널에서 긴 URL 감지 시 자동 단축 후 1차 UI 카드 및 2차 원터치 복사용 순수 Plain URL 전송
+- 🖼️ **미디어 링크 보존**: GIF 및 Discord·Tenor·Giphy 미디어 링크는 불필요한 자동 단축과 DM을 방지
 - 🛡️ **Strict TypeScript & Supabase**: `any` 타입 배제 엄격한 타입 안정성, Supabase + Drizzle ORM 설정 저장
 
 ---
