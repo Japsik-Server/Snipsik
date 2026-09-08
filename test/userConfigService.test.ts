@@ -7,6 +7,7 @@ import {
   userConfigService,
   DEFAULT_USER_CONFIG,
 } from "@/services/userConfigService";
+import { MAX_CUSTOM_IGNORED_DOMAINS } from "@/utils/domain";
 
 describe("UserConfigService Unit Tests", () => {
   describe("Normalization Helpers", () => {
@@ -140,6 +141,16 @@ describe("UserConfigService Unit Tests", () => {
       const invalidRes = normalizeIgnoredDomains("valid.com, not a domain");
       expect(invalidRes.valid).toBe(false);
       expect(invalidRes.error).toContain("유효하지 않은 도메인");
+
+      // Exceeds maximum unique count
+      const tooMany = Array.from(
+        { length: MAX_CUSTOM_IGNORED_DOMAINS + 1 },
+        (_, i) => `d${i}.example.com`,
+      );
+      const limitRes = normalizeIgnoredDomains(tooMany);
+      expect(limitRes.valid).toBe(false);
+      expect(limitRes.value).toEqual([]);
+      expect(limitRes.error).toContain("최대");
     });
   });
 

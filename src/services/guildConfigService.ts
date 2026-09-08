@@ -1,3 +1,4 @@
+import { eq } from "drizzle-orm";
 import { db } from "@/db";
 import { guildConfigs } from "@/db/schema";
 import { config } from "@/config";
@@ -259,7 +260,105 @@ class GuildConfigService {
   }
 
   /**
-   * Adds an ignored domain to a guild configuration.
+   * Atomically mutates the ignored domains array for a guild using a database transaction with row-level locking (FOR UPDATE).
+   * Derives the replacement array from the fresh, locked row to prevent concurrent race conditions.
+   *
+   * @param guildId - Discord guild snowflake ID.
+   * @param mutator - Pure callback that computes next domains or returns an error based on fresh locked domains.
+   * @returns Updated config or error status.
+   */
+  private async mutateIgnoredDomains(
+    guildId: string,
+    mutator: (
+      currentDomains: string[],
+    ) => { ok: true; domains: string[] } | { ok: false; error: string },
+  ): Promise<{ success: boolean; error?: string; config: GuildConfigData }> {
+    const fallbackConfig = this.getGuildConfig(guildId);
+    try {
+      return await db.transaction(async (tx) => {
+        const rows = await tx
+          .select()
+          .from(guildConfigs)
+          .where(eq(guildConfigs.guildId, guildId))
+          .for("update");
+
+        const existingRow = rows[0];
+        const currentDomains = existingRow?.ignoredDomains ?? [];
+
+        const mutationResult = mutator([...currentDomains]);
+        if (!mutationResult.ok) {
+          return {
+            success: false,
+            error: mutationResult.error,
+            config: existingRow
+              ? {
+                  guildId: existingRow.guildId,
+                  autoShortenEnabled: existingRow.autoShortenEnabled,
+                  autoShortenMinUrlLength:
+                    existingRow.autoShortenMinUrlLength ?? null,
+                  ignoredDomains: existingRow.ignoredDomains ?? [],
+                }
+              : fallbackConfig,
+          };
+        }
+
+        const nextDomains = mutationResult.domains;
+
+        const [saved] = await tx
+          .insert(guildConfigs)
+          .values({
+            guildId,
+            autoShortenEnabled: existingRow?.autoShortenEnabled ?? true,
+            autoShortenMinUrlLength:
+              existingRow?.autoShortenMinUrlLength ?? null,
+            ignoredDomains: nextDomains,
+            updatedAt: new Date(),
+          })
+          .onConflictDoUpdate({
+            target: guildConfigs.guildId,
+            set: {
+              ignoredDomains: nextDomains,
+              updatedAt: new Date(),
+            },
+          })
+          .returning();
+
+        if (!saved) {
+          throw new Error("Failed to persist updated guild ignored domains.");
+        }
+
+        const savedConfig: GuildConfigData = {
+          guildId: saved.guildId,
+          autoShortenEnabled: saved.autoShortenEnabled,
+          autoShortenMinUrlLength: saved.autoShortenMinUrlLength ?? null,
+          ignoredDomains: saved.ignoredDomains ?? [],
+        };
+
+        this.cacheEpoch++;
+        this.cache.set(guildId, savedConfig);
+        if (!this.cacheLoaded) {
+          this.triggerBackgroundReload();
+        }
+        logger.info(
+          `Atomically updated ignored domains for ${guildId}: count=${savedConfig.ignoredDomains.length}`,
+        );
+        return { success: true, config: savedConfig };
+      });
+    } catch (error) {
+      logger.error(
+        `Failed to atomically mutate guild ignored domains for ${guildId}:`,
+        error,
+      );
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : "Database error",
+        config: fallbackConfig,
+      };
+    }
+  }
+
+  /**
+   * Adds an ignored domain to a guild configuration atomically with row-level locking.
    *
    * @param guildId - Discord guild snowflake ID.
    * @param rawDomain - Raw domain string to add.
@@ -287,28 +386,21 @@ class GuildConfigService {
       };
     }
 
-    if (current.ignoredDomains.includes(normalized)) {
-      return {
-        success: false,
-        error: "already_exists",
-        config: current,
-      };
-    }
+    return this.mutateIgnoredDomains(guildId, (currentDomains) => {
+      if (currentDomains.includes(normalized)) {
+        return { ok: false, error: "already_exists" };
+      }
 
-    if (current.ignoredDomains.length >= MAX_CUSTOM_IGNORED_DOMAINS) {
-      return {
-        success: false,
-        error: "limit_exceeded",
-        config: current,
-      };
-    }
+      if (currentDomains.length >= MAX_CUSTOM_IGNORED_DOMAINS) {
+        return { ok: false, error: "limit_exceeded" };
+      }
 
-    const nextDomains = [...current.ignoredDomains, normalized];
-    return this.setGuildConfig(guildId, { ignoredDomains: nextDomains });
+      return { ok: true, domains: [...currentDomains, normalized] };
+    });
   }
 
   /**
-   * Removes an ignored domain from a guild configuration.
+   * Removes an ignored domain from a guild configuration atomically with row-level locking.
    *
    * @param guildId - Discord guild snowflake ID.
    * @param rawDomain - Raw domain string to remove.
@@ -336,20 +428,20 @@ class GuildConfigService {
       };
     }
 
-    if (!current.ignoredDomains.includes(normalized)) {
-      return {
-        success: false,
-        error: "not_found",
-        config: current,
-      };
-    }
+    return this.mutateIgnoredDomains(guildId, (currentDomains) => {
+      if (!currentDomains.includes(normalized)) {
+        return { ok: false, error: "not_found" };
+      }
 
-    const nextDomains = current.ignoredDomains.filter((d) => d !== normalized);
-    return this.setGuildConfig(guildId, { ignoredDomains: nextDomains });
+      return {
+        ok: true,
+        domains: currentDomains.filter((d) => d !== normalized),
+      };
+    });
   }
 
   /**
-   * Resets all custom ignored domains for a guild.
+   * Resets all custom ignored domains for a guild atomically.
    *
    * @param guildId - Discord guild snowflake ID.
    * @returns Operation status and reset config.
@@ -357,7 +449,10 @@ class GuildConfigService {
   async resetIgnoredDomains(
     guildId: string,
   ): Promise<{ success: boolean; error?: string; config: GuildConfigData }> {
-    return this.setGuildConfig(guildId, { ignoredDomains: [] });
+    return this.mutateIgnoredDomains(guildId, () => ({
+      ok: true,
+      domains: [],
+    }));
   }
 
   /**
