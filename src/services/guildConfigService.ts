@@ -282,15 +282,13 @@ class GuildConfigService {
   ): Promise<{ success: boolean; error?: string; config: GuildConfigData }> {
     const fallbackConfig = this.getGuildConfig(guildId);
     try {
-      return await db.transaction(async (tx) => {
+      const result = await db.transaction(async (tx) => {
         // 1. Ensure a base guild_configs row exists before locking to avoid empty row lock misses
         await tx
           .insert(guildConfigs)
           .values({
             guildId,
-            autoShortenEnabled: true,
-            autoShortenMinUrlLength: null,
-            ignoredDomains: [],
+            ...DEFAULT_GUILD_CONFIG,
             updatedAt: new Date(),
           })
           .onConflictDoNothing();
@@ -346,16 +344,21 @@ class GuildConfigService {
           ignoredDomains: saved.ignoredDomains ?? [],
         };
 
+        return { success: true, config: savedConfig };
+      });
+
+      if (result.success) {
         this.cacheEpoch++;
-        this.cache.set(guildId, savedConfig);
+        this.cache.set(guildId, result.config);
         if (!this.cacheLoaded) {
           this.triggerBackgroundReload();
         }
         logger.info(
-          `Atomically updated ignored domains for ${guildId}: count=${savedConfig.ignoredDomains.length}`,
+          `Atomically updated ignored domains for ${guildId}: count=${result.config.ignoredDomains.length}`,
         );
-        return { success: true, config: savedConfig };
-      });
+      }
+
+      return result;
     } catch (error) {
       logger.error(
         `Failed to atomically mutate guild ignored domains for ${guildId}:`,
