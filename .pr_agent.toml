@@ -1,0 +1,18 @@
+[config]
+model = "openrouter/openai/gpt-5.6-sol"
+model_weak = "openrouter/zhipu/glm-5.3-flash"
+fallback_models = ["openrouter/zhipu/glm-5.3-flash"]
+response_language = "en"
+
+[pr_description]
+publish_description_as_comment = true
+add_lgtm = false
+
+[pr_reviewer]
+inline_code_comments = true
+enable_auto_approval = false
+enable_review_labels_effort = true
+require_all_thresholds_for_passing = false
+
+[pr_code_suggestions]
+commitable_code_suggestions = false

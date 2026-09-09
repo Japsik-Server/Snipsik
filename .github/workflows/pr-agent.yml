@@ -1,0 +1,90 @@
+name: PR-Agent
+
+on:
+  pull_request:
+    types: [opened, reopened, ready_for_review]
+  issue_comment:
+    types: [created]
+
+concurrency:
+  group: pr-agent-${{ github.event.number || github.event.issue.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  pr-agent:
+    runs-on: ubuntu-latest
+    if: |
+      (
+        github.event_name == 'pull_request' &&
+        !github.event.pull_request.draft &&
+        github.event.pull_request.head.repo.full_name == github.repository
+      ) || (
+        github.event_name == 'issue_comment' &&
+        github.event.issue.pull_request &&
+        contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association) &&
+        (startsWith(github.event.comment.body, '/') || contains(github.event.comment.body, '@pr-agent'))
+      )
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Auto Describe (GLM 5.3 Flash)
+        if: github.event_name == 'pull_request'
+        uses: The-PR-Agent/pr-agent@f3b385ea2927247ddcff2fe252472380b9c8f5fc # v0.45.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          OPENROUTER.API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          GITHUB_ACTION_CONFIG.AUTO_DESCRIBE: "true"
+          GITHUB_ACTION.AUTO_DESCRIBE: "true"
+          GITHUB_ACTION_CONFIG.AUTO_REVIEW: "false"
+          GITHUB_ACTION.AUTO_REVIEW: "false"
+          GITHUB_ACTION_CONFIG.AUTO_IMPROVE: "false"
+          GITHUB_ACTION.AUTO_IMPROVE: "false"
+
+      - name: Auto Review (GPT-5.6 Sol - Flex Tier)
+        if: github.event_name == 'pull_request'
+        uses: The-PR-Agent/pr-agent@f3b385ea2927247ddcff2fe252472380b9c8f5fc # v0.45.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          OPENROUTER.API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          OPENROUTER.PROVIDER_ONLY: '["OpenAI"]'
+          OPENROUTER_PROVIDER_ONLY: '["OpenAI"]'
+          LITELLM.EXTRA_BODY: '{"service_tier": "flex"}'
+          LITELLM_EXTRA_BODY: '{"service_tier": "flex"}'
+          GITHUB_ACTION_CONFIG.AUTO_DESCRIBE: "false"
+          GITHUB_ACTION.AUTO_DESCRIBE: "false"
+          GITHUB_ACTION_CONFIG.AUTO_REVIEW: "true"
+          GITHUB_ACTION.AUTO_REVIEW: "true"
+          GITHUB_ACTION_CONFIG.AUTO_IMPROVE: "false"
+          GITHUB_ACTION.AUTO_IMPROVE: "false"
+
+      - name: Handle Comment Command (Describe - GLM 5.3 Flash)
+        if: |
+          github.event_name == 'issue_comment' &&
+          startsWith(github.event.comment.body, '/describe')
+        uses: The-PR-Agent/pr-agent@f3b385ea2927247ddcff2fe252472380b9c8f5fc # v0.45.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          OPENROUTER.API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+
+      - name: Handle Comment Command (Review/Improve/Ask - GPT-5.6 Sol Flex)
+        if: |
+          github.event_name == 'issue_comment' &&
+          !startsWith(github.event.comment.body, '/describe')
+        uses: The-PR-Agent/pr-agent@f3b385ea2927247ddcff2fe252472380b9c8f5fc # v0.45.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          OPENROUTER.API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          OPENROUTER.PROVIDER_ONLY: '["OpenAI"]'
+          OPENROUTER_PROVIDER_ONLY: '["OpenAI"]'
+          LITELLM.EXTRA_BODY: '{"service_tier": "flex"}'
+          LITELLM_EXTRA_BODY: '{"service_tier": "flex"}'
