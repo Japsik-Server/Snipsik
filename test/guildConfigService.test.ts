@@ -218,5 +218,25 @@ describe("GuildConfigService Unit Tests", () => {
       expect(result.success).toBe(false);
       expect(result.error).toContain("Invalid autoShortenMinUrlLength");
     });
+
+    it("rejects invalid domain string formats in ignoredDomains", async () => {
+      const result = await guildConfigService.setGuildConfig(testGuildId, {
+        ignoredDomains: ["valid.com", "not a domain"],
+      });
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("유효하지 않은 도메인");
+    });
+
+    it("rejects when ignoredDomains list exceeds maximum allowed count", async () => {
+      const tooMany = Array.from(
+        { length: 51 },
+        (_, i) => `guild${i}.example.com`,
+      );
+      const result = await guildConfigService.setGuildConfig(testGuildId, {
+        ignoredDomains: tooMany,
+      });
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("최대");
+    });
   });
 });

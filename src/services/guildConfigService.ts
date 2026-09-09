@@ -203,7 +203,14 @@ class GuildConfigService {
       const seen = new Set<string>();
       for (const d of updates.ignoredDomains) {
         const norm = normalizeDomain(d);
-        if (norm && !seen.has(norm)) {
+        if (!norm) {
+          return {
+            success: false,
+            error: `유효하지 않은 도메인 형식입니다: '${d}'`,
+            config: current,
+          };
+        }
+        if (!seen.has(norm)) {
           seen.add(norm);
           normalizedList.push(norm);
         }
@@ -276,51 +283,56 @@ class GuildConfigService {
     const fallbackConfig = this.getGuildConfig(guildId);
     try {
       return await db.transaction(async (tx) => {
+        // 1. Ensure a base guild_configs row exists before locking to avoid empty row lock misses
+        await tx
+          .insert(guildConfigs)
+          .values({
+            guildId,
+            autoShortenEnabled: true,
+            autoShortenMinUrlLength: null,
+            ignoredDomains: [],
+            updatedAt: new Date(),
+          })
+          .onConflictDoNothing();
+
+        // 2. Row-level lock guaranteed to hit and serialize concurrent mutations for this guild
         const rows = await tx
           .select()
           .from(guildConfigs)
           .where(eq(guildConfigs.guildId, guildId))
           .for("update");
 
-        const existingRow = rows[0];
-        const currentDomains = existingRow?.ignoredDomains ?? [];
+        const lockedRow = rows[0];
+        if (!lockedRow) {
+          throw new Error("Failed to lock guild configuration row.");
+        }
+
+        const currentDomains = lockedRow.ignoredDomains ?? [];
 
         const mutationResult = mutator([...currentDomains]);
         if (!mutationResult.ok) {
           return {
             success: false,
             error: mutationResult.error,
-            config: existingRow
-              ? {
-                  guildId: existingRow.guildId,
-                  autoShortenEnabled: existingRow.autoShortenEnabled,
-                  autoShortenMinUrlLength:
-                    existingRow.autoShortenMinUrlLength ?? null,
-                  ignoredDomains: existingRow.ignoredDomains ?? [],
-                }
-              : fallbackConfig,
+            config: {
+              guildId: lockedRow.guildId,
+              autoShortenEnabled: lockedRow.autoShortenEnabled,
+              autoShortenMinUrlLength:
+                lockedRow.autoShortenMinUrlLength ?? null,
+              ignoredDomains: lockedRow.ignoredDomains ?? [],
+            },
           };
         }
 
         const nextDomains = mutationResult.domains;
 
         const [saved] = await tx
-          .insert(guildConfigs)
-          .values({
-            guildId,
-            autoShortenEnabled: existingRow?.autoShortenEnabled ?? true,
-            autoShortenMinUrlLength:
-              existingRow?.autoShortenMinUrlLength ?? null,
+          .update(guildConfigs)
+          .set({
             ignoredDomains: nextDomains,
             updatedAt: new Date(),
           })
-          .onConflictDoUpdate({
-            target: guildConfigs.guildId,
-            set: {
-              ignoredDomains: nextDomains,
-              updatedAt: new Date(),
-            },
-          })
+          .where(eq(guildConfigs.guildId, guildId))
           .returning();
 
         if (!saved) {
