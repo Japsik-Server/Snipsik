@@ -25,6 +25,10 @@ export const guildConfigs = pgTable(
     guildId: text("guild_id").primaryKey(),
     autoShortenEnabled: boolean("auto_shorten_enabled").default(true).notNull(),
     autoShortenMinUrlLength: integer("auto_shorten_min_url_length"),
+    ignoredDomains: text("ignored_domains")
+      .array()
+      .default(sql`ARRAY[]::text[]`)
+      .notNull(),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),
@@ -47,6 +51,10 @@ export const userConfigs = pgTable(
     autoDmMode: text("auto_dm_mode").default("inherit").notNull(),
     dmFormat: text("dm_format").default("replace").notNull(),
     autoShortenMinUrlLength: integer("auto_shorten_min_url_length"),
+    ignoredDomains: text("ignored_domains")
+      .array()
+      .default(sql`ARRAY[]::text[]`)
+      .notNull(),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),

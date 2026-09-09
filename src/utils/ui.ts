@@ -624,7 +624,20 @@ export const ui = {
     container.addActionRowComponents(lenRow);
     container.addSeparatorComponents(new SeparatorBuilder().setDivider(true));
 
-    // 6. Navigation Section
+    // 6. Ignored Domains Section
+    const domainsCount = userConfig.ignoredDomains?.length ?? 0;
+    const domainsDesc =
+      domainsCount === 0
+        ? "🌐 **기본값만 적용 (추가 제외 없음)** — Tenor, Giphy, Discord CDN, Imgur 등 시스템 기본 도메인만 제외됩니다."
+        : `🚫 **추가 제외 도메인 (${domainsCount}개):** \`${userConfig.ignoredDomains.join("`, `")}\``;
+
+    const domainsText = new TextDisplayBuilder().setContent(
+      `🚫 **개인 제외 도메인 (\`ignored_domains\`)**\n${domainsDesc}\n*변경: \`/link config key:ignored_domains value:도메인1, 도메인2\`*`,
+    );
+    container.addTextDisplayComponents(domainsText);
+    container.addSeparatorComponents(new SeparatorBuilder().setDivider(true));
+
+    // 7. Navigation Section
     const navRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
       new ButtonBuilder()
         .setCustomId(CustomId.CONFIG_NAV_DASHBOARD)

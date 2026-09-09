@@ -37,11 +37,13 @@ describe("GuildConfigService Unit Tests", () => {
         guildId: testGuildId,
         autoShortenEnabled: true,
         autoShortenMinUrlLength: 50,
+        ignoredDomains: ["custom.example.com"],
       });
 
       const result = guildConfigService.getGuildConfig(testGuildId);
       expect(result.guildId).toBe(testGuildId);
       expect(result.autoShortenMinUrlLength).toBe(50);
+      expect(result.ignoredDomains).toEqual(["custom.example.com"]);
     });
   });
 
@@ -167,6 +169,47 @@ describe("GuildConfigService Unit Tests", () => {
     });
   });
 
+  describe("resolveEffectiveIgnoredDomains (Cumulative Union)", () => {
+    it("includes system defaults when neither guild nor user has additions", () => {
+      const effective = guildConfigService.resolveEffectiveIgnoredDomains(
+        testGuildId,
+        testUserId,
+      );
+      expect(effective.has("tenor.com")).toBe(true);
+      expect(effective.has("giphy.com")).toBe(true);
+      expect(effective.has("cdn.discordapp.com")).toBe(true);
+      expect(effective.has("media.discordapp.net")).toBe(true);
+      expect(effective.has("imgur.com")).toBe(true);
+    });
+
+    it("unions system defaults, guild additions, and user additions", () => {
+      // @ts-expect-error accessing private cache for test setup
+      guildConfigService.cache.set(testGuildId, {
+        guildId: testGuildId,
+        autoShortenEnabled: true,
+        autoShortenMinUrlLength: null,
+        ignoredDomains: ["guild-custom.org"],
+      });
+
+      // @ts-expect-error accessing private cache for test setup
+      userConfigService.cache.set(testUserId, {
+        userId: testUserId,
+        autoDmMode: "inherit",
+        dmFormat: "replace",
+        autoShortenMinUrlLength: null,
+        ignoredDomains: ["user-custom.net"],
+      });
+
+      const effective = guildConfigService.resolveEffectiveIgnoredDomains(
+        testGuildId,
+        testUserId,
+      );
+      expect(effective.has("tenor.com")).toBe(true);
+      expect(effective.has("guild-custom.org")).toBe(true);
+      expect(effective.has("user-custom.net")).toBe(true);
+    });
+  });
+
   describe("setGuildConfig validation", () => {
     it("rejects invalid autoShortenMinUrlLength values outside 0..2048", async () => {
       const result = await guildConfigService.setGuildConfig(testGuildId, {
@@ -174,6 +217,26 @@ describe("GuildConfigService Unit Tests", () => {
       });
       expect(result.success).toBe(false);
       expect(result.error).toContain("Invalid autoShortenMinUrlLength");
+    });
+
+    it("rejects invalid domain string formats in ignoredDomains", async () => {
+      const result = await guildConfigService.setGuildConfig(testGuildId, {
+        ignoredDomains: ["valid.com", "not a domain"],
+      });
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("유효하지 않은 도메인");
+    });
+
+    it("rejects when ignoredDomains list exceeds maximum allowed count", async () => {
+      const tooMany = Array.from(
+        { length: 51 },
+        (_, i) => `guild${i}.example.com`,
+      );
+      const result = await guildConfigService.setGuildConfig(testGuildId, {
+        ignoredDomains: tooMany,
+      });
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("최대");
     });
   });
 });

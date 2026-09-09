@@ -38,6 +38,16 @@ export const envSchema = z.object({
       if (isNaN(parsed) || parsed < 0) return 70;
       return Math.min(parsed, 2048);
     }),
+  IGNORED_DOMAINS: z
+    .string()
+    .optional()
+    .default("")
+    .transform((val) =>
+      val
+        .split(",")
+        .map((d) => d.trim().toLowerCase())
+        .filter((d) => d.length > 0),
+    ),
   NODE_ENV: z
     .enum(["development", "production", "test"])
     .default("development"),

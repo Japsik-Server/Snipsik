@@ -1,0 +1,2 @@
+ALTER TABLE "guild_configs" ADD COLUMN "ignored_domains" text[] DEFAULT ARRAY[]::text[] NOT NULL;--> statement-breakpoint
+ALTER TABLE "user_configs" ADD COLUMN "ignored_domains" text[] DEFAULT ARRAY[]::text[] NOT NULL;

@@ -21,9 +21,11 @@ import {
   normalizeAutoDmMode,
   normalizeDmFormat,
   normalizeMinUrlLength,
+  normalizeIgnoredDomains,
 } from "@/services/userConfigService";
 import { guildConfigService } from "@/services/guildConfigService";
 import { config } from "@/config";
+import { getAllSystemDefaultDomains, normalizeDomain } from "@/utils/domain";
 import { ui } from "@/utils/ui";
 import { parseExpiration } from "@/utils/time";
 import { logger } from "@/utils/logger";
@@ -157,7 +159,9 @@ export const linkCommand: Command = {
         .addStringOption((opt) =>
           opt
             .setName("key")
-            .setDescription("설정 항목 (auto_dm, dm_format, min_length)")
+            .setDescription(
+              "설정 항목 (auto_dm, dm_format, min_length, ignored_domains)",
+            )
             .setAutocomplete(true)
             .setRequired(false),
         )
@@ -466,6 +470,33 @@ export const linkCommand: Command = {
                 )
                 .setMinValue(-1)
                 .setMaxValue(2048)
+                .setRequired(false),
+            ),
+        )
+        .addSubcommand((sub) =>
+          sub
+            .setName("ignored-domains")
+            .setDescription(
+              "이 서버의 자동 단축 제외 도메인을 관리합니다 (Tenor, Discord CDN 등 기본 제외).",
+            )
+            .addStringOption((opt) =>
+              opt
+                .setName("action")
+                .setDescription("수행할 작업 (list, add, remove, reset)")
+                .setRequired(true)
+                .addChoices(
+                  { name: "목록 조회 (list)", value: "list" },
+                  { name: "도메인 추가 (add)", value: "add" },
+                  { name: "도메인 삭제 (remove)", value: "remove" },
+                  { name: "추가 목록 초기화 (reset)", value: "reset" },
+                ),
+            )
+            .addStringOption((opt) =>
+              opt
+                .setName("domain")
+                .setDescription(
+                  "추가/삭제할 도메인 (예: twitter.com) - add/remove 시 필수",
+                )
                 .setRequired(false),
             ),
         ),
@@ -1109,6 +1140,139 @@ async function handleWatchCommand(
     await interaction.editReply(successEmbed);
     return;
   }
+
+  if (subcommand === "ignored-domains") {
+    const action = interaction.options.getString("action", true);
+    const rawDomain = interaction.options.getString("domain")?.trim();
+
+    if (action === "list") {
+      const guildCfg = guildConfigService.getGuildConfig(interaction.guildId);
+      const systemDefaults = getAllSystemDefaultDomains();
+      const customDomains = guildCfg.ignoredDomains || [];
+
+      const systemListStr = systemDefaults.map((d) => `• \`${d}\``).join("\n");
+      const customListStr =
+        customDomains.length > 0
+          ? customDomains.map((d) => `• \`${d}\``).join("\n")
+          : "*이 서버에 추가 등록된 제외 도메인이 없습니다.*";
+
+      const listEmbed = ui.createInfoMessage(
+        "제외 도메인 목록 조회",
+        `**🛡️ 시스템 기본 제외 도메인 (${systemDefaults.length}개):**\n${systemListStr}\n*(하위 서브도메인 자동 포함)*\n\n` +
+          `**⚙️ 이 서버의 추가 제외 도메인 (${customDomains.length}/50개):**\n${customListStr}\n\n` +
+          `💡 **도메인 관리 방법:**\n` +
+          `• \`/link watch ignored-domains action:add domain:도메인\` → 서버 제외 도메인 추가\n` +
+          `• \`/link watch ignored-domains action:remove domain:도메인\` → 서버 제외 도메인 삭제\n` +
+          `• \`/link watch ignored-domains action:reset\` → 추가 제외 도메인 초기화`,
+      );
+      await interaction.editReply(listEmbed);
+      return;
+    }
+
+    if (action === "reset") {
+      const res = await guildConfigService.resetIgnoredDomains(
+        interaction.guildId,
+      );
+      if (!res.success) {
+        const errEmbed = ui.createErrorMessage(
+          "제외 도메인 초기화 실패",
+          res.error || "오류가 발생했습니다.",
+        );
+        await interaction.editReply(errEmbed);
+        return;
+      }
+
+      const successEmbed = ui.createSuccessMessage(
+        "제외 도메인 초기화 완료",
+        "이 서버의 추가 제외 도메인 목록이 초기화되었습니다.\n이제 시스템 기본 도메인만 제외 적용됩니다.",
+      );
+      await interaction.editReply(successEmbed);
+      return;
+    }
+
+    if (action === "add") {
+      if (!rawDomain) {
+        const errEmbed = ui.createErrorMessage(
+          "도메인 미입력",
+          "추가할 도메인을 입력해주세요. (예: `domain: twitter.com`)",
+        );
+        await interaction.editReply(errEmbed);
+        return;
+      }
+
+      const res = await guildConfigService.addIgnoredDomain(
+        interaction.guildId,
+        rawDomain,
+      );
+
+      if (!res.success) {
+        let errTitle = "도메인 추가 실패";
+        let errMsg = res.error || "오류가 발생했습니다.";
+        if (res.error === "is_system_default") {
+          errTitle = "기본 제외 도메인 안내";
+          errMsg = `\`${rawDomain}\` 은(는) 이미 시스템 기본 제외 도메인에 포함되어 있습니다.\nTenor, Giphy, Discord CDN, Imgur 등은 별도 등록 없이 항상 자동 제외됩니다.`;
+        } else if (res.error === "already_exists") {
+          errTitle = "중복 등록 안내";
+          errMsg = `\`${rawDomain}\` 은(는) 이미 이 서버의 제외 목록에 등록되어 있습니다.`;
+        } else if (res.error === "limit_exceeded") {
+          errTitle = "등록 개수 초과";
+          errMsg = `서버당 추가 제외 도메인은 최대 50개까지만 등록할 수 있습니다.`;
+        }
+
+        const errEmbed = ui.createErrorMessage(errTitle, errMsg);
+        await interaction.editReply(errEmbed);
+        return;
+      }
+
+      const normalized = normalizeDomain(rawDomain);
+      const successEmbed = ui.createSuccessMessage(
+        "제외 도메인 추가 완료",
+        `도메인 **\`${normalized}\`** 및 하위 서브도메인이 이 서버의 단축 제외 목록에 추가되었습니다.\n(현재 서버 등록 도메인: ${res.config.ignoredDomains.length}/50개)`,
+      );
+      await interaction.editReply(successEmbed);
+      return;
+    }
+
+    if (action === "remove") {
+      if (!rawDomain) {
+        const errEmbed = ui.createErrorMessage(
+          "도메인 미입력",
+          "삭제할 도메인을 입력해주세요. (예: `domain: twitter.com`)",
+        );
+        await interaction.editReply(errEmbed);
+        return;
+      }
+
+      const res = await guildConfigService.removeIgnoredDomain(
+        interaction.guildId,
+        rawDomain,
+      );
+
+      if (!res.success) {
+        let errTitle = "도메인 삭제 실패";
+        let errMsg = res.error || "오류가 발생했습니다.";
+        if (res.error === "is_system_default") {
+          errTitle = "기본 도메인 삭제 불가";
+          errMsg = `\`${rawDomain}\` 은(는) 시스템 기본 제외 도메인이므로 서버 설정에서 삭제할 수 없습니다.`;
+        } else if (res.error === "not_found") {
+          errTitle = "미등록 도메인 안내";
+          errMsg = `\`${rawDomain}\` 은(는) 이 서버의 추가 제외 목록에 등록되어 있지 않습니다.`;
+        }
+
+        const errEmbed = ui.createErrorMessage(errTitle, errMsg);
+        await interaction.editReply(errEmbed);
+        return;
+      }
+
+      const normalized = normalizeDomain(rawDomain);
+      const successEmbed = ui.createSuccessMessage(
+        "제외 도메인 삭제 완료",
+        `도메인 **\`${normalized}\`** 이(가) 이 서버의 단축 제외 목록에서 삭제되었습니다.\n(현재 서버 등록 도메인: ${res.config.ignoredDomains.length}/50개)`,
+      );
+      await interaction.editReply(successEmbed);
+      return;
+    }
+  }
 }
 
 /**
@@ -1451,8 +1615,15 @@ async function handleConfigCommand(
             ? "전체 단축 (제한 없음)"
             : `${currentConfig.autoShortenMinUrlLength}자 이상`;
       noticeDesc = `현재 \`min_length\` 설정값은 **${currentConfig.autoShortenMinUrlLength ?? "상속 (-1)"}** (${lenLabel}) 입니다.`;
+    } else if (key === "ignored_domains" || key === "ignored-domains") {
+      const count = currentConfig.ignoredDomains?.length ?? 0;
+      const listStr =
+        count > 0
+          ? `\`${currentConfig.ignoredDomains.join("`, `")}\``
+          : "없음 (기본값만 적용)";
+      noticeDesc = `현재 \`ignored_domains\` 설정: **${count}개** (${listStr})\n변경하려면 \`value\`에 쉼표로 구분된 도메인(또는 \`reset\`)을 입력하세요.`;
     } else {
-      noticeDesc = `알 수 없는 설정 키입니다: \`${key}\` (지원 키: \`auto_dm\`, \`dm_format\`, \`min_length\`)`;
+      noticeDesc = `알 수 없는 설정 키입니다: \`${key}\` (지원 키: \`auto_dm\`, \`dm_format\`, \`min_length\`, \`ignored_domains\`)`;
     }
 
     const view = ui.createConfigPanelView(
@@ -1465,7 +1636,9 @@ async function handleConfigCommand(
           key === "auto_dm" ||
           key === "dm_format" ||
           key === "min_length" ||
-          key === "min-length"
+          key === "min-length" ||
+          key === "ignored_domains" ||
+          key === "ignored-domains"
             ? "info"
             : "error",
       },
@@ -1635,13 +1808,68 @@ async function handleConfigCommand(
     return;
   }
 
+  if (key === "ignored_domains" || key === "ignored-domains") {
+    const normalized = normalizeIgnoredDomains(value);
+    if (!normalized.valid) {
+      const view = ui.createConfigPanelView(
+        interaction.user,
+        currentConfig,
+        {
+          title: "잘못된 설정 값",
+          description: normalized.error || "올바른 도메인 형식이 아닙니다.",
+          type: "error",
+        },
+        effectiveMinLength,
+      );
+      await interaction.editReply(view);
+      return;
+    }
+
+    const res = await userConfigService.setUserConfig(interaction.user.id, {
+      ignoredDomains: normalized.value,
+    });
+
+    if (!res.success) {
+      const view = ui.createConfigPanelView(
+        interaction.user,
+        res.config,
+        {
+          title: "설정 변경 실패",
+          description: res.error || "데이터베이스 저장 중 오류가 발생했습니다.",
+          type: "error",
+        },
+        effectiveMinLength,
+      );
+      await interaction.editReply(view);
+      return;
+    }
+
+    const domainMsg =
+      normalized.value.length === 0
+        ? "개인 추가 제외 도메인이 초기화되어 시스템 기본 도메인만 제외됩니다."
+        : `개인 추가 제외 도메인이 **${normalized.value.length}개**(\`${normalized.value.join("`, `")}\`)로 성공적으로 설정되었습니다.`;
+
+    const view = ui.createConfigPanelView(
+      interaction.user,
+      res.config,
+      {
+        title: "설정 변경 완료",
+        description: domainMsg,
+        type: "success",
+      },
+      effectiveMinLength,
+    );
+    await interaction.editReply(view);
+    return;
+  }
+
   // Unknown key
   const view = ui.createConfigPanelView(
     interaction.user,
     currentConfig,
     {
       title: "알 수 없는 설정 키",
-      description: `지원하지 않는 설정 키입니다: \`${key}\` (지원 키: \`auto_dm\`, \`dm_format\`, \`min_length\`)`,
+      description: `지원하지 않는 설정 키입니다: \`${key}\` (지원 키: \`auto_dm\`, \`dm_format\`, \`min_length\`, \`ignored_domains\`)`,
       type: "error",
     },
     effectiveMinLength,
@@ -1672,6 +1900,10 @@ export async function handleConfigAutocomplete(
       {
         name: "min_length (최소 URL 길이: -1 상속 / 0 전체 / 1~2048 길이)",
         value: "min_length",
+      },
+      {
+        name: "ignored_domains (제외 도메인 목록: 쉼표 구분 / reset 초기화)",
+        value: "ignored_domains",
       },
     ];
     const filtered = keyChoices.filter(
@@ -1712,6 +1944,20 @@ export async function handleConfigAutocomplete(
         { name: "50 - 50자 이상 단축", value: "50" },
         { name: "100 - 100자 이상 단축", value: "100" },
       ];
+    } else if (
+      selectedKey === "ignored_domains" ||
+      selectedKey === "ignored-domains"
+    ) {
+      valueChoices = [
+        {
+          name: "reset - 추가 제외 도메인 초기화 (기본값만 적용)",
+          value: "reset",
+        },
+        {
+          name: "clear - 추가 제외 도메인 초기화",
+          value: "clear",
+        },
+      ];
     } else {
       valueChoices = [
         { name: "auto_dm: inherit (서버 설정 따름)", value: "inherit" },
@@ -1722,6 +1968,7 @@ export async function handleConfigAutocomplete(
         { name: "min_length: -1 (상위 기본값 상속)", value: "-1" },
         { name: "min_length: 0 (모든 URL 단축)", value: "0" },
         { name: "min_length: 70 (70자 이상)", value: "70" },
+        { name: "ignored_domains: reset (초기화)", value: "reset" },
       ];
     }
 
