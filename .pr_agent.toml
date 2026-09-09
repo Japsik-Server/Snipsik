@@ -4,6 +4,13 @@ model_weak = "openrouter/zhipu/glm-5.3-flash"
 fallback_models = ["openrouter/zhipu/glm-5.3-flash"]
 response_language = "en"
 
+[openrouter]
+provider_order = ["OpenAI"]
+allow_fallbacks = true
+
+[litellm]
+extra_body = '{"service_tier": "flex"}'
+
 [pr_description]
 publish_description_as_comment = true
 add_lgtm = false
