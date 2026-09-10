@@ -158,7 +158,9 @@ describe("Discord Components v2 UI Modules", () => {
         [
           {
             originalUrl: "https://verylongurl.com/a/b/c",
+            targetUrl: "https://s.japsik.com/abc",
             shortenedUrl: "https://s.japsik.com/abc",
+            type: "shorten",
             slug: "abc",
           },
         ],
@@ -192,13 +194,17 @@ describe("Discord Components v2 UI Modules", () => {
         [
           {
             originalUrl: "https://verylongurl.com/a/b/c",
+            targetUrl: "https://s.japsik.com/reused-123",
             shortenedUrl: "https://s.japsik.com/reused-123",
+            type: "shorten",
             slug: "reused-123",
             isReused: true,
           },
           {
             originalUrl: "https://anotherlongurl.com/x/y/z",
+            targetUrl: "https://s.japsik.com/new-123",
             shortenedUrl: "https://s.japsik.com/new-123",
+            type: "shorten",
             slug: "new-123",
             isReused: false,
           },
@@ -215,6 +221,25 @@ describe("Discord Components v2 UI Modules", () => {
       expect(jsonStr).not.toContain(
         "`https://s.japsik.com/new-123` *(기존 링크 재사용)*",
       );
+    });
+
+    it("renders fixupx header when items contain fixupx URLs", () => {
+      const view = ui.createWatchDmCard(
+        [
+          {
+            originalUrl: "https://x.com/jack/status/20",
+            targetUrl: "https://fixupx.com/jack/status/20",
+            type: "fixupx",
+          },
+        ],
+        "https://discord.com/channels/1/2/3",
+        "replace",
+      );
+
+      const jsonStr = JSON.stringify(view.components[0].toJSON());
+      expect(jsonStr).toContain("트위터 링크가 fixupx로 변환되었습니다");
+      expect(jsonStr).toContain("*(fixupx 변환)*");
+      expect(jsonStr).toContain("`https://fixupx.com/jack/status/20`");
     });
   });
 

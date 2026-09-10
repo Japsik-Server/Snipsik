@@ -355,9 +355,9 @@ export const ui = {
   createWatchDmCard(
     items: Array<{
       originalUrl: string;
-      targetUrl?: string;
+      targetUrl: string;
+      type: "shorten" | "fixupx";
       shortenedUrl?: string;
-      type?: "shorten" | "fixupx";
       slug?: string;
       isReused?: boolean;
     }>,
@@ -367,7 +367,7 @@ export const ui = {
     const container = new ContainerBuilder().setAccentColor(COLORS.DARK);
 
     const hasFixupx = items.some((item) => item.type === "fixupx");
-    const hasShorten = items.some((item) => item.type !== "fixupx");
+    const hasShorten = items.some((item) => item.type === "shorten");
 
     const lines = items.map((item, idx) => {
       const url = item.targetUrl || item.shortenedUrl || "";

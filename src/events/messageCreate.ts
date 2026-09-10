@@ -6,11 +6,7 @@ import { guildConfigService } from "@/services/guildConfigService";
 import { generateSlug, verifyOwnership } from "@/services/slugManager";
 import { sinkClient } from "@/services/sinkClient";
 import { isDomainIgnored } from "@/utils/domain";
-import {
-  convertToFixupxUrl,
-  isTweetUrl,
-  isTwitterDomain,
-} from "@/utils/twitter";
+import { convertToFixupxUrl, isTwitterDomain } from "@/utils/twitter";
 import { ui } from "@/utils/ui";
 import { logger } from "@/utils/logger";
 
@@ -282,17 +278,15 @@ export async function onMessageCreate(message: Message): Promise<void> {
 
       // Check if Twitter fixupx conversion applies
       if (userConfig.fixupxEnabled && isTwitterDomain(parsedUrl.hostname)) {
-        if (isTweetUrl(rawUrl)) {
-          const fixupxUrl = convertToFixupxUrl(rawUrl);
-          if (fixupxUrl) {
-            seenUrls.add(rawUrl);
-            candidates.push({
-              type: "fixupx",
-              originalUrl: rawUrl,
-              fixupxUrl,
-            });
-            continue;
-          }
+        const fixupxUrl = convertToFixupxUrl(rawUrl);
+        if (fixupxUrl) {
+          seenUrls.add(rawUrl);
+          candidates.push({
+            type: "fixupx",
+            originalUrl: rawUrl,
+            fixupxUrl,
+          });
+          continue;
         }
         // Exclude non-status Twitter links (e.g. profiles, search) when fixupx is enabled
         continue;
