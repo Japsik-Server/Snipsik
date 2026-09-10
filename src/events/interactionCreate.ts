@@ -297,6 +297,7 @@ export async function onInteractionCreate(
         customId === CustomId.CONFIG_FIXUPX_ON ||
         customId === CustomId.CONFIG_FIXUPX_OFF
       ) {
+        await interaction.deferUpdate();
         const targetBool = customId === CustomId.CONFIG_FIXUPX_ON;
 
         const res = await userConfigService.setUserConfig(interaction.user.id, {
@@ -324,7 +325,7 @@ export async function onInteractionCreate(
           notice,
           effectiveMinLength,
         );
-        await interaction.update(view);
+        await interaction.editReply(view);
         return;
       }
 
