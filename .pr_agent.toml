@@ -4,6 +4,7 @@ model_weak = "openrouter/z-ai/glm-5.3-flash"
 fallback_models = ["openrouter/z-ai/glm-5.3-flash"]
 custom_model_max_tokens = 128000
 response_language = "en"
+persistent_inline_comments = true
 patch_extension_skip_types = [".md", ".txt", ".json", ".lock", ".svg", ".csv", "bun.lock", "bun.lockb"]
 ignore_pr_title = ["^\\[Auto\\]", "^Auto", "^chore\\(deps\\)", "^chore\\(deps-dev\\)"]
 
@@ -34,10 +35,15 @@ publish_description_as_comment = true
 add_lgtm = false
 
 [pr_reviewer]
-inline_code_comments = true
+inline_key_issues = true
+num_max_findings = 5
 enable_auto_approval = false
 enable_review_labels_effort = true
 require_all_thresholds_for_passing = false
 
 [pr_code_suggestions]
-commitable_code_suggestions = false
+commitable_code_suggestions = true
+focus_only_on_problems = true
+
+[pr_questions]
+resolve_threads = true
