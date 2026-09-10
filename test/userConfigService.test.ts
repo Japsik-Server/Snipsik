@@ -192,6 +192,7 @@ describe("UserConfigService Unit Tests", () => {
       const config = userConfigService.getUserConfig(nonExistentUserId);
       expect(config.autoDmMode).toBe(DEFAULT_USER_CONFIG.autoDmMode);
       expect(config.dmFormat).toBe(DEFAULT_USER_CONFIG.dmFormat);
+      expect(config.fixupxEnabled).toBe(true);
 
       // Inherit mode: follows isChannelWatched
       expect(userConfigService.shouldProcessUser(nonExistentUserId, true)).toBe(

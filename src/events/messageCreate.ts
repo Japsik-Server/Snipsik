@@ -275,6 +275,11 @@ export async function onMessageCreate(message: Message): Promise<void> {
         continue;
       }
 
+      // Skip URLs whose domain is in effective ignored domains (GIF / Discord CDN / custom ignored domains)
+      if (isDomainIgnored(parsedUrl.hostname, effectiveIgnoredDomains)) {
+        continue;
+      }
+
       // Check if Twitter fixupx conversion applies
       if (userConfig.fixupxEnabled && isTwitterDomain(parsedUrl.hostname)) {
         if (isTweetUrl(rawUrl)) {
@@ -290,11 +295,6 @@ export async function onMessageCreate(message: Message): Promise<void> {
           }
         }
         // Exclude non-status Twitter links (e.g. profiles, search) when fixupx is enabled
-        continue;
-      }
-
-      // Skip URLs whose domain is in effective ignored domains (GIF / Discord CDN / custom ignored domains)
-      if (isDomainIgnored(parsedUrl.hostname, effectiveIgnoredDomains)) {
         continue;
       }
 

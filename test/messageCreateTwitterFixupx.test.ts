@@ -132,6 +132,7 @@ describe("MessageCreate Twitter fixupx Conversion", () => {
   });
 
   it("ignores non-status Twitter URLs like profiles", async () => {
+    guildConfigService.resolveEffectiveMinUrlLength = () => 0;
     const createLinkMock = mock(async () => ({
       success: true,
       link: { slug: "slug", url: "https://x.com/jack" },
@@ -140,6 +141,28 @@ describe("MessageCreate Twitter fixupx Conversion", () => {
 
     const mockDm = createMockDmChannel();
     const msg = createMockMessage("프로필: https://x.com/jack 입니다.", mockDm);
+
+    await onMessageCreate(msg);
+
+    expect(createLinkMock).toHaveBeenCalledTimes(0);
+    expect(sentDmCalls.length).toBe(0);
+  });
+
+  it("respects ignoredDomains and ignores Twitter/X URLs even when fixupxEnabled is true", async () => {
+    guildConfigService.resolveEffectiveIgnoredDomains = () =>
+      new Set(["x.com", "twitter.com"]);
+
+    const createLinkMock = mock(async () => ({
+      success: true,
+      link: { slug: "slug", url: "https://x.com/jack/status/20" },
+    }));
+    sinkClient.createLink = createLinkMock as any;
+
+    const mockDm = createMockDmChannel();
+    const msg = createMockMessage(
+      "체크: https://x.com/jack/status/20 입니다.",
+      mockDm,
+    );
 
     await onMessageCreate(msg);
 
