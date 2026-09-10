@@ -6,6 +6,11 @@ import { guildConfigService } from "@/services/guildConfigService";
 import { generateSlug, verifyOwnership } from "@/services/slugManager";
 import { sinkClient } from "@/services/sinkClient";
 import { isDomainIgnored } from "@/utils/domain";
+import {
+  convertToFixupxUrl,
+  isTweetUrl,
+  isTwitterDomain,
+} from "@/utils/twitter";
 import { ui } from "@/utils/ui";
 import { logger } from "@/utils/logger";
 
@@ -237,6 +242,7 @@ export async function onMessageCreate(message: Message): Promise<void> {
 
   if (rawMatches.length === 0) return;
 
+  const userConfig = userConfigService.getUserConfig(message.author.id);
   const sinkHostname = new URL(config.SINK_BASE_URL).hostname.toLowerCase();
   const effectiveMinLength = guildConfigService.resolveEffectiveMinUrlLength(
     message.guildId,
@@ -250,7 +256,10 @@ export async function onMessageCreate(message: Message): Promise<void> {
 
   // 1. Extract valid URLs in order of appearance (deduplicating identical URLs while preserving order)
   const seenUrls = new Set<string>();
-  const validUrls: string[] = [];
+  const candidates: Array<
+    | { type: "fixupx"; originalUrl: string; fixupxUrl: string }
+    | { type: "shorten"; originalUrl: string }
+  > = [];
 
   for (const { rawMatch, isEnclosedInSpoiler } of rawMatches) {
     const rawUrl = cleanExtractedUrl(rawMatch, isEnclosedInSpoiler);
@@ -259,6 +268,28 @@ export async function onMessageCreate(message: Message): Promise<void> {
 
       // Skip if URL is already pointing to our Sink instance (prevent loop)
       if (parsedUrl.hostname.toLowerCase() === sinkHostname) {
+        continue;
+      }
+
+      if (seenUrls.has(rawUrl)) {
+        continue;
+      }
+
+      // Check if Twitter fixupx conversion applies
+      if (userConfig.fixupxEnabled && isTwitterDomain(parsedUrl.hostname)) {
+        if (isTweetUrl(rawUrl)) {
+          const fixupxUrl = convertToFixupxUrl(rawUrl);
+          if (fixupxUrl) {
+            seenUrls.add(rawUrl);
+            candidates.push({
+              type: "fixupx",
+              originalUrl: rawUrl,
+              fixupxUrl,
+            });
+            continue;
+          }
+        }
+        // Exclude non-status Twitter links (e.g. profiles, search) when fixupx is enabled
         continue;
       }
 
@@ -272,44 +303,59 @@ export async function onMessageCreate(message: Message): Promise<void> {
         continue;
       }
 
-      if (!seenUrls.has(rawUrl)) {
-        seenUrls.add(rawUrl);
-        validUrls.push(rawUrl);
-      }
+      seenUrls.add(rawUrl);
+      candidates.push({
+        type: "shorten",
+        originalUrl: rawUrl,
+      });
     } catch {
       // Ignore malformed URLs
     }
   }
 
-  if (validUrls.length === 0) return;
+  if (candidates.length === 0) return;
 
   logger.info(
-    `Watched channel detected ${validUrls.length} URL(s) from user ${message.author.tag} in #${(message.channel as { name?: string }).name || message.channelId}`,
+    `Watched channel detected ${candidates.length} target URL(s) from user ${message.author.tag} in #${(message.channel as { name?: string }).name || message.channelId}`,
   );
 
-  // 2. Shorten URLs sequentially to strictly guarantee order
-  const shortenedItems: Array<{
+  // 2. Process candidates sequentially (shorten or use fixupx) to strictly guarantee order
+  const processedItems: Array<{
     originalUrl: string;
-    shortenedUrl: string;
-    slug: string;
+    targetUrl: string;
+    type: "shorten" | "fixupx";
+    shortenedUrl?: string;
+    slug?: string;
     isReused?: boolean;
   }> = [];
 
-  for (const originalUrl of validUrls) {
+  for (const candidate of candidates) {
+    if (candidate.type === "fixupx") {
+      processedItems.push({
+        originalUrl: candidate.originalUrl,
+        targetUrl: candidate.fixupxUrl,
+        shortenedUrl: candidate.fixupxUrl,
+        type: "fixupx",
+      });
+      continue;
+    }
+
     try {
       const result = await resolveShortLink(
         message.author.id,
         message.author.tag,
-        originalUrl,
+        candidate.originalUrl,
       );
 
       if (result) {
         const shortenedUrl = sinkClient.getFullShortUrl(result.slug);
-        shortenedItems.push({
-          originalUrl,
+        processedItems.push({
+          originalUrl: candidate.originalUrl,
+          targetUrl: shortenedUrl,
           shortenedUrl,
           slug: result.slug,
           isReused: result.isReused,
+          type: "shorten",
         });
       }
     } catch (err) {
@@ -317,10 +363,9 @@ export async function onMessageCreate(message: Message): Promise<void> {
     }
   }
 
-  if (shortenedItems.length === 0) return;
+  if (processedItems.length === 0) return;
 
   try {
-    const userConfig = userConfigService.getUserConfig(message.author.id);
     const dmChannel = await message.author.createDM();
     let embedSent = false;
     let textSentCount = 0;
@@ -328,7 +373,7 @@ export async function onMessageCreate(message: Message): Promise<void> {
     // 1. Send DM Card (Components v2 Container Card)
     try {
       const dmView = ui.createWatchDmCard(
-        shortenedItems,
+        processedItems,
         message.url,
         userConfig.dmFormat,
       );
@@ -349,7 +394,7 @@ export async function onMessageCreate(message: Message): Promise<void> {
       // Reconstructed message with URLs replaced
       const reconstructed = userConfigService.replaceUrlsInText(
         content,
-        shortenedItems,
+        processedItems,
       );
       const chunks = userConfigService.chunkText(reconstructed, 2000);
 
@@ -386,10 +431,10 @@ export async function onMessageCreate(message: Message): Promise<void> {
       }
     } else {
       // Legacy: Send Pure Plain Text URLs sequentially (Mobile Long-press copy optimization)
-      for (const item of shortenedItems) {
+      for (const item of processedItems) {
         try {
           const sentMsg = await dmChannel.send({
-            content: item.shortenedUrl,
+            content: item.targetUrl,
             flags: MessageFlags.SuppressEmbeds,
           });
           if (!sentMsg.flags.has(MessageFlags.SuppressEmbeds)) {
@@ -398,23 +443,23 @@ export async function onMessageCreate(message: Message): Promise<void> {
           textSentCount++;
         } catch (textErr) {
           logger.warn(
-            `Failed to send plain text URL ${item.shortenedUrl} to ${message.author.tag}:`,
+            `Failed to send plain text URL ${item.targetUrl} to ${message.author.tag}:`,
             textErr,
           );
         }
       }
 
-      if (embedSent && textSentCount === shortenedItems.length) {
+      if (embedSent && textSentCount === processedItems.length) {
         logger.success(
-          `Successfully sent all ${shortenedItems.length} auto-shortened link(s) DM to ${message.author.tag}`,
+          `Successfully sent all ${processedItems.length} processed link(s) DM to ${message.author.tag}`,
         );
       } else if (embedSent || textSentCount > 0) {
         logger.warn(
-          `Partially sent auto-shortened link(s) DM to ${message.author.tag} (Embed: ${embedSent ? "OK" : "Failed"}, URLs: ${textSentCount}/${shortenedItems.length})`,
+          `Partially sent processed link(s) DM to ${message.author.tag} (Embed: ${embedSent ? "OK" : "Failed"}, URLs: ${textSentCount}/${processedItems.length})`,
         );
       } else {
         logger.error(
-          `Failed to deliver any auto-shortened link(s) DM to ${message.author.tag}`,
+          `Failed to deliver any processed link(s) DM to ${message.author.tag}`,
         );
       }
     }

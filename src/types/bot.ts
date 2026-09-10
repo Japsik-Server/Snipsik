@@ -37,6 +37,8 @@ export const CustomId = {
   CONFIG_DM_OFF: "cfg:dm:off",
   CONFIG_FMT_REPLACE: "cfg:fmt:replace",
   CONFIG_FMT_LIST: "cfg:fmt:list",
+  CONFIG_FIXUPX_ON: "cfg:fixupx:on",
+  CONFIG_FIXUPX_OFF: "cfg:fixupx:off",
   CONFIG_LEN_INHERIT: "cfg:len:inherit",
   CONFIG_LEN_ALL: "cfg:len:all",
   CONFIG_LEN_CUSTOM: "cfg:len:custom",

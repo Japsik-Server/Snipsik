@@ -1,0 +1,1 @@
+ALTER TABLE "user_configs" ADD COLUMN "fixupx_enabled" boolean DEFAULT true NOT NULL;

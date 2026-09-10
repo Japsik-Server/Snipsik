@@ -72,6 +72,7 @@ describe("Discord Components v2 UI Modules", () => {
       const view = ui.createConfigPanelView(mockUser, {
         autoDmMode: "inherit",
         dmFormat: "replace",
+        fixupxEnabled: true,
       });
       expect(view.flags).toBe(MessageFlags.IsComponentsV2);
       expect(view.components.length).toBe(1);
@@ -79,6 +80,7 @@ describe("Discord Components v2 UI Modules", () => {
       const json = view.components[0].toJSON();
       expect(json.type).toBe(17);
       expect(json.accent_color).toBe(COLORS.DARK);
+      expect(JSON.stringify(json)).toContain("fixupx");
     });
 
     it("integrates notice banner into the container when notice is provided", () => {

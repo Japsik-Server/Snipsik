@@ -12,6 +12,7 @@ export interface UserConfigData {
   dmFormat: DmFormat;
   autoShortenMinUrlLength: number | null;
   ignoredDomains: string[];
+  fixupxEnabled: boolean;
 }
 
 export const DEFAULT_USER_CONFIG: Readonly<UserConfigData> = {
@@ -19,6 +20,7 @@ export const DEFAULT_USER_CONFIG: Readonly<UserConfigData> = {
   dmFormat: "replace",
   autoShortenMinUrlLength: null,
   ignoredDomains: [],
+  fixupxEnabled: true,
 };
 
 /**
@@ -181,6 +183,37 @@ export function normalizeDmFormat(value: unknown): DmFormat | null {
   return null;
 }
 
+/**
+ * Normalizes an unknown value to a boolean flag for fixupx conversion.
+ *
+ * @param value - Input string, boolean, or unknown value to normalize.
+ * @returns Boolean value or null if invalid.
+ */
+export function normalizeFixupxEnabled(value: unknown): boolean | null {
+  if (typeof value === "boolean") return value;
+  if (typeof value !== "string") return null;
+  const lower = value.trim().toLowerCase();
+  if (
+    lower === "on" ||
+    lower === "true" ||
+    lower === "enable" ||
+    lower === "enabled" ||
+    lower === "1"
+  ) {
+    return true;
+  }
+  if (
+    lower === "off" ||
+    lower === "false" ||
+    lower === "disable" ||
+    lower === "disabled" ||
+    lower === "0"
+  ) {
+    return false;
+  }
+  return null;
+}
+
 class UserConfigService {
   // In-memory cache for O(1) sync lookups in messageCreate
   private cache: Map<string, UserConfigData> = new Map();
@@ -259,6 +292,7 @@ class UserConfigService {
             dmFormat,
             autoShortenMinUrlLength: record.autoShortenMinUrlLength ?? null,
             ignoredDomains: record.ignoredDomains ?? [],
+            fixupxEnabled: record.fixupxEnabled ?? true,
           });
         }
       } else {
@@ -274,6 +308,7 @@ class UserConfigService {
               dmFormat,
               autoShortenMinUrlLength: record.autoShortenMinUrlLength ?? null,
               ignoredDomains: record.ignoredDomains ?? [],
+              fixupxEnabled: record.fixupxEnabled ?? true,
             });
           }
         }
@@ -317,7 +352,11 @@ class UserConfigService {
     updates: Partial<
       Pick<
         UserConfigData,
-        "autoDmMode" | "dmFormat" | "autoShortenMinUrlLength" | "ignoredDomains"
+        | "autoDmMode"
+        | "dmFormat"
+        | "autoShortenMinUrlLength"
+        | "ignoredDomains"
+        | "fixupxEnabled"
       >
     >,
   ): Promise<{ success: boolean; error?: string; config: UserConfigData }> {
@@ -332,6 +371,7 @@ class UserConfigService {
       dmFormat?: DmFormat;
       autoShortenMinUrlLength?: number | null;
       ignoredDomains?: string[];
+      fixupxEnabled?: boolean;
       updatedAt: Date;
     } = {
       userId,
@@ -383,6 +423,19 @@ class UserConfigService {
       insertValues.ignoredDomains = normalizedDomains.value;
     }
 
+    if (updates.fixupxEnabled !== undefined) {
+      const normalizedFixupx = normalizeFixupxEnabled(updates.fixupxEnabled);
+      if (normalizedFixupx === null) {
+        return {
+          success: false,
+          error: "Invalid fixupx setting. Must be 'on' or 'off'.",
+          config: current,
+        };
+      }
+      setClause.fixupxEnabled = normalizedFixupx;
+      insertValues.fixupxEnabled = normalizedFixupx;
+    }
+
     try {
       const [saved] = await db
         .insert(userConfigs)
@@ -403,6 +456,7 @@ class UserConfigService {
         dmFormat: normalizeDmFormat(saved.dmFormat) ?? "replace",
         autoShortenMinUrlLength: saved.autoShortenMinUrlLength ?? null,
         ignoredDomains: saved.ignoredDomains ?? [],
+        fixupxEnabled: saved.fixupxEnabled ?? true,
       };
 
       this.cacheEpoch++;
@@ -445,20 +499,25 @@ class UserConfigService {
   }
 
   /**
-   * Replaces original URLs with shortened URLs in the original message content.
+   * Replaces original URLs with shortened or transformed URLs in the original message content.
    * Sorts URLs by descending length (longest first) to prevent substring collision.
    */
   replaceUrlsInText(
     content: string,
-    replacements: Array<{ originalUrl: string; shortenedUrl: string }>,
+    replacements: Array<{
+      originalUrl: string;
+      shortenedUrl?: string;
+      targetUrl?: string;
+    }>,
   ): string {
     if (!content || replacements.length === 0) return content;
 
     // Deduplicate replacements by originalUrl
     const map = new Map<string, string>();
     for (const r of replacements) {
-      if (!map.has(r.originalUrl)) {
-        map.set(r.originalUrl, r.shortenedUrl);
+      const target = r.targetUrl || r.shortenedUrl;
+      if (target && !map.has(r.originalUrl)) {
+        map.set(r.originalUrl, target);
       }
     }
 
@@ -468,8 +527,8 @@ class UserConfigService {
     );
 
     let result = content;
-    for (const [origUrl, shortUrl] of sorted) {
-      result = result.split(origUrl).join(shortUrl);
+    for (const [origUrl, targetUrl] of sorted) {
+      result = result.split(origUrl).join(targetUrl);
     }
 
     return result;
