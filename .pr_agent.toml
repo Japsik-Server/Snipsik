@@ -6,7 +6,7 @@ custom_model_max_tokens = 128000
 response_language = "en"
 
 [openrouter]
-provider_order = ["openai/flex", "deepinfra", "z-ai"]
+provider_only = ["openai/flex", "deepinfra", "z-ai"]
 
 [pr_description]
 publish_description_as_comment = true
