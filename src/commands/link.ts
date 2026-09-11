@@ -22,6 +22,7 @@ import {
   normalizeDmFormat,
   normalizeMinUrlLength,
   normalizeIgnoredDomains,
+  normalizeFixupxEnabled,
 } from "@/services/userConfigService";
 import { guildConfigService } from "@/services/guildConfigService";
 import { config } from "@/config";
@@ -160,7 +161,7 @@ export const linkCommand: Command = {
           opt
             .setName("key")
             .setDescription(
-              "설정 항목 (auto_dm, dm_format, min_length, ignored_domains)",
+              "설정 항목 (auto_dm, dm_format, min_length, ignored_domains, fixupx)",
             )
             .setAutocomplete(true)
             .setRequired(false),
@@ -1622,8 +1623,11 @@ async function handleConfigCommand(
           ? `\`${currentConfig.ignoredDomains.join("`, `")}\``
           : "없음 (기본값만 적용)";
       noticeDesc = `현재 \`ignored_domains\` 설정: **${count}개** (${listStr})\n변경하려면 \`value\`에 쉼표로 구분된 도메인(또는 \`reset\`)을 입력하세요.`;
+    } else if (key === "fixupx") {
+      const fixupxLabel = currentConfig.fixupxEnabled ? "켬 (기본값)" : "끔";
+      noticeDesc = `현재 \`fixupx\` 설정값은 **${currentConfig.fixupxEnabled ? "on" : "off"}** (${fixupxLabel}) 입니다.`;
     } else {
-      noticeDesc = `알 수 없는 설정 키입니다: \`${key}\` (지원 키: \`auto_dm\`, \`dm_format\`, \`min_length\`, \`ignored_domains\`)`;
+      noticeDesc = `알 수 없는 설정 키입니다: \`${key}\` (지원 키: \`auto_dm\`, \`dm_format\`, \`min_length\`, \`ignored_domains\`, \`fixupx\`)`;
     }
 
     const view = ui.createConfigPanelView(
@@ -1638,7 +1642,8 @@ async function handleConfigCommand(
           key === "min_length" ||
           key === "min-length" ||
           key === "ignored_domains" ||
-          key === "ignored-domains"
+          key === "ignored-domains" ||
+          key === "fixupx"
             ? "info"
             : "error",
       },
@@ -1863,13 +1868,68 @@ async function handleConfigCommand(
     return;
   }
 
+  if (key === "fixupx") {
+    const normalized = normalizeFixupxEnabled(value);
+    if (normalized === null) {
+      const view = ui.createConfigPanelView(
+        interaction.user,
+        currentConfig,
+        {
+          title: "잘못된 설정 값",
+          description:
+            "올바른 fixupx 설정 값이 아닙니다. `on` 또는 `off`를 입력하세요.",
+          type: "error",
+        },
+        effectiveMinLength,
+      );
+      await interaction.editReply(view);
+      return;
+    }
+
+    const res = await userConfigService.setUserConfig(interaction.user.id, {
+      fixupxEnabled: normalized,
+    });
+
+    if (!res.success) {
+      const view = ui.createConfigPanelView(
+        interaction.user,
+        res.config,
+        {
+          title: "설정 변경 실패",
+          description: res.error || "데이터베이스 저장 중 오류가 발생했습니다.",
+          type: "error",
+        },
+        effectiveMinLength,
+      );
+      await interaction.editReply(view);
+      return;
+    }
+
+    const statusMsg = normalized
+      ? "트위터(X) 게시물 링크가 감지되면 자동으로 `fixupx.com`으로 변환되어 DM으로 전송됩니다."
+      : "트위터(X) 링크의 fixupx 자동 변환이 꺼졌으며, 일반 단축 정책(min_length)을 따릅니다.";
+
+    const view = ui.createConfigPanelView(
+      interaction.user,
+      res.config,
+      {
+        title: "설정 변경 완료",
+        description: `\`fixupx\` 설정이 **${normalized ? "on (활성화)" : "off (비활성화)"}**(으)로 변경되었습니다.\n${statusMsg}`,
+        type: "success",
+      },
+      effectiveMinLength,
+    );
+    await interaction.editReply(view);
+    return;
+  }
+
   // Unknown key
   const view = ui.createConfigPanelView(
     interaction.user,
     currentConfig,
     {
       title: "알 수 없는 설정 키",
-      description: `지원하지 않는 설정 키입니다: \`${key}\` (지원 키: \`auto_dm\`, \`dm_format\`, \`min_length\`, \`ignored_domains\`)`,
+      description: `지원하지 않는 설정 키입니다: \`${key}\` (지원 키: \`auto_dm\`, \`dm_format\`, \`min_length\`, \`ignored_domains\`, \`fixupx\`)`,
       type: "error",
     },
     effectiveMinLength,
@@ -1904,6 +1964,10 @@ export async function handleConfigAutocomplete(
       {
         name: "ignored_domains (제외 도메인 목록: 쉼표 구분 / reset 초기화)",
         value: "ignored_domains",
+      },
+      {
+        name: "fixupx (트위터 링크 fixupx.com 자동 변환: on / off)",
+        value: "fixupx",
       },
     ];
     const filtered = keyChoices.filter(
@@ -1958,6 +2022,14 @@ export async function handleConfigAutocomplete(
           value: "clear",
         },
       ];
+    } else if (selectedKey === "fixupx") {
+      valueChoices = [
+        {
+          name: "on - 트위터 링크 fixupx 자동 변환 켜기 (기본값)",
+          value: "on",
+        },
+        { name: "off - 트위터 링크 fixupx 자동 변환 끄기", value: "off" },
+      ];
     } else {
       valueChoices = [
         { name: "auto_dm: inherit (서버 설정 따름)", value: "inherit" },
@@ -1965,6 +2037,8 @@ export async function handleConfigAutocomplete(
         { name: "auto_dm: off (항상 끔)", value: "off" },
         { name: "dm_format: replace (본문 치환)", value: "replace" },
         { name: "dm_format: list (URL 목록)", value: "list" },
+        { name: "fixupx: on (트위터 링크 fixupx 자동 변환)", value: "on" },
+        { name: "fixupx: off (트위터 링크 fixupx 변환 끔)", value: "off" },
         { name: "min_length: -1 (상위 기본값 상속)", value: "-1" },
         { name: "min_length: 0 (모든 URL 단축)", value: "0" },
         { name: "min_length: 70 (70자 이상)", value: "70" },

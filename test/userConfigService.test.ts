@@ -4,6 +4,7 @@ import {
   normalizeDmFormat,
   normalizeMinUrlLength,
   normalizeIgnoredDomains,
+  normalizeFixupxEnabled,
   userConfigService,
   DEFAULT_USER_CONFIG,
 } from "@/services/userConfigService";
@@ -38,6 +39,26 @@ describe("UserConfigService Unit Tests", () => {
       expect(normalizeDmFormat("unknown")).toBeNull();
       expect(normalizeDmFormat(456)).toBeNull();
       expect(normalizeDmFormat(null)).toBeNull();
+    });
+
+    it("should normalize fixupx enabled properly", () => {
+      expect(normalizeFixupxEnabled(true)).toBe(true);
+      expect(normalizeFixupxEnabled(false)).toBe(false);
+      expect(normalizeFixupxEnabled("on")).toBe(true);
+      expect(normalizeFixupxEnabled("TRUE")).toBe(true);
+      expect(normalizeFixupxEnabled("enable")).toBe(true);
+      expect(normalizeFixupxEnabled("enabled")).toBe(true);
+      expect(normalizeFixupxEnabled("1")).toBe(true);
+
+      expect(normalizeFixupxEnabled("off")).toBe(false);
+      expect(normalizeFixupxEnabled("FALSE")).toBe(false);
+      expect(normalizeFixupxEnabled("disable")).toBe(false);
+      expect(normalizeFixupxEnabled("disabled")).toBe(false);
+      expect(normalizeFixupxEnabled("0")).toBe(false);
+
+      expect(normalizeFixupxEnabled("unknown")).toBeNull();
+      expect(normalizeFixupxEnabled(123)).toBeNull();
+      expect(normalizeFixupxEnabled(null)).toBeNull();
     });
 
     it("should normalize min URL length properly", () => {
@@ -171,6 +192,7 @@ describe("UserConfigService Unit Tests", () => {
       const config = userConfigService.getUserConfig(nonExistentUserId);
       expect(config.autoDmMode).toBe(DEFAULT_USER_CONFIG.autoDmMode);
       expect(config.dmFormat).toBe(DEFAULT_USER_CONFIG.dmFormat);
+      expect(config.fixupxEnabled).toBe(true);
 
       // Inherit mode: follows isChannelWatched
       expect(userConfigService.shouldProcessUser(nonExistentUserId, true)).toBe(
@@ -192,6 +214,9 @@ describe("UserConfigService Unit Tests", () => {
         userId: onUserId,
         autoDmMode: "on",
         dmFormat: "replace",
+        autoShortenMinUrlLength: null,
+        ignoredDomains: [],
+        fixupxEnabled: true,
       });
 
       // @ts-expect-error accessing private cache for test
@@ -199,6 +224,9 @@ describe("UserConfigService Unit Tests", () => {
         userId: offUserId,
         autoDmMode: "off",
         dmFormat: "replace",
+        autoShortenMinUrlLength: null,
+        ignoredDomains: [],
+        fixupxEnabled: true,
       });
 
       // ON: Always true regardless of channel watch status

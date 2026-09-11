@@ -55,6 +55,7 @@ export const userConfigs = pgTable(
       .array()
       .default(sql`ARRAY[]::text[]`)
       .notNull(),
+    fixupxEnabled: boolean("fixupx_enabled").default(true).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true })
       .defaultNow()
       .notNull(),

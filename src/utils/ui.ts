@@ -355,8 +355,10 @@ export const ui = {
   createWatchDmCard(
     items: Array<{
       originalUrl: string;
-      shortenedUrl: string;
-      slug: string;
+      targetUrl: string;
+      type: "shorten" | "fixupx";
+      shortenedUrl?: string;
+      slug?: string;
       isReused?: boolean;
     }>,
     messageUrl: string,
@@ -364,22 +366,49 @@ export const ui = {
   ): V2MessageView {
     const container = new ContainerBuilder().setAccentColor(COLORS.DARK);
 
+    const hasFixupx = items.some((item) => item.type === "fixupx");
+    const hasShorten = items.some((item) => item.type === "shorten");
+
     const lines = items.map((item, idx) => {
+      const url = item.targetUrl || item.shortenedUrl || "";
       const origTrunc = truncateMiddle(item.originalUrl, 48);
-      const reusedLabel = item.isReused ? " *(기존 링크 재사용)*" : "";
-      return `**${idx + 1}.** \`${item.shortenedUrl}\`${reusedLabel}\n   ↳ 원본: \`${origTrunc}\``;
+      const tag =
+        item.type === "fixupx"
+          ? " *(fixupx 변환)*"
+          : item.isReused
+            ? " *(기존 링크 재사용)*"
+            : "";
+      return `**${idx + 1}.** \`${url}\`${tag}\n   ↳ 원본: \`${origTrunc}\``;
     });
+
+    const headerTitle =
+      hasFixupx && !hasShorten
+        ? "### 🐦 트위터 링크가 fixupx로 변환되었습니다!"
+        : hasFixupx && hasShorten
+          ? "### ✂️ 링크가 단축 및 fixupx로 변환되었습니다!"
+          : "### ✂️ 긴 URL이 자동으로 단축되었습니다!";
+
+    const listSectionTitle =
+      hasFixupx && !hasShorten
+        ? "**변환된 링크 목록:**"
+        : hasFixupx && hasShorten
+          ? "**처리된 링크 목록:**"
+          : "**단축된 링크 목록:**";
 
     const footerNotice =
       dmFormat === "replace"
         ? "*아래 메시지에서 URL이 치환된 본문을 빠르게 복사할 수 있습니다.*"
-        : "*아래 메시지에서 단축 URL만 빠르게 복사할 수 있습니다.*";
+        : hasFixupx && !hasShorten
+          ? "*아래 메시지에서 변환된 URL만 빠르게 복사할 수 있습니다.*"
+          : hasFixupx && hasShorten
+            ? "*아래 메시지에서 변환 및 단축된 URL만 빠르게 복사할 수 있습니다.*"
+            : "*아래 메시지에서 단축 URL만 빠르게 복사할 수 있습니다.*";
 
     const description = [
-      "### ✂️ 긴 URL이 자동으로 단축되었습니다!",
+      headerTitle,
       `> 📍 **원본 메시지:** ${messageUrl}`,
       "",
-      "**단축된 링크 목록:**",
+      listSectionTitle,
       ...lines,
       "",
       footerNotice,
@@ -578,7 +607,40 @@ export const ui = {
     container.addActionRowComponents(formatRow);
     container.addSeparatorComponents(new SeparatorBuilder().setDivider(true));
 
-    // 5. Min URL Length Section
+    // 5. Twitter Fixupx Section
+    const fixupxDesc = userConfig.fixupxEnabled
+      ? "🐦 **자동 변환 활성화 (기본값)** — 트위터(X) 게시물 링크를 fixupx.com 링크로 자동 변환하여 전송합니다."
+      : "⏸️ **자동 변환 비활성화** — 트위터 링크도 일반 단축 정책(min_length)에 따릅니다.";
+
+    const fixupxText = new TextDisplayBuilder().setContent(
+      `🐦 **트위터 fixupx 변환 (\`fixupx\`)**\n${fixupxDesc}`,
+    );
+    container.addTextDisplayComponents(fixupxText);
+
+    const fixupxRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder()
+        .setCustomId(CustomId.CONFIG_FIXUPX_ON)
+        .setLabel("켬 (기본)")
+        .setEmoji("🐦")
+        .setStyle(
+          userConfig.fixupxEnabled
+            ? ButtonStyle.Success
+            : ButtonStyle.Secondary,
+        ),
+      new ButtonBuilder()
+        .setCustomId(CustomId.CONFIG_FIXUPX_OFF)
+        .setLabel("끔")
+        .setEmoji("🛑")
+        .setStyle(
+          !userConfig.fixupxEnabled
+            ? ButtonStyle.Danger
+            : ButtonStyle.Secondary,
+        ),
+    );
+    container.addActionRowComponents(fixupxRow);
+    container.addSeparatorComponents(new SeparatorBuilder().setDivider(true));
+
+    // 6. Min URL Length Section
     const lenDesc =
       userConfig.autoShortenMinUrlLength === null
         ? `🔄 **상위 설정 따름 (기본값)** — 서버 또는 전역 기본값(${effectiveMinLength !== undefined ? `현재: **${effectiveMinLength}자**` : "기본 70자"})을 상속받습니다.`

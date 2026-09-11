@@ -292,6 +292,43 @@ export async function onInteractionCreate(
         return;
       }
 
+      // Config Toggle: Fixupx Enabled
+      if (
+        customId === CustomId.CONFIG_FIXUPX_ON ||
+        customId === CustomId.CONFIG_FIXUPX_OFF
+      ) {
+        await interaction.deferUpdate();
+        const targetBool = customId === CustomId.CONFIG_FIXUPX_ON;
+
+        const res = await userConfigService.setUserConfig(interaction.user.id, {
+          fixupxEnabled: targetBool,
+        });
+
+        const effectiveMinLength =
+          guildConfigService.resolveEffectiveMinUrlLength(
+            interaction.guildId,
+            interaction.user.id,
+          );
+
+        const notice = res.success
+          ? undefined
+          : {
+              title: "설정 변경 실패",
+              description:
+                res.error || "데이터베이스 저장 중 오류가 발생했습니다.",
+              type: "error" as const,
+            };
+
+        const view = ui.createConfigPanelView(
+          interaction.user,
+          res.config,
+          notice,
+          effectiveMinLength,
+        );
+        await interaction.editReply(view);
+        return;
+      }
+
       // Config Toggle: Min URL Length (Inherit -1)
       if (customId === CustomId.CONFIG_LEN_INHERIT) {
         await interaction.deferUpdate();
