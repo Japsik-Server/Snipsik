@@ -19,7 +19,46 @@ jobs:
     name: Run PR Agent
     if: ${{ github.event.sender.type != 'Bot' && github.event.issue.pull_request != null && startsWith(github.event.comment.body, '/') }}
     steps:
+      - name: Checkout allowed users configuration
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github
+          sparse-checkout-cone-mode: false
+
+      - name: Check authorization
+        id: auth
+        env:
+          COMMENT_AUTHOR: ${{ github.event.comment.user.login }}
+          AUTHOR_ASSOCIATION: ${{ github.event.comment.author_association }}
+          REPO_OWNER: ${{ github.repository_owner }}
+        run: |
+          set -euo pipefail
+
+          COMMENT_AUTHOR_LOWER="$(printf '%s' "$COMMENT_AUTHOR" | tr '[:upper:]' '[:lower:]')"
+          REPO_OWNER_LOWER="$(printf '%s' "$REPO_OWNER" | tr '[:upper:]' '[:lower:]')"
+
+          # Allow repository owner automatically
+          if [ "$AUTHOR_ASSOCIATION" = "OWNER" ] || [ "$COMMENT_AUTHOR_LOWER" = "$REPO_OWNER_LOWER" ]; then
+            echo "authorized=true" >> "$GITHUB_OUTPUT"
+            echo "User '$COMMENT_AUTHOR' is authorized (repository owner)."
+            exit 0
+          fi
+
+          # Check allowed users list file
+          ALLOWED_FILE=".github/pr-agent-allowed-users.txt"
+          if [ -f "$ALLOWED_FILE" ]; then
+            if grep -v -E '^\s*(#|$)' "$ALLOWED_FILE" | tr '[:upper:]' '[:lower:]' | grep -F -x -q "$COMMENT_AUTHOR_LOWER"; then
+              echo "authorized=true" >> "$GITHUB_OUTPUT"
+              echo "User '$COMMENT_AUTHOR' is authorized (listed in $ALLOWED_FILE)."
+              exit 0
+            fi
+          fi
+
+          echo "authorized=false" >> "$GITHUB_OUTPUT"
+          echo "User '$COMMENT_AUTHOR' is not authorized to trigger PR-Agent."
+
       - name: PR Agent action step
+        if: steps.auth.outputs.authorized == 'true'
         uses: the-pr-agent/pr-agent@main
         env:
           OPENROUTER__KEY: ${{ secrets.OPENROUTER_API_KEY }}
