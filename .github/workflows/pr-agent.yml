@@ -37,10 +37,10 @@ jobs:
           COMMENT_AUTHOR_LOWER="$(printf '%s' "$COMMENT_AUTHOR" | tr '[:upper:]' '[:lower:]')"
           REPO_OWNER_LOWER="$(printf '%s' "$REPO_OWNER" | tr '[:upper:]' '[:lower:]')"
 
-          # Allow repository owner automatically
-          if [ "$AUTHOR_ASSOCIATION" = "OWNER" ] || [ "$COMMENT_AUTHOR_LOWER" = "$REPO_OWNER_LOWER" ]; then
+          # Allow repository owner or organization member automatically
+          if [ "$AUTHOR_ASSOCIATION" = "OWNER" ] || [ "$AUTHOR_ASSOCIATION" = "MEMBER" ] || [ "$COMMENT_AUTHOR_LOWER" = "$REPO_OWNER_LOWER" ]; then
             echo "authorized=true" >> "$GITHUB_OUTPUT"
-            echo "User '$COMMENT_AUTHOR' is authorized (repository owner)."
+            echo "User '$COMMENT_AUTHOR' is authorized (repository owner or organization member)."
             exit 0
           fi
 
