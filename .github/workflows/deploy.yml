@@ -13,7 +13,6 @@ on:
       - "package.json"
       - "bun.lock*"
       - "tsconfig.json"
-      - "drizzle/**"
   workflow_dispatch:
     inputs:
       force_build:
@@ -148,8 +147,9 @@ jobs:
           fi
 
           LOCAL_ENV_HASH=$(sha256sum .env.prod | awk '{print $1}')
+          LOCAL_DEPLOY_HASH=$(sha256sum scripts/deploy.sh | awk '{print $1}')
 
-          echo "==> Verifying current VM container state and environment..."
+          echo "==> Verifying current VM container state, environment, and deployment script..."
           VM_STATUS=$(gcloud compute ssh "$TARGET" \
             --zone=${{ env.VM_ZONE }} \
             --project=${{ env.GCP_PROJECT_ID }} \
@@ -161,7 +161,8 @@ jobs:
               RUNNING=\$(\$DOCKER inspect -f '{{.State.Running}}' '${{ env.CONTAINER_NAME }}' 2>/dev/null || echo 'false')
               IMAGE=\$(\$DOCKER inspect -f '{{.Config.Image}}' '${{ env.CONTAINER_NAME }}' 2>/dev/null || echo '')
               ENV_HASH=\$(sha256sum ~/snipsik/.env 2>/dev/null | awk '{print \$1}' || echo '')
-              echo \"\$RUNNING|\$IMAGE|\$ENV_HASH\"
+              DEPLOY_HASH=\$(sha256sum ~/snipsik/deploy.sh 2>/dev/null | awk '{print \$1}' || echo '')
+              echo \"\$RUNNING|\$IMAGE|\$ENV_HASH|\$DEPLOY_HASH\"
             " 2>/dev/null || echo "error")
 
           if [ "$VM_STATUS" = "error" ] || [ -z "$VM_STATUS" ]; then
@@ -174,14 +175,15 @@ jobs:
           VM_RUNNING=$(echo "$VM_STATUS" | cut -d'|' -f1)
           VM_IMAGE=$(echo "$VM_STATUS" | cut -d'|' -f2)
           VM_ENV_HASH=$(echo "$VM_STATUS" | cut -d'|' -f3)
+          VM_DEPLOY_HASH=$(echo "$VM_STATUS" | cut -d'|' -f4)
 
-          if [ "$VM_RUNNING" = "true" ] && [ "$VM_IMAGE" = "$TARGET_IMAGE" ] && [ "$VM_ENV_HASH" = "$LOCAL_ENV_HASH" ]; then
+          if [ "$VM_RUNNING" = "true" ] && [ "$VM_IMAGE" = "$TARGET_IMAGE" ] && [ "$VM_ENV_HASH" = "$LOCAL_ENV_HASH" ] && [ "$VM_DEPLOY_HASH" = "$LOCAL_DEPLOY_HASH" ]; then
             echo "needs_deploy=false" >> "$GITHUB_OUTPUT"
-            echo "reason=Container is already running target image ($TARGET_IMAGE) with identical configuration" >> "$GITHUB_OUTPUT"
-            echo "==> Container is already running target image with identical configuration. Skipping deployment."
+            echo "reason=Container is already running target image ($TARGET_IMAGE) with identical configuration and deploy script" >> "$GITHUB_OUTPUT"
+            echo "==> Container is already running target image with identical configuration and deploy script. Skipping deployment."
           else
             echo "needs_deploy=true" >> "$GITHUB_OUTPUT"
-            echo "reason=State mismatch detected (running: $VM_RUNNING, image_match: $([ "$VM_IMAGE" = "$TARGET_IMAGE" ] && echo true || echo false), env_match: $([ "$VM_ENV_HASH" = "$LOCAL_ENV_HASH" ] && echo true || echo false))" >> "$GITHUB_OUTPUT"
+            echo "reason=State mismatch detected (running: $VM_RUNNING, image_match: $([ "$VM_IMAGE" = "$TARGET_IMAGE" ] && echo true || echo false), env_match: $([ "$VM_ENV_HASH" = "$LOCAL_ENV_HASH" ] && echo true || echo false), deploy_script_match: $([ "$VM_DEPLOY_HASH" = "$LOCAL_DEPLOY_HASH" ] && echo true || echo false))" >> "$GITHUB_OUTPUT"
             echo "==> State mismatch detected on VM. Proceeding with deployment."
           fi
 

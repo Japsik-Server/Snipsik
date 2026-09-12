@@ -34,6 +34,29 @@ DATABASE_URL="postgresql://user:pass@localhost:5432/db"
     );
   });
 
+  it("sorts keys alphabetically for deterministic output and consistent sha256 checksums", () => {
+    const tmpFile = path.join(
+      os.tmpdir(),
+      `test-parse-order-${Date.now()}.txt`,
+    );
+
+    const input = `
+ZEBRA="last"
+APPLE="first"
+MANGO="middle"
+`;
+
+    execFileSync("bun", ["run", "scripts/parse-env.js", tmpFile], {
+      env: { ...process.env, APP_ENV: input },
+    });
+
+    const content = fs.readFileSync(tmpFile, "utf-8");
+    fs.unlinkSync(tmpFile);
+
+    const lines = content.trim().split("\n");
+    expect(lines).toEqual(["APPLE=first", "MANGO=middle", "ZEBRA=last"]);
+  });
+
   it("rejects environment variables with newline characters to preserve Docker env-file contract", () => {
     const tmpFile = path.join(os.tmpdir(), `test-parse-fail-${Date.now()}.txt`);
     const inputWithNewline = `

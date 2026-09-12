@@ -13,7 +13,8 @@ if (!raw || raw.trim().length === 0) {
 
 try {
   const parsed = dotenv.parse(raw);
-  const keys = Object.keys(parsed);
+  // Sort keys alphabetically to ensure deterministic output and stable sha256 checksums
+  const keys = Object.keys(parsed).sort();
 
   if (keys.length === 0) {
     console.error("Error: No valid environment variables found in APP_ENV!");
