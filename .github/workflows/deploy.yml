@@ -4,15 +4,16 @@ on:
   push:
     branches:
       - main
-    paths:
-      - "src/**"
-      - "scripts/**"
-      - ".github/workflows/deploy.yml"
-      - "Dockerfile"
-      - ".dockerignore"
-      - "package.json"
-      - "bun.lock*"
-      - "tsconfig.json"
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - ".gitignore"
+      - ".env.example"
+      - "test/**"
+      - ".github/pr-agent-allowed-users.txt"
+      - ".github/workflows/pr-agent.yml"
+      - ".pr_agent.toml"
+      - "docker-compose.yml"
   workflow_dispatch:
     inputs:
       force_build:
@@ -150,7 +151,8 @@ jobs:
           LOCAL_DEPLOY_HASH=$(sha256sum scripts/deploy.sh | awk '{print $1}')
 
           echo "==> Verifying current VM container state, environment, and deployment script..."
-          VM_STATUS=$(gcloud compute ssh "$TARGET" \
+          set +e
+          RAW_OUTPUT=$(gcloud compute ssh "$TARGET" \
             --zone=${{ env.VM_ZONE }} \
             --project=${{ env.GCP_PROJECT_ID }} \
             --quiet \
@@ -162,13 +164,21 @@ jobs:
               IMAGE=\$(\$DOCKER inspect -f '{{.Config.Image}}' '${{ env.CONTAINER_NAME }}' 2>/dev/null || echo '')
               ENV_HASH=\$(sha256sum ~/snipsik/.env 2>/dev/null | awk '{print \$1}' || echo '')
               DEPLOY_HASH=\$(sha256sum ~/snipsik/deploy.sh 2>/dev/null | awk '{print \$1}' || echo '')
-              echo \"\$RUNNING|\$IMAGE|\$ENV_HASH|\$DEPLOY_HASH\"
-            " 2>/dev/null || echo "error")
+              echo \"VM_STATUS:\$RUNNING|\$IMAGE|\$ENV_HASH|\$DEPLOY_HASH\"
+            " 2>/dev/null)
+          SSH_EXIT=$?
+          set -e
 
-          if [ "$VM_STATUS" = "error" ] || [ -z "$VM_STATUS" ]; then
-            echo "Warning: Unable to verify VM state via SSH. Failing open to deploy."
+          # Extract status line prefixed with VM_STATUS:
+          VM_STATUS=$(echo "$RAW_OUTPUT" | grep "^VM_STATUS:" | head -n 1 | sed 's/^VM_STATUS://' || true)
+
+          # Validate exit code and field count
+          FIELD_COUNT=$(echo "$VM_STATUS" | awk -F'|' '{print NF}')
+
+          if [ $SSH_EXIT -ne 0 ] || [ -z "$VM_STATUS" ] || [ "$FIELD_COUNT" -ne 4 ]; then
+            echo "Warning: Unable to verify VM state via SSH (exit=$SSH_EXIT, status='$VM_STATUS'). Failing open to deploy."
             echo "needs_deploy=true" >> "$GITHUB_OUTPUT"
-            echo "reason=VM state check failed; deploying for safety" >> "$GITHUB_OUTPUT"
+            echo "reason=VM state check failed or returned invalid format; deploying for safety" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
