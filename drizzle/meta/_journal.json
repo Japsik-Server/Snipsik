@@ -43,6 +43,13 @@
       "when": 1789046691774,
       "tag": "0005_furry_jocasta",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1789209309363,
+      "tag": "0006_good_skreet",
+      "breakpoints": true
     }
   ]
 }

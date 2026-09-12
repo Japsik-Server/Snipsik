@@ -96,7 +96,9 @@ Snipsik/
 
 ---
 
-## 4. 데이터베이스 스키마 (Drizzle ORM)
+## 4. 데이터베이스 스키마 및 보안 아키텍처 (Database & Security)
+
+### 4.1 데이터베이스 스키마 (Drizzle ORM)
 
 ```typescript
 // watch_channels 테이블 (감시 대상 채널)
@@ -116,6 +118,11 @@ export const userConfigs = pgTable("user_configs", {
   autoDmMode: text("auto_dm_mode").default("inherit").notNull(), // 'inherit' | 'on' | 'off'
   dmFormat: text("dm_format").default("replace").notNull(), // 'replace' | 'list'
   autoShortenMinUrlLength: integer("auto_shorten_min_url_length"), // nullable, null: 상위 기본값 상속
+  ignoredDomains: text("ignored_domains")
+    .array()
+    .default(sql`ARRAY[]::text[]`)
+    .notNull(),
+  fixupxEnabled: boolean("fixupx_enabled").default(true).notNull(),
   createdAt: timestamp("created_at", { withTimezone: true })
     .defaultNow()
     .notNull(),
@@ -129,6 +136,10 @@ export const guildConfigs = pgTable("guild_configs", {
   guildId: text("guild_id").primaryKey(),
   autoShortenEnabled: boolean("auto_shorten_enabled").default(true).notNull(),
   autoShortenMinUrlLength: integer("auto_shorten_min_url_length"), // nullable, null: 전역 기본값 상속
+  ignoredDomains: text("ignored_domains")
+    .array()
+    .default(sql`ARRAY[]::text[]`)
+    .notNull(),
   createdAt: timestamp("created_at", { withTimezone: true })
     .defaultNow()
     .notNull(),
@@ -137,6 +148,17 @@ export const guildConfigs = pgTable("guild_configs", {
     .notNull(),
 });
 ```
+
+### 4.2 데이터베이스 보안 모델 및 접근 제어 (Database Access & Security Architecture)
+
+- **Direct Backend Connection Only**:
+  - Snipsik은 별도의 웹/모바일 프론트엔드 클라이언트가 없는 단독 백엔드 서비스입니다.
+  - 모든 DB 조작은 봇 프로세스 내부에서 환경변수(`DATABASE_URL`)를 통한 직접 연결(`postgres-js`)로만 수행됩니다.
+- **Supabase PostgREST Data API 비활성화 전제 (Disabled Data API)**:
+  - Supabase 대시보드에서 Data API(PostgREST)가 비활성화되어 있어 외부에서 `anon` 또는 `authenticated` API 키를 통한 HTTP 접근이 원천 차단됩니다.
+- **Row Level Security (RLS) 정책**:
+  - 클라이언트 직접 접근이 없고 Data API가 비활성화되어 있으므로, public 테이블(`guild_configs`, `user_configs`, `watch_channels`)의 RLS는 비활성화(`DISABLE ROW LEVEL SECURITY`) 상태를 유지합니다.
+  - _주의_: 향후 웹 대시보드 등 클라이언트 직접 연동이 추가되거나 Supabase Data API를 다시 활성화해야 할 경우, 반드시 RLS를 활성화하고 접근 제어 정책(Policies)을 명시적으로 구성해야 합니다.
 
 ---
 
