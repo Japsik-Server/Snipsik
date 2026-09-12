@@ -8,7 +8,24 @@ on:
       - "**.md"
       - "docs/**"
       - ".gitignore"
+      - ".env.example"
+      - "test/**"
+      - ".github/pr-agent-allowed-users.txt"
+      - ".github/workflows/pr-agent.yml"
+      - ".pr_agent.toml"
+      - "docker-compose.yml"
   workflow_dispatch:
+    inputs:
+      force_build:
+        description: "Force Docker image build and push (bypass Artifact Registry cache)"
+        required: false
+        type: boolean
+        default: false
+      force_deploy:
+        description: "Force container redeploy/restart on VM"
+        required: false
+        type: boolean
+        default: false
 
 concurrency:
   group: production-deploy
@@ -50,6 +67,8 @@ jobs:
 
       - name: Check if image already exists in Artifact Registry
         id: check-image
+        env:
+          FORCE_BUILD: ${{ inputs.force_build }}
         run: |
           # Resolve base image digest from Docker Hub to capture upstream base image updates
           BASE_DIGEST=$(docker buildx imagetools inspect oven/bun:1-alpine --format '{{.Manifest.Digest}}' 2>/dev/null || echo "oven/bun:1-alpine")
@@ -62,7 +81,10 @@ jobs:
           echo "image_tag=${IMAGE_TAG}" >> "$GITHUB_OUTPUT"
           echo "target_image=${TARGET_IMAGE}" >> "$GITHUB_OUTPUT"
 
-          if gcloud artifacts docker images describe "$TARGET_IMAGE" >/dev/null 2>&1; then
+          if [ "$FORCE_BUILD" = "true" ]; then
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "force_build is enabled. Bypassing Artifact Registry cache and proceeding with build and push."
+          elif gcloud artifacts docker images describe "$TARGET_IMAGE" >/dev/null 2>&1; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
             echo "Image $TARGET_IMAGE already exists in Artifact Registry. Skipping build and push."
           else
@@ -102,7 +124,81 @@ jobs:
           npm install --no-save dotenv@17.4.2
           node scripts/parse-env.js .env.prod
 
+      - name: Check deployment necessity on VM
+        id: check-deploy
+        env:
+          FORCE_DEPLOY: ${{ inputs.force_deploy }}
+          FORCE_BUILD: ${{ inputs.force_build }}
+          IMAGE_EXISTS: ${{ steps.check-image.outputs.exists }}
+          TARGET_IMAGE: ${{ steps.check-image.outputs.target_image }}
+          TARGET: ${{ env.VM_USER }}@${{ env.VM_NAME }}
+        run: |
+          if [ "$FORCE_DEPLOY" = "true" ] || [ "$FORCE_BUILD" = "true" ]; then
+            echo "needs_deploy=true" >> "$GITHUB_OUTPUT"
+            echo "reason=Forced deployment requested via workflow_dispatch" >> "$GITHUB_OUTPUT"
+            echo "==> Forced deployment requested. Proceeding with deployment."
+            exit 0
+          fi
+
+          if [ "$IMAGE_EXISTS" != "true" ]; then
+            echo "needs_deploy=true" >> "$GITHUB_OUTPUT"
+            echo "reason=New container image built and pushed" >> "$GITHUB_OUTPUT"
+            echo "==> New container image was built. Proceeding with deployment."
+            exit 0
+          fi
+
+          LOCAL_ENV_HASH=$(sha256sum .env.prod | awk '{print $1}')
+          LOCAL_DEPLOY_HASH=$(sha256sum scripts/deploy.sh | awk '{print $1}')
+
+          echo "==> Verifying current VM container state, environment, and deployment script..."
+          set +e
+          RAW_OUTPUT=$(gcloud compute ssh "$TARGET" \
+            --zone=${{ env.VM_ZONE }} \
+            --project=${{ env.GCP_PROJECT_ID }} \
+            --quiet \
+            --command="
+              set -e
+              DOCKER='docker'
+              docker info >/dev/null 2>&1 || DOCKER='sudo docker'
+              RUNNING=\$(\$DOCKER inspect -f '{{.State.Running}}' '${{ env.CONTAINER_NAME }}' 2>/dev/null || echo 'false')
+              IMAGE=\$(\$DOCKER inspect -f '{{.Config.Image}}' '${{ env.CONTAINER_NAME }}' 2>/dev/null || echo '')
+              ENV_HASH=\$(sha256sum ~/snipsik/.env 2>/dev/null | awk '{print \$1}' || echo '')
+              DEPLOY_HASH=\$(sha256sum ~/snipsik/deploy.sh 2>/dev/null | awk '{print \$1}' || echo '')
+              echo \"VM_STATUS:\$RUNNING|\$IMAGE|\$ENV_HASH|\$DEPLOY_HASH\"
+            " 2>/dev/null)
+          SSH_EXIT=$?
+          set -e
+
+          # Extract status line prefixed with VM_STATUS:
+          VM_STATUS=$(echo "$RAW_OUTPUT" | grep "^VM_STATUS:" | head -n 1 | sed 's/^VM_STATUS://' || true)
+
+          # Validate exit code and field count
+          FIELD_COUNT=$(echo "$VM_STATUS" | awk -F'|' '{print NF}')
+
+          if [ $SSH_EXIT -ne 0 ] || [ -z "$VM_STATUS" ] || [ "$FIELD_COUNT" -ne 4 ]; then
+            echo "Warning: Unable to verify VM state via SSH (exit=$SSH_EXIT, status='$VM_STATUS'). Failing open to deploy."
+            echo "needs_deploy=true" >> "$GITHUB_OUTPUT"
+            echo "reason=VM state check failed or returned invalid format; deploying for safety" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          VM_RUNNING=$(echo "$VM_STATUS" | cut -d'|' -f1)
+          VM_IMAGE=$(echo "$VM_STATUS" | cut -d'|' -f2)
+          VM_ENV_HASH=$(echo "$VM_STATUS" | cut -d'|' -f3)
+          VM_DEPLOY_HASH=$(echo "$VM_STATUS" | cut -d'|' -f4)
+
+          if [ "$VM_RUNNING" = "true" ] && [ "$VM_IMAGE" = "$TARGET_IMAGE" ] && [ "$VM_ENV_HASH" = "$LOCAL_ENV_HASH" ] && [ "$VM_DEPLOY_HASH" = "$LOCAL_DEPLOY_HASH" ]; then
+            echo "needs_deploy=false" >> "$GITHUB_OUTPUT"
+            echo "reason=Container is already running target image ($TARGET_IMAGE) with identical configuration and deploy script" >> "$GITHUB_OUTPUT"
+            echo "==> Container is already running target image with identical configuration and deploy script. Skipping deployment."
+          else
+            echo "needs_deploy=true" >> "$GITHUB_OUTPUT"
+            echo "reason=State mismatch detected (running: $VM_RUNNING, image_match: $([ "$VM_IMAGE" = "$TARGET_IMAGE" ] && echo true || echo false), env_match: $([ "$VM_ENV_HASH" = "$LOCAL_ENV_HASH" ] && echo true || echo false), deploy_script_match: $([ "$VM_DEPLOY_HASH" = "$LOCAL_DEPLOY_HASH" ] && echo true || echo false))" >> "$GITHUB_OUTPUT"
+            echo "==> State mismatch detected on VM. Proceeding with deployment."
+          fi
+
       - name: Deploy container to GCP VM via gcloud compute ssh
+        if: steps.check-deploy.outputs.needs_deploy == 'true'
         run: |
           IMAGE_URI="${{ steps.check-image.outputs.target_image }}"
           DEPLOY_TMP="/tmp/snipsik-deploy-${{ github.sha }}"
@@ -140,6 +236,20 @@ jobs:
             rm -rf '$DEPLOY_TMP'
             bash ~/snipsik/deploy.sh '$IMAGE_URI' '${{ env.CONTAINER_NAME }}' '${{ env.GAR_LOCATION }}' '~/snipsik/.env'
           "
+
+      - name: Generate deployment summary
+        if: always()
+        run: |
+          cat << 'EOF' >> "$GITHUB_STEP_SUMMARY"
+          ## 🚀 GCP Deployment Summary
+
+          | Item | Status |
+          |------|--------|
+          | **Target Image** | `${{ steps.check-image.outputs.target_image || 'N/A' }}` |
+          | **Image Build** | ${{ steps.check-image.outputs.exists == 'true' && '⏭️ Skipped (Cache Hit)' || (steps.check-image.outputs.exists == 'false' && '🔨 Built & Pushed' || 'N/A') }} |
+          | **VM Deployment** | ${{ steps.check-deploy.outputs.needs_deploy == 'true' && '🚀 Deployed' || (steps.check-deploy.outputs.needs_deploy == 'false' && '⏭️ Skipped (Up-to-date)' || 'N/A') }} |
+          | **Reason** | ${{ steps.check-deploy.outputs.reason || 'N/A' }} |
+          EOF
 
       - name: Clean up temporary files on runner
         if: always()
