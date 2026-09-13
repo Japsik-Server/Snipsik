@@ -9,7 +9,7 @@ patch_extension_skip_types = [".md", ".txt", ".json", ".lock", ".svg", ".csv", "
 ignore_pr_title = ["^\\[Auto\\]", "^Auto", "^chore\\(deps\\)", "^chore\\(deps-dev\\)"]
 
 [openrouter]
-provider_only = ["openai/flex", "google-ai-studio/flex", "deepinfra", "z-ai"]
+provider_only = ["openai/flex", "google-ai-studio/flex", "deepinfra", "relace"]
 reasoning_effort = "low"
 reasoning_max_tokens = 2048
 
