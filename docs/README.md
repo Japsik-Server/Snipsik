@@ -20,6 +20,11 @@ Snipsik은 Cloudflare 기반 오픈소스 링크 단축기인 **Sink([Japsik-Ser
    - 환경 변수 레퍼런스
    - Docker (`oven/bun:1-alpine`) 및 Docker Compose 배포 가이드
 
+3. **[코드베이스 리뷰 (2026-09-17)](./reviews/2026-09-17-codebase-review.md)**
+   - 검토 기준 커밋, 범위 및 검증 한계
+   - 확인된 문제와 외부 계약·운영 환경 확인이 필요한 항목
+   - 권장 수정, 완료 기준 및 우선순위별 체크리스트
+
 ---
 
 ## ⚡ 핵심 기능 요약
