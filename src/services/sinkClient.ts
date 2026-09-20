@@ -11,21 +11,16 @@ import type {
   UrlCheckResult,
 } from "@/types/sink";
 import { logger } from "@/utils/logger";
+import { safeHttpGet } from "@/utils/safeHttp";
+import { z } from "zod";
 
 function normalizeSinkLink(
   raw: unknown,
-  defaultSlug?: string,
-  defaultUrl?: string,
 ): SinkLink {
   if (!raw || typeof raw !== "object") {
-    const rawDefault = defaultSlug
-      ? defaultSlug.startsWith("/")
-        ? defaultSlug.substring(1)
-        : defaultSlug
-      : "";
     return {
-      slug: rawDefault,
-      url: defaultUrl || "",
+      slug: "",
+      url: "",
     };
   }
 
@@ -69,7 +64,6 @@ function normalizeSinkLink(
     meta.key,
     meta.alias,
     meta.id,
-    defaultSlug,
   );
 
   const slug = rawSlugCandidate.startsWith("/")
@@ -87,7 +81,6 @@ function normalizeSinkLink(
     typeof meta.link === "string" ? meta.link : undefined,
     meta.target,
     meta.destination,
-    defaultUrl,
   );
 
   const title =
@@ -168,26 +161,32 @@ function normalizeSinkLink(
               : null;
 
   const createdAt =
-    typeof obj.createdAt === "string"
+    typeof obj.createdAt === "string" || typeof obj.createdAt === "number"
       ? obj.createdAt
-      : typeof meta.createdAt === "string"
+      : typeof meta.createdAt === "string" ||
+          typeof meta.createdAt === "number"
         ? meta.createdAt
-        : typeof obj.created_at === "string"
+        : typeof obj.created_at === "string" ||
+            typeof obj.created_at === "number"
           ? obj.created_at
-          : typeof meta.created_at === "string"
+          : typeof meta.created_at === "string" ||
+              typeof meta.created_at === "number"
             ? meta.created_at
-            : typeof obj.date === "string"
+            : typeof obj.date === "string" || typeof obj.date === "number"
               ? obj.date
               : undefined;
 
   const updatedAt =
-    typeof obj.updatedAt === "string"
+    typeof obj.updatedAt === "string" || typeof obj.updatedAt === "number"
       ? obj.updatedAt
-      : typeof meta.updatedAt === "string"
+      : typeof meta.updatedAt === "string" ||
+          typeof meta.updatedAt === "number"
         ? meta.updatedAt
-        : typeof obj.updated_at === "string"
+        : typeof obj.updated_at === "string" ||
+            typeof obj.updated_at === "number"
           ? obj.updated_at
-          : typeof meta.updated_at === "string"
+          : typeof meta.updated_at === "string" ||
+              typeof meta.updated_at === "number"
             ? meta.updated_at
             : undefined;
 
@@ -210,14 +209,112 @@ function normalizeSinkLink(
   };
 }
 
-function parseSinkListPayload(data: unknown): {
-  rawList: unknown[];
-  total: number;
+const requiredLinkSchema = z.object({
+  slug: z.string().trim().min(1),
+  url: z.string().trim().url(),
+});
+
+const statsSchema = z
+  .object({
+    slug: z.string().trim().min(1),
+    url: z.string().trim().url(),
+    clicks: z.number().finite().nonnegative(),
+    createdAt: z.union([z.string(), z.number()]).optional(),
+    lastClickedAt: z.union([z.string(), z.number(), z.null()]).optional(),
+    countries: z.record(z.number()).optional(),
+    referrers: z.record(z.number()).optional(),
+    devices: z.record(z.number()).optional(),
+  })
+  .passthrough();
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function unwrapObject(
+  value: unknown,
+  keys: readonly string[],
+): Record<string, unknown> | null {
+  if (!isRecord(value)) return null;
+  for (const key of keys) {
+    if (isRecord(value[key])) return value[key] as Record<string, unknown>;
+  }
+  return value;
+}
+
+function parseRequiredLink(
+  value: unknown,
+  endpoint: string,
+  envelopeKeys: readonly string[] = ["link", "data", "item"],
+): { success: true; link: SinkLink } | { success: false; error: string } {
+  const candidate = unwrapObject(value, envelopeKeys);
+  const link = normalizeSinkLink(candidate);
+  const parsed = requiredLinkSchema.safeParse(link);
+  if (!parsed.success) {
+    return {
+      success: false,
+      error: `Invalid Sink response contract for ${endpoint}: a non-empty slug and valid url are required`,
+    };
+  }
+  return { success: true, link };
+}
+
+function readListMetadata(source: Record<string, unknown>): {
+  valid: boolean;
+  total?: number;
   cursor?: string | null;
+  listComplete?: boolean;
 } {
-  let rawList: unknown[] = [];
-  let total = 0;
-  let cursor: string | null | undefined = null;
+  if (
+    source.total !== undefined &&
+    (typeof source.total !== "number" ||
+      !Number.isFinite(source.total) ||
+      source.total < 0)
+  ) {
+    return { valid: false };
+  }
+  const total =
+    typeof source.total === "number" &&
+    Number.isFinite(source.total) &&
+    source.total >= 0
+      ? source.total
+      : undefined;
+  const rawCursor = source.cursor ?? source.nextCursor;
+  if (
+    rawCursor !== undefined &&
+    rawCursor !== null &&
+    typeof rawCursor !== "string"
+  ) {
+    return { valid: false };
+  }
+  const cursor =
+    typeof rawCursor === "string"
+      ? rawCursor
+      : rawCursor === null
+        ? null
+        : undefined;
+  const rawListComplete = source.list_complete ?? source.listComplete;
+  if (rawListComplete !== undefined && typeof rawListComplete !== "boolean") {
+    return { valid: false };
+  }
+  const listComplete =
+    typeof rawListComplete === "boolean" ? rawListComplete : undefined;
+  return { valid: true, total, cursor, listComplete };
+}
+
+function parseSinkListPayload(data: unknown): {
+  valid: boolean;
+  rawList: unknown[];
+  total?: number;
+  cursor?: string | null;
+  listComplete?: boolean;
+} {
+  if (Array.isArray(data)) {
+    return { valid: true, rawList: data };
+  }
+  if (!isRecord(data)) {
+    return { valid: false, rawList: [] };
+  }
 
   const LIST_KEYS = [
     "list",
@@ -228,63 +325,134 @@ function parseSinkListPayload(data: unknown): {
     "keys",
   ] as const;
 
-  const pickArrayAndTotal = (
-    src: Record<string, unknown>,
-  ): { rawList: unknown[]; total: number } | null => {
+  const pickArray = (src: Record<string, unknown>): unknown[] | null => {
     for (const key of LIST_KEYS) {
       if (Array.isArray(src[key])) {
-        const arr = src[key] as unknown[];
-        return {
-          rawList: arr,
-          total: typeof src.total === "number" ? src.total : arr.length,
-        };
+        return src[key] as unknown[];
       }
     }
     return null;
   };
 
-  if (Array.isArray(data)) {
-    rawList = data;
-    total = rawList.length;
-  } else if (data && typeof data === "object") {
-    const obj = data as Record<string, unknown>;
-    cursor =
-      (typeof obj.cursor === "string" ? obj.cursor : null) ||
-      (typeof obj.nextCursor === "string" ? obj.nextCursor : null);
+  const outerMetadata = readListMetadata(data);
+  if (!outerMetadata.valid) return { valid: false, rawList: [] };
+  const top = pickArray(data);
+  if (top) {
+    return {
+      valid: true,
+      rawList: top,
+      total: outerMetadata.total,
+      cursor: outerMetadata.cursor,
+      listComplete: outerMetadata.listComplete,
+    };
+  }
 
-    const top = pickArrayAndTotal(obj);
-    if (top) {
-      rawList = top.rawList;
-      total = top.total;
-    } else if (obj.data && typeof obj.data === "object") {
-      const nested = obj.data as Record<string, unknown>;
-      cursor =
-        (typeof nested.cursor === "string" ? nested.cursor : null) || cursor;
-
-      const inner = pickArrayAndTotal(nested);
-      if (inner) {
-        rawList = inner.rawList;
-        total = inner.total;
-      }
+  if (isRecord(data.data)) {
+    const nested = data.data;
+    const inner = pickArray(nested);
+    if (inner) {
+      const innerMetadata = readListMetadata(nested);
+      if (!innerMetadata.valid) return { valid: false, rawList: [] };
+      return {
+        valid: true,
+        rawList: inner,
+        total: outerMetadata.total ?? innerMetadata.total,
+        cursor: outerMetadata.cursor ?? innerMetadata.cursor,
+        listComplete:
+          outerMetadata.listComplete ?? innerMetadata.listComplete,
+      };
     }
   }
 
-  return { rawList, total, cursor };
+  return { valid: false, rawList: [] };
 }
 
-class SinkClient {
+function parseLinkList(
+  value: unknown,
+  endpoint: string,
+):
+  | {
+      success: true;
+      list: SinkLink[];
+      total: number;
+      cursor?: string | null;
+      listComplete?: boolean;
+    }
+  | { success: false; error: string } {
+  const parsed = parseSinkListPayload(value);
+  if (!parsed.valid) {
+    return {
+      success: false,
+      error: `Invalid Sink response contract for ${endpoint}: a link array is required`,
+    };
+  }
+
+  const list: SinkLink[] = [];
+  for (const item of parsed.rawList) {
+    const linkResult = parseRequiredLink(item, endpoint, []);
+    if (!linkResult.success) return linkResult;
+    list.push(linkResult.link);
+  }
+  return {
+    success: true,
+    list,
+    total: parsed.total ?? list.length,
+    cursor: parsed.cursor,
+    listComplete: parsed.listComplete,
+  };
+}
+
+function validateDeleteAcknowledgement(
+  value: unknown,
+  endpoint: string,
+): { success: true } | { success: false; error: string } {
+  if (
+    value === undefined ||
+    (isRecord(value) &&
+      (Object.keys(value).length === 0 || value.success === true))
+  ) {
+    return { success: true };
+  }
+
+  return {
+    success: false,
+    error: `Invalid Sink response contract for ${endpoint}: expected an empty acknowledgment or success object`,
+  };
+}
+
+type FetchLike = (
+  input: RequestInfo | URL,
+  init?: RequestInit,
+) => Promise<Response>;
+
+type SinkClientOptions = {
+  baseUrl?: string;
+  token?: string;
+  requestTimeoutMs?: number;
+  fetchImpl?: FetchLike;
+};
+
+export class SinkClient {
   private readonly baseUrl: string;
   private readonly token: string;
+  private readonly requestTimeoutMs: number;
+  private readonly fetchImpl: FetchLike;
 
-  constructor() {
-    this.baseUrl = config.SINK_BASE_URL;
-    this.token = config.SINK_API_TOKEN;
+  constructor(options: SinkClientOptions = {}) {
+    this.baseUrl = options.baseUrl ?? config.SINK_BASE_URL;
+    this.token = options.token ?? config.SINK_API_TOKEN;
+    this.requestTimeoutMs =
+      options.requestTimeoutMs ?? config.SINK_REQUEST_TIMEOUT_MS;
+    this.fetchImpl =
+      options.fetchImpl ??
+      ((input: RequestInfo | URL, init?: RequestInit) =>
+        globalThis.fetch(input, init));
   }
 
   private async request<T>(
     path: string,
     options: RequestInit = {},
-  ): Promise<{ success: boolean; data?: T; error?: string; status: number }> {
+  ): Promise<{ success: boolean; body?: T; error?: string; status: number }> {
     const url = `${this.baseUrl}${path.startsWith("/") ? path : `/${path}`}`;
     const headers: Record<string, string> = {
       Authorization: `Bearer ${this.token}`,
@@ -293,17 +461,31 @@ class SinkClient {
       ...(options.headers as Record<string, string> | undefined),
     };
 
+    const controller = new AbortController();
+    let timedOut = false;
+    const timeoutId = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, this.requestTimeoutMs);
+    const externalSignal = options.signal;
+    const abortFromExternal = () => controller.abort(externalSignal?.reason);
+    if (externalSignal?.aborted) abortFromExternal();
+    else externalSignal?.addEventListener("abort", abortFromExternal, {
+      once: true,
+    });
+
     try {
       logger.debug(`Sink API Request: ${options.method || "GET"} ${url}`);
-      const response = await fetch(url, {
+      const response = await this.fetchImpl(url, {
         ...options,
         headers,
+        signal: controller.signal,
       });
 
       const text = await response.text();
       let json: unknown;
       try {
-        json = text ? JSON.parse(text) : {};
+        json = text ? JSON.parse(text) : undefined;
       } catch {
         json = { message: text };
       }
@@ -345,16 +527,18 @@ class SinkClient {
         return { success: false, error: errorMsg, status: response.status };
       }
 
-      // Handle both { data: T } wrapper and direct T response
-      const data =
-        (json as { data?: T })?.data !== undefined
-          ? (json as { data: T }).data
-          : (json as T);
-      return { success: true, data, status: response.status };
+      return { success: true, body: json as T, status: response.status };
     } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : String(err);
+      const errorMsg = timedOut
+        ? `Sink request timed out after ${this.requestTimeoutMs}ms`
+        : err instanceof Error
+          ? err.message
+          : String(err);
       logger.error(`Sink API Network Exception for ${url}:`, err);
       return { success: false, error: errorMsg, status: 0 };
+    } finally {
+      clearTimeout(timeoutId);
+      externalSignal?.removeEventListener("abort", abortFromExternal);
     }
   }
 
@@ -369,12 +553,18 @@ class SinkClient {
       body: JSON.stringify(payload),
     });
 
-    if (!res.success || !res.data) {
+    if (!res.success) {
       return { success: false, error: res.error || "Failed to create link" };
     }
 
-    const link = normalizeSinkLink(res.data, payload.slug, payload.url);
-    return { success: true, link };
+    const parsed = parseRequiredLink(res.body, "/api/link/create", [
+      "link",
+      "data",
+      "item",
+    ]);
+    return parsed.success
+      ? { success: true, link: parsed.link }
+      : { success: false, error: parsed.error };
   }
 
   /**
@@ -402,7 +592,7 @@ class SinkClient {
       method: "GET",
     });
 
-    if (!res.success || !res.data) {
+    if (!res.success) {
       return {
         success: false,
         error: res.error || "Link not found",
@@ -410,18 +600,18 @@ class SinkClient {
       };
     }
 
-    const link = normalizeSinkLink(res.data, params.slug, params.url);
-    if (!link.slug && !link.url) {
+    const parsed = parseRequiredLink(res.body, "/api/link/query");
+    if (!parsed.success) {
       return {
         success: false,
-        error: "Link not found",
-        status: 404,
+        error: parsed.error,
+        status: 502,
       };
     }
 
     return {
       success: true,
-      link,
+      link: parsed.link,
       status: res.status,
     };
   }
@@ -433,6 +623,8 @@ class SinkClient {
     success: boolean;
     list: SinkLink[];
     total: number;
+    cursor?: string | null;
+    listComplete?: boolean;
     error?: string;
     status: number;
   }> {
@@ -451,7 +643,7 @@ class SinkClient {
       method: "GET",
     });
 
-    if (!res.success || res.data === undefined) {
+    if (!res.success) {
       return {
         success: false,
         list: [],
@@ -461,15 +653,23 @@ class SinkClient {
       };
     }
 
-    const { rawList, total } = parseSinkListPayload(res.data);
-    const list = rawList
-      .map((item) => normalizeSinkLink(item))
-      .filter((l) => Boolean(l.slug));
+    const parsed = parseLinkList(res.body, "/api/link/search");
+    if (!parsed.success) {
+      return {
+        success: false,
+        list: [],
+        total: 0,
+        error: parsed.error,
+        status: 502,
+      };
+    }
 
     return {
       success: true,
-      list,
-      total: total || list.length,
+      list: parsed.list,
+      total: parsed.total,
+      cursor: parsed.cursor,
+      listComplete: parsed.listComplete,
       status: res.status,
     };
   }
@@ -496,7 +696,7 @@ class SinkClient {
       method: "GET",
     });
 
-    if (!res.success || res.data === undefined) {
+    if (!res.success) {
       return {
         success: false,
         count: 0,
@@ -505,22 +705,26 @@ class SinkClient {
       };
     }
 
-    let count = 0;
-    if (typeof res.data === "number") {
-      count = res.data;
-    } else if (res.data && typeof res.data === "object") {
-      const obj = res.data as Record<string, unknown>;
-      if (typeof obj.count === "number") {
-        count = obj.count;
-      } else if (typeof obj.total === "number") {
-        count = obj.total;
-      } else if (typeof obj.data === "number") {
-        count = obj.data;
-      } else if (obj.data && typeof obj.data === "object") {
-        const nested = obj.data as Record<string, unknown>;
-        if (typeof nested.count === "number") count = nested.count;
-        else if (typeof nested.total === "number") count = nested.total;
+    const body = res.body;
+    let count: number | undefined;
+    if (typeof body === "number") count = body;
+    else if (isRecord(body)) {
+      if (typeof body.count === "number") count = body.count;
+      else if (typeof body.total === "number") count = body.total;
+      else if (typeof body.data === "number") count = body.data;
+      else if (isRecord(body.data)) {
+        if (typeof body.data.count === "number") count = body.data.count;
+        else if (typeof body.data.total === "number") count = body.data.total;
       }
+    }
+    if (count === undefined || !Number.isFinite(count) || count < 0) {
+      return {
+        success: false,
+        count: 0,
+        error:
+          "Invalid Sink response contract for /api/link/count: a non-negative count is required",
+        status: 502,
+      };
     }
 
     return {
@@ -549,11 +753,12 @@ class SinkClient {
       },
     );
 
-    if (res.success && res.data) {
-      const link = normalizeSinkLink(res.data, cleanSlug);
-      if (link.url) {
-        return { success: true, link, status: res.status };
+    if (res.success) {
+      const parsed = parseRequiredLink(res.body, `/api/link/${cleanSlug}`);
+      if (!parsed.success) {
+        return { success: false, error: parsed.error, status: 502 };
       }
+      return { success: true, link: parsed.link, status: res.status };
     }
 
     // 2. Fallback: Query /api/link/query?slug=...
@@ -588,33 +793,25 @@ class SinkClient {
     payload: UpdateLinkPayload,
   ): Promise<{ success: boolean; link?: SinkLink; error?: string }> {
     const cleanSlug = slug.startsWith("/") ? slug.substring(1) : slug;
-    const res = await this.request<unknown>("/api/link/update", {
-      method: "POST",
+    let res = await this.request<unknown>("/api/link/edit", {
+      method: "PUT",
       body: JSON.stringify({ slug: cleanSlug, ...payload }),
     });
 
-    if (!res.success) {
-      // Fallback: try PUT /api/link/:slug
-      const fallbackRes = await this.request<unknown>(
-        `/api/link/${encodeURIComponent(cleanSlug)}`,
-        {
-          method: "PUT",
-          body: JSON.stringify(payload),
-        },
-      );
-
-      if (!fallbackRes.success) {
-        return {
-          success: false,
-          error: res.error || fallbackRes.error || "Failed to update link",
-        };
-      }
-      const link = normalizeSinkLink(fallbackRes.data, cleanSlug, payload.url);
-      return { success: true, link };
+    if (!res.success && (res.status === 404 || res.status === 405)) {
+      res = await this.request<unknown>("/api/link/update", {
+        method: "POST",
+        body: JSON.stringify({ slug: cleanSlug, ...payload }),
+      });
     }
 
-    const link = normalizeSinkLink(res.data, cleanSlug, payload.url);
-    return { success: true, link };
+    if (!res.success) {
+      return { success: false, error: res.error || "Failed to update link" };
+    }
+    const parsed = parseRequiredLink(res.body, "/api/link/edit");
+    return parsed.success
+      ? { success: true, link: parsed.link }
+      : { success: false, error: parsed.error };
   }
 
   /**
@@ -649,7 +846,7 @@ class SinkClient {
       body: JSON.stringify({ slug: cleanSlug }),
     });
 
-    if (!res.success) {
+    if (!res.success && (res.status === 404 || res.status === 405)) {
       // Fallback: try DELETE /api/link/:slug
       const fallbackRes = await this.request<{ success: boolean }>(
         `/api/link/${encodeURIComponent(cleanSlug)}`,
@@ -664,9 +861,16 @@ class SinkClient {
           error: res.error || fallbackRes.error || "Failed to delete link",
         };
       }
+      return validateDeleteAcknowledgement(
+        fallbackRes.body,
+        `/api/link/${encodeURIComponent(cleanSlug)}`,
+      );
     }
 
-    return { success: true };
+    if (!res.success) {
+      return { success: false, error: res.error || "Failed to delete link" };
+    }
+    return validateDeleteAcknowledgement(res.body, "/api/link/delete");
   }
 
   /**
@@ -682,11 +886,20 @@ class SinkClient {
       },
     );
 
-    if (!res.success || !res.data) {
+    if (!res.success) {
       return { success: false, error: res.error || "Failed to fetch stats" };
     }
 
-    return { success: true, stats: res.data };
+    const candidate = unwrapObject(res.body, ["data", "stats"]);
+    const parsed = statsSchema.safeParse(candidate);
+    if (!parsed.success) {
+      return {
+        success: false,
+        error:
+          "Invalid Sink response contract for link stats: slug, url, and non-negative clicks are required",
+      };
+    }
+    return { success: true, stats: parsed.data };
   }
 
   /**
@@ -701,6 +914,7 @@ class SinkClient {
     list: SinkLink[];
     total: number;
     cursor?: string | null;
+    listComplete?: boolean;
     error?: string;
   }> {
     const params = new URLSearchParams();
@@ -740,7 +954,7 @@ class SinkClient {
       });
     }
 
-    if (!res.success || res.data === undefined) {
+    if (!res.success) {
       return {
         success: false,
         list: [],
@@ -749,20 +963,26 @@ class SinkClient {
       };
     }
 
-    const { rawList, total, cursor } = parseSinkListPayload(res.data);
-    const list = rawList
-      .map((item) => normalizeSinkLink(item))
-      .filter((l) => Boolean(l.slug));
+    const parsed = parseLinkList(res.body, "/api/link/list");
+    if (!parsed.success) {
+      return {
+        success: false,
+        list: [],
+        total: 0,
+        error: parsed.error,
+      };
+    }
 
     logger.debug(
-      `Parsed ${list.length} links from Sink API (raw items: ${rawList.length})`,
+      `Parsed ${parsed.list.length} links from Sink API`,
     );
 
     return {
       success: true,
-      list,
-      total: total || list.length,
-      cursor,
+      list: parsed.list,
+      total: parsed.total,
+      cursor: parsed.cursor,
+      listComplete: parsed.listComplete,
     };
   }
 
@@ -780,39 +1000,48 @@ class SinkClient {
     truncated?: boolean;
     error?: string;
   }> {
-    const firstPage = await this.listLinks(tag, 1, 1000);
+    const firstPage = await this.listLinks(
+      { tag, limit: 1000 },
+      1,
+      1000,
+    );
     if (!firstPage.success) {
       return firstPage;
     }
 
     const allLinks = [...firstPage.list];
-    const total = firstPage.total;
+    let expectedTotal = firstPage.total;
+    let cursor = firstPage.cursor;
+    let listComplete = firstPage.listComplete;
 
-    // If total exceeds the first page, fetch subsequent pages sequentially up to maxPages
-    if (total > allLinks.length) {
-      const pageSize = 1000;
-      const totalPages = Math.min(Math.ceil(total / pageSize), maxPages);
-      for (let page = 2; page <= totalPages; page++) {
-        const pageRes = await this.listLinks(tag, page, pageSize);
-        if (pageRes.success && pageRes.list.length > 0) {
-          allLinks.push(...pageRes.list);
-        } else {
-          break;
-        }
-      }
+    for (let page = 2; page <= maxPages; page++) {
+      const needsCursorPage = Boolean(cursor) && listComplete !== true;
+      const needsLegacyPage = !cursor && expectedTotal > allLinks.length;
+      if (!needsCursorPage && !needsLegacyPage) break;
+
+      const pageRes = needsCursorPage
+        ? await this.listLinks({ tag, cursor: cursor ?? undefined, limit: 1000 })
+        : await this.listLinks(tag, page, 1000);
+      if (!pageRes.success || pageRes.list.length === 0) break;
+      allLinks.push(...pageRes.list);
+      expectedTotal = Math.max(expectedTotal, pageRes.total, allLinks.length);
+      cursor = pageRes.cursor;
+      listComplete = pageRes.listComplete;
     }
 
-    const truncated = total > allLinks.length;
+    const truncated =
+      expectedTotal > allLinks.length ||
+      listComplete === false;
     if (truncated) {
       logger.warn(
-        `listAllLinks capped results at ${allLinks.length}/${total} links (maxPages: ${maxPages})`,
+        `listAllLinks capped results at ${allLinks.length}/${expectedTotal} links (maxPages: ${maxPages})`,
       );
     }
 
     return {
       success: true,
       list: allLinks,
-      total: allLinks.length,
+      total: Math.max(expectedTotal, allLinks.length),
       truncated,
     };
   }
@@ -823,20 +1052,16 @@ class SinkClient {
   async checkUrlHealth(targetUrl: string): Promise<UrlCheckResult> {
     const startTime = Date.now();
     try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 6000);
-
-      const response = await fetch(targetUrl, {
-        method: "GET",
-        signal: controller.signal,
-        headers: {
-          "User-Agent": "Snipsik-HealthChecker/1.0",
-        },
+      const response = await safeHttpGet(targetUrl, {
+        timeoutMs: 6000,
+        maxRedirects: 5,
       });
-      clearTimeout(timeoutId);
 
       const responseTimeMs = Date.now() - startTime;
-      const contentType = response.headers.get("content-type");
+      const contentTypeHeader = response.headers["content-type"];
+      const contentType = Array.isArray(contentTypeHeader)
+        ? (contentTypeHeader[0] ?? null)
+        : (contentTypeHeader ?? null);
 
       return {
         url: targetUrl,
@@ -853,9 +1078,7 @@ class SinkClient {
       return {
         url: targetUrl,
         status: null,
-        statusText: errorMessage.includes("abort")
-          ? "Request Timeout (6s)"
-          : errorMessage,
+        statusText: errorMessage,
         responseTimeMs,
         isAlive: false,
         contentType: null,

@@ -43,6 +43,7 @@ DATABASE_URL=libsql://your-database-org.turso.io
 DATABASE_AUTH_TOKEN=your_turso_auth_token
 SINK_BASE_URL=https://s.japsik.com
 SINK_API_TOKEN=your_sink_token
+SINK_REQUEST_TIMEOUT_MS=10000
 RANDOM_SLUG_LENGTH=3
 ADMIN_USER_IDS=294123456789012345
 ```

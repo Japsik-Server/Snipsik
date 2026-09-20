@@ -90,6 +90,7 @@ Snipsik/
 | `DATABASE_URL`                | **필수**  |           -            | Supabase PostgreSQL 연결 문자열 (`postgresql://...`)         |
 | `SINK_BASE_URL`               | **필수**  | `https://s.japsik.com` | 배포된 Sink 인스턴스 도메인 주소                             |
 | `SINK_API_TOKEN`              | **필수**  |           -            | Sink 인스턴스의 `NUXT_SITE_TOKEN` (API Bearer 인증용)        |
+| `SINK_REQUEST_TIMEOUT_MS`     |   선택    |        `10000`         | Sink API 헤더·본문 전체 요청 시간 제한 (1,000~60,000ms)     |
 | `RANDOM_SLUG_LENGTH`          |   선택    |          `3`           | 일반 링크 생성 시 앞자리 랜덤 문자열 길이 (2~16)             |
 | `ADMIN_USER_IDS`              |   선택    |          `""`          | `/link custom` 생성이 허용된 디스코드 유저 ID (콤마 구분)    |
 | `AUTO_SHORTEN_MIN_URL_LENGTH` |   선택    |          `70`          | URL 자동 단축의 전역 최소 길이 기본값 (0: 전체 단축, 1~2048) |
