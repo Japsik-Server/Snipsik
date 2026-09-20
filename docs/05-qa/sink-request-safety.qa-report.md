@@ -10,7 +10,7 @@
 
 | Level | Type | Status | Pass Rate | Failed |
 |-------|------|:------:|:---------:|:------:|
-| L1 | Unit Test | PASS | 100% (165/165) | 0 |
+| L1 | Unit Test | PASS | 100% (167/167) | 0 |
 | L2 | Isolated HTTP/API contract tests | PASS | 100% | 0 |
 | L3 | Browser E2E | N/A | - | - |
 | L4 | UX Flow | N/A | - | - |
@@ -19,7 +19,7 @@
 ## 2. Test Evidence
 
 - SSRF policy covers protocol validation, IPv4/IPv6 non-public ranges, mixed DNS answers, pinned connection addresses, redirect revalidation, redirect limits, and total timeout.
-- Sink tests cover header delay, body delay, post-timeout recovery, mutation retry suppression, cursor pagination, legacy envelope metadata, and malformed 2xx rejection.
+- Sink tests cover header delay, body delay, post-timeout recovery, mutation retry suppression, list and search cursor metadata, legacy envelope metadata, malformed 2xx rejection, and fallback DELETE acknowledgment validation.
 - Message workflow verifies that a timed-out in-flight key is removed and the same URL can be retried.
 - `bun run typecheck` and `bun run build` pass.
 
@@ -59,4 +59,5 @@ Not used. The feature has no browser UI; L1 and isolated L2 tests cover its beha
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 1.1 | 2026-09-20 | Added search metadata and fallback DELETE contract regression coverage |
 | 1.0 | 2026-09-20 | Initial completed QA report |

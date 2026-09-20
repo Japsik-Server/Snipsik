@@ -45,6 +45,8 @@ describe("SinkClient New API Tests", () => {
             { slug: "link2-testUser", url: "https://example2.com", clicks: 20 },
           ],
           total: 2,
+          cursor: "next-search-page",
+          list_complete: false,
         }),
         { status: 200, headers: { "Content-Type": "application/json" } },
       );
@@ -62,6 +64,8 @@ describe("SinkClient New API Tests", () => {
       expect(res.success).toBe(true);
       expect(res.list.length).toBe(2);
       expect(res.total).toBe(2);
+      expect(res.cursor).toBe("next-search-page");
+      expect(res.listComplete).toBe(false);
       expect(res.list[0]?.slug).toBe("link1-testUser");
     } finally {
       globalThis.fetch = originalFetch;
@@ -293,6 +297,64 @@ describe("SinkClient New API Tests", () => {
     const result = await client.listLinks();
     expect(result.success).toBe(false);
     expect(result.error).toContain("Invalid Sink response contract");
+  });
+
+  it("accepts a valid fallback DELETE acknowledgment", async () => {
+    const requestedMethods: string[] = [];
+    const client = new SinkClient({
+      baseUrl: "https://sink.example",
+      token: "test-token",
+      fetchImpl: async (url, init) => {
+        requestedMethods.push(`${init?.method} ${String(url)}`);
+        if (init?.method === "GET") {
+          return new Response(
+            JSON.stringify({ slug: "delete-me", url: "https://example.com" }),
+            { status: 200 },
+          );
+        }
+        if (init?.method === "POST") {
+          return new Response(JSON.stringify({ error: "Not Found" }), {
+            status: 404,
+          });
+        }
+        return new Response(JSON.stringify({ success: true }), { status: 200 });
+      },
+    });
+
+    const result = await client.deleteLink("delete-me");
+    expect(result.success).toBe(true);
+    expect(requestedMethods).toContain(
+      "DELETE https://sink.example/api/link/delete-me",
+    );
+  });
+
+  it("rejects malformed fallback DELETE acknowledgments", async () => {
+    for (const malformedBody of [{ success: false }, "deleted"]) {
+      const client = new SinkClient({
+        baseUrl: "https://sink.example",
+        token: "test-token",
+        fetchImpl: async (_url, init) => {
+          if (init?.method === "GET") {
+            return new Response(
+              JSON.stringify({ slug: "delete-me", url: "https://example.com" }),
+              { status: 200 },
+            );
+          }
+          if (init?.method === "POST") {
+            return new Response(JSON.stringify({ error: "Not Found" }), {
+              status: 404,
+            });
+          }
+          return new Response(JSON.stringify(malformedBody), { status: 200 });
+        },
+      });
+
+      const result = await client.deleteLink("delete-me");
+      expect(result.success).toBe(false);
+      expect(result.error).toContain(
+        "Invalid Sink response contract for /api/link/delete-me",
+      );
+    }
   });
 
   it("times out while waiting for response headers and allows a later request", async () => {

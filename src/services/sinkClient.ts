@@ -402,6 +402,24 @@ function parseLinkList(
   };
 }
 
+function validateDeleteAcknowledgement(
+  value: unknown,
+  endpoint: string,
+): { success: true } | { success: false; error: string } {
+  if (
+    value === undefined ||
+    (isRecord(value) &&
+      (Object.keys(value).length === 0 || value.success === true))
+  ) {
+    return { success: true };
+  }
+
+  return {
+    success: false,
+    error: `Invalid Sink response contract for ${endpoint}: expected an empty acknowledgment or success object`,
+  };
+}
+
 type FetchLike = (
   input: RequestInfo | URL,
   init?: RequestInit,
@@ -605,6 +623,8 @@ export class SinkClient {
     success: boolean;
     list: SinkLink[];
     total: number;
+    cursor?: string | null;
+    listComplete?: boolean;
     error?: string;
     status: number;
   }> {
@@ -648,6 +668,8 @@ export class SinkClient {
       success: true,
       list: parsed.list,
       total: parsed.total,
+      cursor: parsed.cursor,
+      listComplete: parsed.listComplete,
       status: res.status,
     };
   }
@@ -839,25 +861,16 @@ export class SinkClient {
           error: res.error || fallbackRes.error || "Failed to delete link",
         };
       }
-      return { success: true };
+      return validateDeleteAcknowledgement(
+        fallbackRes.body,
+        `/api/link/${encodeURIComponent(cleanSlug)}`,
+      );
     }
 
     if (!res.success) {
       return { success: false, error: res.error || "Failed to delete link" };
     }
-    if (
-      res.body !== undefined &&
-      (!isRecord(res.body) ||
-        (Object.keys(res.body).length > 0 && res.body.success !== true))
-    ) {
-      return {
-        success: false,
-        error:
-          "Invalid Sink response contract for /api/link/delete: expected an empty acknowledgment or success object",
-      };
-    }
-
-    return { success: true };
+    return validateDeleteAcknowledgement(res.body, "/api/link/delete");
   }
 
   /**
