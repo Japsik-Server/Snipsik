@@ -5,7 +5,7 @@ describe("Config Schema AUTO_SHORTEN_MIN_URL_LENGTH parsing", () => {
   const baseEnv = {
     DISCORD_TOKEN: "mock-token",
     DISCORD_CLIENT_ID: "1234567890",
-    DATABASE_URL: "postgresql://user:pass@localhost:5432/db",
+    DATABASE_URL: "file:local.db",
     SINK_BASE_URL: "https://s.japsik.com",
     SINK_API_TOKEN: "mock-sink-token",
   };

@@ -7,6 +7,7 @@ export const envSchema = z.object({
     .string()
     .optional()
     .transform((val) => {
+      // In test mode, default to isolated in-memory SQLite database if omitted or if a legacy postgres URL is present in local .env
       if (
         process.env.NODE_ENV === "test" &&
         (!val || val.startsWith("postgres:") || val.startsWith("postgresql:"))

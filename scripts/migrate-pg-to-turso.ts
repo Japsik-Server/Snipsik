@@ -162,20 +162,34 @@ async function migrate(): Promise<void> {
     console.log("  ✓ Turso / LibSQL connected successfully.");
     console.log("-------------------------------------------------");
 
+    // Helper to query table count with helpful schema-missing detection
+    async function getTargetTableCount(tableName: string): Promise<number> {
+      try {
+        const res = await turso.execute(
+          `SELECT count(*) as c FROM ${tableName}`,
+        );
+        return Number(res.rows[0]?.c ?? 0);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg.includes("no such table") || msg.includes("SQLITE_ERROR")) {
+          console.error(
+            `\n❌ Error: Target table '${tableName}' does not exist in the Turso database.`,
+          );
+          console.error(
+            "Please apply the database schema before running the migration:",
+          );
+          console.error("  bun run db:push\n");
+          process.exit(1);
+        }
+        throw err;
+      }
+    }
+
     // Pre-flight safety check: prevent accidental clobbering of post-cutover Turso data
     const preflightCounts = {
-      watchChannels: Number(
-        (await turso.execute("SELECT count(*) as c FROM watch_channels"))
-          .rows[0]?.c ?? 0,
-      ),
-      guildConfigs: Number(
-        (await turso.execute("SELECT count(*) as c FROM guild_configs")).rows[0]
-          ?.c ?? 0,
-      ),
-      userConfigs: Number(
-        (await turso.execute("SELECT count(*) as c FROM user_configs")).rows[0]
-          ?.c ?? 0,
-      ),
+      watchChannels: await getTargetTableCount("watch_channels"),
+      guildConfigs: await getTargetTableCount("guild_configs"),
+      userConfigs: await getTargetTableCount("user_configs"),
     };
     const hasExistingData =
       preflightCounts.watchChannels > 0 ||
