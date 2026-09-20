@@ -87,12 +87,10 @@ const turso = createClient({
 });
 
 /**
- * Converts a date value to Unix timestamp in seconds matching Drizzle's mode: 'timestamp'
- * and SQLite's unixepoch() convention.
- * Note: Sub-second precision is intentionally truncated to match the SQLite schema design,
- * as bot audit timestamps do not require microsecond resolution.
+ * Converts a date value to Unix timestamp in milliseconds matching Drizzle's mode: 'timestamp_ms'
+ * and JavaScript Date.getTime() convention, preserving full millisecond accuracy from PostgreSQL.
  */
-function toUnixTimestamp(
+function toTimestampMs(
   dateValue: unknown,
   columnName: string,
   rowIdentifier: string,
@@ -100,12 +98,12 @@ function toUnixTimestamp(
   if (dateValue instanceof Date) {
     const time = dateValue.getTime();
     if (!Number.isNaN(time)) {
-      return Math.floor(time / 1000);
+      return time;
     }
   } else if (typeof dateValue === "string" || typeof dateValue === "number") {
     const parsed = new Date(dateValue).getTime();
     if (!Number.isNaN(parsed)) {
-      return Math.floor(parsed / 1000);
+      return parsed;
     }
   }
   throw new Error(
@@ -113,38 +111,16 @@ function toUnixTimestamp(
   );
 }
 
-/**
- * Executes a set of statements in batches inside a single atomic write transaction.
- * If any batch or extra statement fails, rolls back the entire transaction to prevent partial state.
- */
-async function executeTableInTransaction(
+async function executeInTransaction(
   client: ReturnType<typeof createClient>,
-  tableName: string,
   statements: InStatement[],
-  extraStatements: InStatement[] = [],
 ): Promise<void> {
-  if (statements.length === 0 && extraStatements.length === 0) {
-    return;
-  }
-  console.log(
-    `  Executing atomic transaction for [${tableName}] (${statements.length} row statements)...`,
-  );
+  if (statements.length === 0) return;
   const tx = await client.transaction("write");
   try {
-    for (let i = 0; i < statements.length; i += BATCH_SIZE) {
-      const chunk = statements.slice(i, i + BATCH_SIZE);
-      await tx.batch(chunk);
-    }
-    for (const stmt of extraStatements) {
-      await tx.execute(stmt);
-    }
+    await tx.batch(statements);
     await tx.commit();
-    console.log(`  ✓ Successfully committed transaction for [${tableName}].`);
   } catch (error) {
-    console.error(
-      `  ❌ Transaction failed for [${tableName}], rolling back...`,
-      error,
-    );
     await tx.rollback().catch(() => {});
     throw error;
   }
@@ -220,223 +196,198 @@ async function migrate(): Promise<void> {
     }
 
     // ==========================================
-    // Table 1: watch_channels
+    // Table 1: watch_channels (Streaming Migration)
     // ==========================================
     console.log("📦 Migrating [watch_channels]...");
-    const pgWatchRows = await pg`
-      SELECT id, guild_id, channel_id, created_by, created_at
-      FROM watch_channels
-      ORDER BY id ASC
-    `;
-    const tursoWatchBefore = await turso.execute(
-      "SELECT count(*) as count FROM watch_channels",
-    );
-    const watchBeforeCount = Number(tursoWatchBefore.rows[0]?.count ?? 0);
-
-    console.log(`  Found ${pgWatchRows.length} rows in PostgreSQL.`);
+    const [totalWatchSourceRes] =
+      await pg`SELECT count(*)::int as count FROM watch_channels`;
+    const totalWatchSource = Number(totalWatchSourceRes?.count ?? 0);
+    const watchBeforeCount = preflightCounts.watchChannels;
+    console.log(`  Found ${totalWatchSource} rows in PostgreSQL.`);
     console.log(`  Current Turso count: ${watchBeforeCount}`);
 
     let watchVerified = true;
+    let lastWatchId = 0;
+    let processedWatchRows = 0;
 
-    if (isDryRun) {
-      console.log(
-        `  [DRY-RUN] Validating data transformations for ${pgWatchRows.length} rows...`,
-      );
-      for (const row of pgWatchRows) {
-        toUnixTimestamp(
+    while (true) {
+      const chunk = await pg`
+        SELECT id, guild_id, channel_id, created_by, created_at
+        FROM watch_channels
+        WHERE id > ${lastWatchId}
+        ORDER BY id ASC
+        LIMIT ${BATCH_SIZE}
+      `;
+
+      if (chunk.length === 0) break;
+
+      // Validate data conversions for every row in the chunk
+      for (const row of chunk) {
+        toTimestampMs(
           row.created_at,
           "created_at",
           `watch_channel:id=${row.id}`,
         );
       }
-      console.log(
-        `  ✓ All ${pgWatchRows.length} rows passed conversion validation.`,
-      );
-      if (pgWatchRows.length > 0) {
-        console.log("  Sample row:", JSON.stringify(pgWatchRows[0]));
-      }
-    } else {
-      const watchStatements: InStatement[] = pgWatchRows.map((row) => ({
-        sql: `
-          INSERT INTO watch_channels (id, guild_id, channel_id, created_by, created_at)
-          VALUES (?, ?, ?, ?, ?)
-          ON CONFLICT(id) DO UPDATE SET
-            guild_id = excluded.guild_id,
-            channel_id = excluded.channel_id,
-            created_by = excluded.created_by,
-            created_at = excluded.created_at
-        `,
-        args: [
-          row.id,
-          row.guild_id,
-          row.channel_id,
-          row.created_by,
-          toUnixTimestamp(
-            row.created_at,
-            "created_at",
-            `watch_channel:id=${row.id}`,
-          ),
-        ],
-      }));
 
-      // Extra statements: synchronize SQLite AUTOINCREMENT sequence counter atomically with rows
-      const sequenceStatements: InStatement[] = [
-        {
-          sql: `DELETE FROM sqlite_sequence WHERE name = ?`,
-          args: ["watch_channels"],
-        },
-        {
+      if (!isDryRun) {
+        const statements: InStatement[] = chunk.map((row) => ({
           sql: `
-            INSERT INTO sqlite_sequence (name, seq)
-            VALUES (?, (SELECT COALESCE(MAX(id), 0) FROM watch_channels))
+            INSERT INTO watch_channels (id, guild_id, channel_id, created_by, created_at)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+              guild_id = excluded.guild_id,
+              channel_id = excluded.channel_id,
+              created_by = excluded.created_by,
+              created_at = excluded.created_at
           `,
-          args: ["watch_channels"],
-        },
-      ];
+          args: [
+            row.id,
+            row.guild_id,
+            row.channel_id,
+            row.created_by,
+            toTimestampMs(
+              row.created_at,
+              "created_at",
+              `watch_channel:id=${row.id}`,
+            ),
+          ],
+        }));
 
-      await executeTableInTransaction(
-        turso,
-        "watch_channels",
-        watchStatements,
-        sequenceStatements,
-      );
-      console.log("  ✓ Synchronized sqlite_sequence for watch_channels.");
+        await executeInTransaction(turso, statements);
 
-      // Verify that sqlite_sequence was actually updated and equals MAX(id)
-      if (pgWatchRows.length > 0) {
-        const seqCheckRes = await turso.execute({
-          sql: `SELECT seq FROM sqlite_sequence WHERE name = ?`,
-          args: ["watch_channels"],
+        // 100% full-content verification for this chunk
+        const chunkIds = chunk.map((r) => r.id);
+        const placeholders = chunkIds.map(() => "?").join(",");
+        const targetChunkRes = await turso.execute({
+          sql: `SELECT id, guild_id, channel_id, created_by, created_at FROM watch_channels WHERE id IN (${placeholders})`,
+          args: chunkIds,
         });
-        const targetSeq = Number(seqCheckRes.rows[0]?.seq ?? 0);
-        const maxIdRes = await turso.execute(
-          "SELECT COALESCE(MAX(id), 0) as max_id FROM watch_channels",
+        const targetMap = new Map(
+          targetChunkRes.rows.map((r) => [Number(r.id), r]),
         );
-        const maxId = Number(maxIdRes.rows[0]?.max_id ?? 0);
-        if (targetSeq < maxId) {
-          console.error(
-            `  ❌ sqlite_sequence verification failed: seq=${targetSeq} is less than MAX(id)=${maxId}!`,
+
+        for (const sourceRow of chunk) {
+          const targetRow = targetMap.get(Number(sourceRow.id));
+          const expectedCreated = toTimestampMs(
+            sourceRow.created_at,
+            "created_at",
+            `watch_channel:id=${sourceRow.id}`,
           );
-          watchVerified = false;
-        } else {
-          console.log(
-            `  ✓ Verified sqlite_sequence for watch_channels: seq=${targetSeq} (MAX(id)=${maxId}).`,
-          );
+          if (
+            !targetRow ||
+            targetRow.guild_id !== sourceRow.guild_id ||
+            targetRow.channel_id !== sourceRow.channel_id ||
+            targetRow.created_by !== sourceRow.created_by ||
+            targetRow.created_at !== expectedCreated
+          ) {
+            console.error(
+              `  ❌ Content verification failed for watch_channels id=${sourceRow.id}:`,
+              { source: sourceRow, target: targetRow },
+            );
+            watchVerified = false;
+            break;
+          }
         }
       }
 
-      // Strict per-row verification: verify every source ID is present in Turso
-      if (pgWatchRows.length > 0) {
-        const targetIdsRes = await turso.execute(
-          "SELECT id FROM watch_channels",
-        );
-        const targetIdSet = new Set(targetIdsRes.rows.map((r) => Number(r.id)));
-        const missing = pgWatchRows.filter(
-          (r) => !targetIdSet.has(Number(r.id)),
-        );
-        if (missing.length > 0) {
-          console.error(
-            `  ❌ Verification failed: ${missing.length} watch_channels row(s) missing in Turso! IDs:`,
-            missing.map((r) => r.id).slice(0, 10),
-          );
-          watchVerified = false;
-        } else {
-          console.log(
-            `  ✓ All ${pgWatchRows.length} source watch_channels verified present in Turso.`,
-          );
-        }
+      lastWatchId = chunk[chunk.length - 1].id;
+      processedWatchRows += chunk.length;
+      process.stdout.write(
+        `\r  Progress: ${processedWatchRows}/${totalWatchSource} rows (${Math.round((processedWatchRows / (totalWatchSource || 1)) * 100)}%)`,
+      );
+    }
+    console.log();
 
-        // Deep content verification: sample rows and verify field-by-field equality
-        if (watchVerified) {
-          const sampleRows = pgWatchRows.slice(0, 20);
-          const sampleIds = sampleRows.map((r) => r.id);
-          const placeholders = sampleIds.map(() => "?").join(",");
-          const tursoRowsRes = await turso.execute({
-            sql: `SELECT id, guild_id, channel_id, created_by, created_at FROM watch_channels WHERE id IN (${placeholders})`,
-            args: sampleIds,
-          });
-          const tursoRowMap = new Map(
-            tursoRowsRes.rows.map((r) => [Number(r.id), r]),
-          );
+    if (!isDryRun && totalWatchSource > 0) {
+      // Synchronize SQLite AUTOINCREMENT sequence counter
+      await turso.execute({
+        sql: `DELETE FROM sqlite_sequence WHERE name = ?`,
+        args: ["watch_channels"],
+      });
+      await turso.execute({
+        sql: `
+          INSERT INTO sqlite_sequence (name, seq)
+          VALUES (?, (SELECT COALESCE(MAX(id), 0) FROM watch_channels))
+        `,
+        args: ["watch_channels"],
+      });
 
-          for (const pgRow of sampleRows) {
-            const tursoRow = tursoRowMap.get(Number(pgRow.id));
-            const expectedCreatedAt = toUnixTimestamp(
-              pgRow.created_at,
-              "created_at",
-              `watch_channel:id=${pgRow.id}`,
-            );
-            if (
-              !tursoRow ||
-              tursoRow.guild_id !== pgRow.guild_id ||
-              tursoRow.channel_id !== pgRow.channel_id ||
-              tursoRow.created_by !== pgRow.created_by ||
-              tursoRow.created_at !== expectedCreatedAt
-            ) {
-              console.error(
-                `  ❌ Content mismatch for watch_channels row id=${pgRow.id}!`,
-                { pg: pgRow, turso: tursoRow },
-              );
-              watchVerified = false;
-              break;
-            }
-          }
-          if (watchVerified) {
-            console.log(
-              `  ✓ Content verification passed (${sampleRows.length} sample rows verified identical).`,
-            );
-          }
-        }
+      const seqCheckRes = await turso.execute({
+        sql: `SELECT seq FROM sqlite_sequence WHERE name = ?`,
+        args: ["watch_channels"],
+      });
+      const targetSeq = Number(seqCheckRes.rows[0]?.seq ?? 0);
+      const maxIdRes = await turso.execute(
+        "SELECT COALESCE(MAX(id), 0) as max_id FROM watch_channels",
+      );
+      const maxId = Number(maxIdRes.rows[0]?.max_id ?? 0);
+      if (targetSeq < maxId) {
+        console.error(
+          `  ❌ sqlite_sequence verification failed: seq=${targetSeq} is less than MAX(id)=${maxId}!`,
+        );
+        watchVerified = false;
       } else {
-        watchVerified = true;
+        console.log(
+          `  ✓ Synchronized and verified sqlite_sequence for watch_channels: seq=${targetSeq} (MAX(id)=${maxId}).`,
+        );
       }
     }
 
     const tursoWatchAfter = isDryRun
       ? watchBeforeCount
-      : Number(
-          (await turso.execute("SELECT count(*) as count FROM watch_channels"))
-            .rows[0]?.count ?? 0,
-        );
+      : await getTargetTableCount("watch_channels");
 
     summaries.push({
       tableName: "watch_channels",
-      sourceCount: pgWatchRows.length,
+      sourceCount: totalWatchSource,
       targetBeforeCount: watchBeforeCount,
       targetAfterCount: tursoWatchAfter,
       success: watchVerified,
     });
 
     // ==========================================
-    // Table 2: guild_configs
+    // Table 2: guild_configs (Streaming Migration)
     // ==========================================
     console.log("\n📦 Migrating [guild_configs]...");
-    const pgGuildRows = await pg`
-      SELECT guild_id, auto_shorten_enabled, auto_shorten_min_url_length, ignored_domains, created_at, updated_at
-      FROM guild_configs
-      ORDER BY guild_id ASC
-    `;
-    const tursoGuildBefore = await turso.execute(
-      "SELECT count(*) as count FROM guild_configs",
-    );
-    const guildBeforeCount = Number(tursoGuildBefore.rows[0]?.count ?? 0);
-
-    console.log(`  Found ${pgGuildRows.length} rows in PostgreSQL.`);
+    const [totalGuildSourceRes] =
+      await pg`SELECT count(*)::int as count FROM guild_configs`;
+    const totalGuildSource = Number(totalGuildSourceRes?.count ?? 0);
+    const guildBeforeCount = preflightCounts.guildConfigs;
+    console.log(`  Found ${totalGuildSource} rows in PostgreSQL.`);
     console.log(`  Current Turso count: ${guildBeforeCount}`);
 
     let guildVerified = true;
+    let lastGuildId = "";
+    let processedGuildRows = 0;
 
-    if (isDryRun) {
-      console.log(
-        `  [DRY-RUN] Validating data transformations for ${pgGuildRows.length} rows...`,
-      );
-      for (const row of pgGuildRows) {
-        toUnixTimestamp(
+    while (true) {
+      const chunk =
+        lastGuildId === ""
+          ? await pg`
+              SELECT guild_id, auto_shorten_enabled, auto_shorten_min_url_length, ignored_domains, created_at, updated_at
+              FROM guild_configs
+              ORDER BY guild_id ASC
+              LIMIT ${BATCH_SIZE}
+            `
+          : await pg`
+              SELECT guild_id, auto_shorten_enabled, auto_shorten_min_url_length, ignored_domains, created_at, updated_at
+              FROM guild_configs
+              WHERE guild_id > ${lastGuildId}
+              ORDER BY guild_id ASC
+              LIMIT ${BATCH_SIZE}
+            `;
+
+      if (chunk.length === 0) break;
+
+      // Validate data conversions for every row in chunk
+      for (const row of chunk) {
+        toTimestampMs(
           row.created_at,
           "created_at",
           `guild_config:${row.guild_id}`,
         );
-        toUnixTimestamp(
+        toTimestampMs(
           row.updated_at,
           "updated_at",
           `guild_config:${row.guild_id}`,
@@ -445,21 +396,12 @@ async function migrate(): Promise<void> {
           Array.isArray(row.ignored_domains) ? row.ignored_domains : [],
         );
       }
-      console.log(
-        `  ✓ All ${pgGuildRows.length} rows passed conversion validation.`,
-      );
-      if (pgGuildRows.length > 0) {
-        console.log("  Sample row:", JSON.stringify(pgGuildRows[0]));
-      }
-    } else {
-      const guildStatements: InStatement[] = pgGuildRows.map((row) => {
-        const ignoredDomainsJson = JSON.stringify(
-          Array.isArray(row.ignored_domains) ? row.ignored_domains : [],
-        );
-        return {
+
+      if (!isDryRun) {
+        const statements: InStatement[] = chunk.map((row) => ({
           sql: `
-            INSERT INTO guild_configs (guild_id, auto_shorten_enabled, auto_shorten_min_url_length, ignored_domains, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO guild_configs (guild_id, auto_shorten_enabled, auto_shorten_min_url_length, ignored_domains, version, created_at, updated_at)
+            VALUES (?, ?, ?, ?, 1, ?, ?)
             ON CONFLICT(guild_id) DO UPDATE SET
               auto_shorten_enabled = excluded.auto_shorten_enabled,
               auto_shorten_min_url_length = excluded.auto_shorten_min_url_length,
@@ -471,145 +413,135 @@ async function migrate(): Promise<void> {
             row.guild_id,
             row.auto_shorten_enabled ? 1 : 0,
             row.auto_shorten_min_url_length ?? null,
-            ignoredDomainsJson,
-            toUnixTimestamp(
+            JSON.stringify(
+              Array.isArray(row.ignored_domains) ? row.ignored_domains : [],
+            ),
+            toTimestampMs(
               row.created_at,
               "created_at",
-              `guild_config:guild_id=${row.guild_id}`,
+              `guild_config:${row.guild_id}`,
             ),
-            toUnixTimestamp(
+            toTimestampMs(
               row.updated_at,
               "updated_at",
-              `guild_config:guild_id=${row.guild_id}`,
+              `guild_config:${row.guild_id}`,
             ),
           ],
-        };
-      });
+        }));
 
-      await executeTableInTransaction(turso, "guild_configs", guildStatements);
+        await executeInTransaction(turso, statements);
 
-      // Strict per-row verification: verify every source guild_id is present in Turso
-      if (pgGuildRows.length > 0) {
-        const targetKeysRes = await turso.execute(
-          "SELECT guild_id FROM guild_configs",
+        // 100% full-content verification for this chunk
+        const chunkIds = chunk.map((r) => r.guild_id);
+        const placeholders = chunkIds.map(() => "?").join(",");
+        const targetChunkRes = await turso.execute({
+          sql: `SELECT guild_id, auto_shorten_enabled, auto_shorten_min_url_length, ignored_domains, created_at, updated_at FROM guild_configs WHERE guild_id IN (${placeholders})`,
+          args: chunkIds,
+        });
+        const targetMap = new Map(
+          targetChunkRes.rows.map((r) => [String(r.guild_id), r]),
         );
-        const targetKeySet = new Set(
-          targetKeysRes.rows.map((r) => String(r.guild_id)),
-        );
-        const missing = pgGuildRows.filter(
-          (r) => !targetKeySet.has(String(r.guild_id)),
-        );
-        if (missing.length > 0) {
-          console.error(
-            `  ❌ Verification failed: ${missing.length} guild_configs row(s) missing in Turso! IDs:`,
-            missing.map((r) => r.guild_id).slice(0, 10),
+
+        for (const sourceRow of chunk) {
+          const targetRow = targetMap.get(String(sourceRow.guild_id));
+          const expectedCreated = toTimestampMs(
+            sourceRow.created_at,
+            "created_at",
+            `guild_config:${sourceRow.guild_id}`,
           );
-          guildVerified = false;
-        } else {
-          console.log(
-            `  ✓ All ${pgGuildRows.length} source guild_configs verified present in Turso.`,
+          const expectedUpdated = toTimestampMs(
+            sourceRow.updated_at,
+            "updated_at",
+            `guild_config:${sourceRow.guild_id}`,
           );
-        }
-
-        // Deep content verification: sample rows and verify field-by-field equality
-        if (guildVerified) {
-          const sampleRows = pgGuildRows.slice(0, 20);
-          const sampleIds = sampleRows.map((r) => r.guild_id);
-          const placeholders = sampleIds.map(() => "?").join(",");
-          const tursoGuildRes = await turso.execute({
-            sql: `SELECT guild_id, auto_shorten_enabled, auto_shorten_min_url_length, ignored_domains, created_at, updated_at FROM guild_configs WHERE guild_id IN (${placeholders})`,
-            args: sampleIds,
-          });
-          const tursoGuildMap = new Map(
-            tursoGuildRes.rows.map((r) => [String(r.guild_id), r]),
+          const expectedAuto = sourceRow.auto_shorten_enabled ? 1 : 0;
+          const expectedDomains = JSON.stringify(
+            Array.isArray(sourceRow.ignored_domains)
+              ? sourceRow.ignored_domains
+              : [],
           );
 
-          for (const pgRow of sampleRows) {
-            const tursoRow = tursoGuildMap.get(String(pgRow.guild_id));
-            const expectedCreatedAt = toUnixTimestamp(
-              pgRow.created_at,
-              "created_at",
-              `guild_config:${pgRow.guild_id}`,
+          if (
+            !targetRow ||
+            targetRow.auto_shorten_enabled !== expectedAuto ||
+            targetRow.auto_shorten_min_url_length !==
+              (sourceRow.auto_shorten_min_url_length ?? null) ||
+            targetRow.ignored_domains !== expectedDomains ||
+            targetRow.created_at !== expectedCreated ||
+            targetRow.updated_at !== expectedUpdated
+          ) {
+            console.error(
+              `  ❌ Content verification failed for guild_configs guild_id=${sourceRow.guild_id}:`,
+              { source: sourceRow, target: targetRow },
             );
-            const expectedUpdatedAt = toUnixTimestamp(
-              pgRow.updated_at,
-              "updated_at",
-              `guild_config:${pgRow.guild_id}`,
-            );
-            const expectedAutoShorten = pgRow.auto_shorten_enabled ? 1 : 0;
-            const expectedIgnored = JSON.stringify(
-              Array.isArray(pgRow.ignored_domains) ? pgRow.ignored_domains : [],
-            );
-            if (
-              !tursoRow ||
-              tursoRow.auto_shorten_enabled !== expectedAutoShorten ||
-              tursoRow.auto_shorten_min_url_length !==
-                (pgRow.auto_shorten_min_url_length ?? null) ||
-              tursoRow.ignored_domains !== expectedIgnored ||
-              tursoRow.created_at !== expectedCreatedAt ||
-              tursoRow.updated_at !== expectedUpdatedAt
-            ) {
-              console.error(
-                `  ❌ Content mismatch for guild_configs guild_id=${pgRow.guild_id}!`,
-                { pg: pgRow, turso: tursoRow },
-              );
-              guildVerified = false;
-              break;
-            }
-          }
-          if (guildVerified) {
-            console.log(
-              `  ✓ Content verification passed (${sampleRows.length} sample rows verified identical).`,
-            );
+            guildVerified = false;
+            break;
           }
         }
-      } else {
-        guildVerified = true;
       }
+
+      lastGuildId = chunk[chunk.length - 1].guild_id;
+      processedGuildRows += chunk.length;
+      process.stdout.write(
+        `\r  Progress: ${processedGuildRows}/${totalGuildSource} rows (${Math.round((processedGuildRows / (totalGuildSource || 1)) * 100)}%)`,
+      );
     }
+    console.log();
 
     const tursoGuildAfter = isDryRun
       ? guildBeforeCount
-      : Number(
-          (await turso.execute("SELECT count(*) as count FROM guild_configs"))
-            .rows[0]?.count ?? 0,
-        );
+      : await getTargetTableCount("guild_configs");
 
     summaries.push({
       tableName: "guild_configs",
-      sourceCount: pgGuildRows.length,
+      sourceCount: totalGuildSource,
       targetBeforeCount: guildBeforeCount,
       targetAfterCount: tursoGuildAfter,
       success: guildVerified,
     });
 
     // ==========================================
-    // Table 3: user_configs
+    // Table 3: user_configs (Streaming Migration)
     // ==========================================
     console.log("\n📦 Migrating [user_configs]...");
-    const pgUserRows = await pg`
-      SELECT user_id, auto_dm_mode, dm_format, auto_shorten_min_url_length, ignored_domains, fixupx_enabled, created_at, updated_at
-      FROM user_configs
-      ORDER BY user_id ASC
-    `;
-    const tursoUserBefore = await turso.execute(
-      "SELECT count(*) as count FROM user_configs",
-    );
-    const userBeforeCount = Number(tursoUserBefore.rows[0]?.count ?? 0);
+    const [totalUserSourceRes] =
+      await pg`SELECT count(*)::int as count FROM user_configs`;
+    const totalUserSource = Number(totalUserSourceRes?.count ?? 0);
+    const userBeforeCount = preflightCounts.userConfigs;
+    console.log(`  Found ${totalUserSource} rows in PostgreSQL.`);
+    console.log(`  Current Turso count: ${userBeforeCount}`);
 
     let userVerified = true;
+    let lastUserId = "";
+    let processedUserRows = 0;
 
-    if (isDryRun) {
-      console.log(
-        `  [DRY-RUN] Validating data transformations for ${pgUserRows.length} rows...`,
-      );
-      for (const row of pgUserRows) {
-        toUnixTimestamp(
+    while (true) {
+      const chunk =
+        lastUserId === ""
+          ? await pg`
+              SELECT user_id, auto_dm_mode, dm_format, auto_shorten_min_url_length, ignored_domains, fixupx_enabled, created_at, updated_at
+              FROM user_configs
+              ORDER BY user_id ASC
+              LIMIT ${BATCH_SIZE}
+            `
+          : await pg`
+              SELECT user_id, auto_dm_mode, dm_format, auto_shorten_min_url_length, ignored_domains, fixupx_enabled, created_at, updated_at
+              FROM user_configs
+              WHERE user_id > ${lastUserId}
+              ORDER BY user_id ASC
+              LIMIT ${BATCH_SIZE}
+            `;
+
+      if (chunk.length === 0) break;
+
+      // Validate data conversions for every row in chunk
+      for (const row of chunk) {
+        toTimestampMs(
           row.created_at,
           "created_at",
           `user_config:${row.user_id}`,
         );
-        toUnixTimestamp(
+        toTimestampMs(
           row.updated_at,
           "updated_at",
           `user_config:${row.user_id}`,
@@ -618,21 +550,12 @@ async function migrate(): Promise<void> {
           Array.isArray(row.ignored_domains) ? row.ignored_domains : [],
         );
       }
-      console.log(
-        `  ✓ All ${pgUserRows.length} rows passed conversion validation.`,
-      );
-      if (pgUserRows.length > 0) {
-        console.log("  Sample row:", JSON.stringify(pgUserRows[0]));
-      }
-    } else {
-      const userStatements: InStatement[] = pgUserRows.map((row) => {
-        const ignoredDomainsJson = JSON.stringify(
-          Array.isArray(row.ignored_domains) ? row.ignored_domains : [],
-        );
-        return {
+
+      if (!isDryRun) {
+        const statements: InStatement[] = chunk.map((row) => ({
           sql: `
-            INSERT INTO user_configs (user_id, auto_dm_mode, dm_format, auto_shorten_min_url_length, ignored_domains, fixupx_enabled, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO user_configs (user_id, auto_dm_mode, dm_format, auto_shorten_min_url_length, ignored_domains, fixupx_enabled, version, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)
             ON CONFLICT(user_id) DO UPDATE SET
               auto_dm_mode = excluded.auto_dm_mode,
               dm_format = excluded.dm_format,
@@ -647,116 +570,91 @@ async function migrate(): Promise<void> {
             row.auto_dm_mode ?? "inherit",
             row.dm_format ?? "replace",
             row.auto_shorten_min_url_length ?? null,
-            ignoredDomainsJson,
+            JSON.stringify(
+              Array.isArray(row.ignored_domains) ? row.ignored_domains : [],
+            ),
             row.fixupx_enabled ? 1 : 0,
-            toUnixTimestamp(
+            toTimestampMs(
               row.created_at,
               "created_at",
-              `user_config:user_id=${row.user_id}`,
+              `user_config:${row.user_id}`,
             ),
-            toUnixTimestamp(
+            toTimestampMs(
               row.updated_at,
               "updated_at",
-              `user_config:user_id=${row.user_id}`,
+              `user_config:${row.user_id}`,
             ),
           ],
-        };
-      });
+        }));
 
-      await executeTableInTransaction(turso, "user_configs", userStatements);
+        await executeInTransaction(turso, statements);
 
-      // Strict per-row verification: verify every source user_id is present in Turso
-      if (pgUserRows.length > 0) {
-        const targetKeysRes = await turso.execute(
-          "SELECT user_id FROM user_configs",
+        // 100% full-content verification for this chunk
+        const chunkIds = chunk.map((r) => r.user_id);
+        const placeholders = chunkIds.map(() => "?").join(",");
+        const targetChunkRes = await turso.execute({
+          sql: `SELECT user_id, auto_dm_mode, dm_format, auto_shorten_min_url_length, ignored_domains, fixupx_enabled, created_at, updated_at FROM user_configs WHERE user_id IN (${placeholders})`,
+          args: chunkIds,
+        });
+        const targetMap = new Map(
+          targetChunkRes.rows.map((r) => [String(r.user_id), r]),
         );
-        const targetKeySet = new Set(
-          targetKeysRes.rows.map((r) => String(r.user_id)),
-        );
-        const missing = pgUserRows.filter(
-          (r) => !targetKeySet.has(String(r.user_id)),
-        );
-        if (missing.length > 0) {
-          console.error(
-            `  ❌ Verification failed: ${missing.length} user_configs row(s) missing in Turso! IDs:`,
-            missing.map((r) => r.user_id).slice(0, 10),
+
+        for (const sourceRow of chunk) {
+          const targetRow = targetMap.get(String(sourceRow.user_id));
+          const expectedCreated = toTimestampMs(
+            sourceRow.created_at,
+            "created_at",
+            `user_config:${sourceRow.user_id}`,
           );
-          userVerified = false;
-        } else {
-          console.log(
-            `  ✓ All ${pgUserRows.length} source user_configs verified present in Turso.`,
+          const expectedUpdated = toTimestampMs(
+            sourceRow.updated_at,
+            "updated_at",
+            `user_config:${sourceRow.user_id}`,
           );
-        }
-
-        // Deep content verification: sample rows and verify field-by-field equality
-        if (userVerified) {
-          const sampleRows = pgUserRows.slice(0, 20);
-          const sampleIds = sampleRows.map((r) => r.user_id);
-          const placeholders = sampleIds.map(() => "?").join(",");
-          const tursoUserRes = await turso.execute({
-            sql: `SELECT user_id, auto_dm_mode, dm_format, auto_shorten_min_url_length, ignored_domains, fixupx_enabled, created_at, updated_at FROM user_configs WHERE user_id IN (${placeholders})`,
-            args: sampleIds,
-          });
-          const tursoUserMap = new Map(
-            tursoUserRes.rows.map((r) => [String(r.user_id), r]),
+          const expectedFixupx = sourceRow.fixupx_enabled ? 1 : 0;
+          const expectedDomains = JSON.stringify(
+            Array.isArray(sourceRow.ignored_domains)
+              ? sourceRow.ignored_domains
+              : [],
           );
 
-          for (const pgRow of sampleRows) {
-            const tursoRow = tursoUserMap.get(String(pgRow.user_id));
-            const expectedCreatedAt = toUnixTimestamp(
-              pgRow.created_at,
-              "created_at",
-              `user_config:${pgRow.user_id}`,
+          if (
+            !targetRow ||
+            targetRow.auto_dm_mode !== (sourceRow.auto_dm_mode ?? "inherit") ||
+            targetRow.dm_format !== (sourceRow.dm_format ?? "replace") ||
+            targetRow.auto_shorten_min_url_length !==
+              (sourceRow.auto_shorten_min_url_length ?? null) ||
+            targetRow.fixupx_enabled !== expectedFixupx ||
+            targetRow.ignored_domains !== expectedDomains ||
+            targetRow.created_at !== expectedCreated ||
+            targetRow.updated_at !== expectedUpdated
+          ) {
+            console.error(
+              `  ❌ Content verification failed for user_configs user_id=${sourceRow.user_id}:`,
+              { source: sourceRow, target: targetRow },
             );
-            const expectedUpdatedAt = toUnixTimestamp(
-              pgRow.updated_at,
-              "updated_at",
-              `user_config:${pgRow.user_id}`,
-            );
-            const expectedFixupx = pgRow.fixupx_enabled ? 1 : 0;
-            const expectedIgnored = JSON.stringify(
-              Array.isArray(pgRow.ignored_domains) ? pgRow.ignored_domains : [],
-            );
-            if (
-              !tursoRow ||
-              tursoRow.auto_dm_mode !== (pgRow.auto_dm_mode ?? "inherit") ||
-              tursoRow.dm_format !== (pgRow.dm_format ?? "replace") ||
-              tursoRow.auto_shorten_min_url_length !==
-                (pgRow.auto_shorten_min_url_length ?? null) ||
-              tursoRow.fixupx_enabled !== expectedFixupx ||
-              tursoRow.ignored_domains !== expectedIgnored ||
-              tursoRow.created_at !== expectedCreatedAt ||
-              tursoRow.updated_at !== expectedUpdatedAt
-            ) {
-              console.error(
-                `  ❌ Content mismatch for user_configs user_id=${pgRow.user_id}!`,
-                { pg: pgRow, turso: tursoRow },
-              );
-              userVerified = false;
-              break;
-            }
-          }
-          if (userVerified) {
-            console.log(
-              `  ✓ Content verification passed (${sampleRows.length} sample rows verified identical).`,
-            );
+            userVerified = false;
+            break;
           }
         }
-      } else {
-        userVerified = true;
       }
+
+      lastUserId = chunk[chunk.length - 1].user_id;
+      processedUserRows += chunk.length;
+      process.stdout.write(
+        `\r  Progress: ${processedUserRows}/${totalUserSource} rows (${Math.round((processedUserRows / (totalUserSource || 1)) * 100)}%)`,
+      );
     }
+    console.log();
 
     const tursoUserAfter = isDryRun
       ? userBeforeCount
-      : Number(
-          (await turso.execute("SELECT count(*) as count FROM user_configs"))
-            .rows[0]?.count ?? 0,
-        );
+      : await getTargetTableCount("user_configs");
 
     summaries.push({
       tableName: "user_configs",
-      sourceCount: pgUserRows.length,
+      sourceCount: totalUserSource,
       targetBeforeCount: userBeforeCount,
       targetAfterCount: tursoUserAfter,
       success: userVerified,

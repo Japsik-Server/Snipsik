@@ -6,8 +6,8 @@ export const watchChannels = sqliteTable("watch_channels", {
   guildId: text("guild_id").notNull(),
   channelId: text("channel_id").notNull(),
   createdBy: text("created_by").notNull(),
-  createdAt: integer("created_at", { mode: "timestamp" })
-    .default(sql`(unixepoch())`)
+  createdAt: integer("created_at", { mode: "timestamp_ms" })
+    .default(sql`(unixepoch() * 1000)`)
     .notNull(),
 });
 
@@ -24,11 +24,11 @@ export const guildConfigs = sqliteTable(
       .default([])
       .notNull(),
     version: integer("version").default(1).notNull(),
-    createdAt: integer("created_at", { mode: "timestamp" })
-      .default(sql`(unixepoch())`)
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .default(sql`(unixepoch() * 1000)`)
       .notNull(),
-    updatedAt: integer("updated_at", { mode: "timestamp" })
-      .default(sql`(unixepoch())`)
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .default(sql`(unixepoch() * 1000)`)
       .$onUpdateFn(() => new Date())
       .notNull(),
   },
@@ -55,11 +55,11 @@ export const userConfigs = sqliteTable(
       .default(true)
       .notNull(),
     version: integer("version").default(1).notNull(),
-    createdAt: integer("created_at", { mode: "timestamp" })
-      .default(sql`(unixepoch())`)
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .default(sql`(unixepoch() * 1000)`)
       .notNull(),
-    updatedAt: integer("updated_at", { mode: "timestamp" })
-      .default(sql`(unixepoch())`)
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .default(sql`(unixepoch() * 1000)`)
       .$onUpdateFn(() => new Date())
       .notNull(),
   },
