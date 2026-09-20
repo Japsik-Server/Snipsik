@@ -1,4 +1,4 @@
-import { createClient } from "@libsql/client";
+import { createClient, type InStatement } from "@libsql/client";
 import postgres from "postgres";
 
 interface MigrationSummary {
@@ -8,6 +8,8 @@ interface MigrationSummary {
   targetAfterCount: number;
   success: boolean;
 }
+
+const BATCH_SIZE = 100;
 
 // Parse command line arguments
 const args = process.argv.slice(2);
@@ -68,14 +70,35 @@ const turso = createClient({
   authToken: targetTursoToken,
 });
 
-function toUnixTimestamp(dateValue: unknown): number {
+function toUnixTimestamp(
+  dateValue: unknown,
+  columnName: string,
+  rowIdentifier: string,
+): number {
   if (dateValue instanceof Date) {
-    return Math.floor(dateValue.getTime() / 1000);
+    const time = dateValue.getTime();
+    if (!Number.isNaN(time)) {
+      return Math.floor(time / 1000);
+    }
+  } else if (typeof dateValue === "string" || typeof dateValue === "number") {
+    const parsed = new Date(dateValue).getTime();
+    if (!Number.isNaN(parsed)) {
+      return Math.floor(parsed / 1000);
+    }
   }
-  if (typeof dateValue === "string" || typeof dateValue === "number") {
-    return Math.floor(new Date(dateValue).getTime() / 1000);
+  throw new Error(
+    `Invalid or unparseable timestamp value '${String(dateValue)}' for column '${columnName}' in row [${rowIdentifier}]`,
+  );
+}
+
+async function executeInBatches(
+  client: ReturnType<typeof createClient>,
+  statements: InStatement[],
+): Promise<void> {
+  for (let i = 0; i < statements.length; i += BATCH_SIZE) {
+    const chunk = statements.slice(i, i + BATCH_SIZE);
+    await client.batch(chunk, "write");
   }
-  return Math.floor(Date.now() / 1000);
 }
 
 async function migrate(): Promise<void> {
@@ -115,26 +138,44 @@ async function migrate(): Promise<void> {
         console.log("  Sample row:", JSON.stringify(pgWatchRows[0]));
       }
     } else {
-      for (const row of pgWatchRows) {
-        await turso.execute({
-          sql: `
-            INSERT INTO watch_channels (id, guild_id, channel_id, created_by, created_at)
-            VALUES (?, ?, ?, ?, ?)
-            ON CONFLICT(id) DO UPDATE SET
-              guild_id = excluded.guild_id,
-              channel_id = excluded.channel_id,
-              created_by = excluded.created_by,
-              created_at = excluded.created_at
-          `,
-          args: [
-            row.id,
-            row.guild_id,
-            row.channel_id,
-            row.created_by,
-            toUnixTimestamp(row.created_at),
-          ],
-        });
-      }
+      const watchStatements: InStatement[] = pgWatchRows.map((row) => ({
+        sql: `
+          INSERT INTO watch_channels (id, guild_id, channel_id, created_by, created_at)
+          VALUES (?, ?, ?, ?, ?)
+          ON CONFLICT(id) DO UPDATE SET
+            guild_id = excluded.guild_id,
+            channel_id = excluded.channel_id,
+            created_by = excluded.created_by,
+            created_at = excluded.created_at
+        `,
+        args: [
+          row.id,
+          row.guild_id,
+          row.channel_id,
+          row.created_by,
+          toUnixTimestamp(
+            row.created_at,
+            "created_at",
+            `watch_channel:id=${row.id}`,
+          ),
+        ],
+      }));
+
+      await executeInBatches(turso, watchStatements);
+
+      // Synchronize SQLite AUTOINCREMENT sequence counter to prevent collisions on future inserts
+      await turso.execute({
+        sql: `DELETE FROM sqlite_sequence WHERE name = ?`,
+        args: ["watch_channels"],
+      });
+      await turso.execute({
+        sql: `
+          INSERT INTO sqlite_sequence (name, seq)
+          VALUES (?, (SELECT COALESCE(MAX(id), 0) FROM watch_channels))
+        `,
+        args: ["watch_channels"],
+      });
+      console.log("  ✓ Synchronized sqlite_sequence for watch_channels.");
     }
 
     const tursoWatchAfter = isDryRun
@@ -177,11 +218,11 @@ async function migrate(): Promise<void> {
         console.log("  Sample row:", JSON.stringify(pgGuildRows[0]));
       }
     } else {
-      for (const row of pgGuildRows) {
+      const guildStatements: InStatement[] = pgGuildRows.map((row) => {
         const ignoredDomainsJson = JSON.stringify(
           Array.isArray(row.ignored_domains) ? row.ignored_domains : [],
         );
-        await turso.execute({
+        return {
           sql: `
             INSERT INTO guild_configs (guild_id, auto_shorten_enabled, auto_shorten_min_url_length, ignored_domains, created_at, updated_at)
             VALUES (?, ?, ?, ?, ?, ?)
@@ -197,11 +238,21 @@ async function migrate(): Promise<void> {
             row.auto_shorten_enabled ? 1 : 0,
             row.auto_shorten_min_url_length ?? null,
             ignoredDomainsJson,
-            toUnixTimestamp(row.created_at),
-            toUnixTimestamp(row.updated_at),
+            toUnixTimestamp(
+              row.created_at,
+              "created_at",
+              `guild_config:guild_id=${row.guild_id}`,
+            ),
+            toUnixTimestamp(
+              row.updated_at,
+              "updated_at",
+              `guild_config:guild_id=${row.guild_id}`,
+            ),
           ],
-        });
-      }
+        };
+      });
+
+      await executeInBatches(turso, guildStatements);
     }
 
     const tursoGuildAfter = isDryRun
@@ -244,11 +295,11 @@ async function migrate(): Promise<void> {
         console.log("  Sample row:", JSON.stringify(pgUserRows[0]));
       }
     } else {
-      for (const row of pgUserRows) {
+      const userStatements: InStatement[] = pgUserRows.map((row) => {
         const ignoredDomainsJson = JSON.stringify(
           Array.isArray(row.ignored_domains) ? row.ignored_domains : [],
         );
-        await turso.execute({
+        return {
           sql: `
             INSERT INTO user_configs (user_id, auto_dm_mode, dm_format, auto_shorten_min_url_length, ignored_domains, fixupx_enabled, created_at, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -268,11 +319,21 @@ async function migrate(): Promise<void> {
             row.auto_shorten_min_url_length ?? null,
             ignoredDomainsJson,
             row.fixupx_enabled ? 1 : 0,
-            toUnixTimestamp(row.created_at),
-            toUnixTimestamp(row.updated_at),
+            toUnixTimestamp(
+              row.created_at,
+              "created_at",
+              `user_config:user_id=${row.user_id}`,
+            ),
+            toUnixTimestamp(
+              row.updated_at,
+              "updated_at",
+              `user_config:user_id=${row.user_id}`,
+            ),
           ],
-        });
-      }
+        };
+      });
+
+      await executeInBatches(turso, userStatements);
     }
 
     const tursoUserAfter = isDryRun
