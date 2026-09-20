@@ -15,7 +15,28 @@ export const envSchema = z.object({
       }
       return val || process.env.TURSO_DATABASE_URL || "";
     })
-    .pipe(z.string().min(1, "DATABASE_URL or TURSO_DATABASE_URL is required")),
+    .pipe(
+      z
+        .string()
+        .min(1, "DATABASE_URL or TURSO_DATABASE_URL is required")
+        .refine(
+          (url) => {
+            const lower = url.trim().toLowerCase();
+            return (
+              lower.startsWith("libsql:") ||
+              lower.startsWith("file:") ||
+              lower.startsWith("https:") ||
+              lower.startsWith("http:") ||
+              lower.startsWith("wss:") ||
+              lower.startsWith("ws:")
+            );
+          },
+          {
+            message:
+              "DATABASE_URL must be a valid LibSQL connection URL (starting with 'libsql:', 'https:', or 'file:'). PostgreSQL URLs are no longer supported.",
+          },
+        ),
+    ),
   DATABASE_AUTH_TOKEN: z
     .string()
     .optional()

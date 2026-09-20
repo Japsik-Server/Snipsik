@@ -57,4 +57,44 @@ describe("Config Schema AUTO_SHORTEN_MIN_URL_LENGTH parsing", () => {
     });
     expect(parsed.AUTO_SHORTEN_MIN_URL_LENGTH).toBe(2048);
   });
+
+  describe("DATABASE_URL validation", () => {
+    it("accepts valid libsql URL", () => {
+      const parsed = envSchema.parse({
+        ...baseEnv,
+        DATABASE_URL: "libsql://my-db-org.turso.io",
+      });
+      expect(parsed.DATABASE_URL).toBe("libsql://my-db-org.turso.io");
+    });
+
+    it("accepts valid file URL for local SQLite", () => {
+      const parsed = envSchema.parse({
+        ...baseEnv,
+        DATABASE_URL: "file:local.db",
+      });
+      expect(parsed.DATABASE_URL).toBe("file:local.db");
+    });
+
+    it("rejects unsupported URL scheme in production environment", () => {
+      const originalNodeEnv = process.env.NODE_ENV;
+      try {
+        process.env.NODE_ENV = "production";
+        expect(() =>
+          envSchema.parse({
+            ...baseEnv,
+            DATABASE_URL: "mysql://user:pass@localhost:3306/db",
+          }),
+        ).toThrow("DATABASE_URL must be a valid LibSQL connection URL");
+
+        expect(() =>
+          envSchema.parse({
+            ...baseEnv,
+            DATABASE_URL: "postgresql://user:pass@localhost:5432/db",
+          }),
+        ).toThrow("PostgreSQL URLs are no longer supported");
+      } finally {
+        process.env.NODE_ENV = originalNodeEnv;
+      }
+    });
+  });
 });

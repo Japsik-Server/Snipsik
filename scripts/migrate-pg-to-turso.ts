@@ -70,6 +70,12 @@ const turso = createClient({
   authToken: targetTursoToken,
 });
 
+/**
+ * Converts a date value to Unix timestamp in seconds matching Drizzle's mode: 'timestamp'
+ * and SQLite's unixepoch() convention.
+ * Note: Sub-second precision is intentionally truncated to match the SQLite schema design,
+ * as bot audit timestamps do not require microsecond resolution.
+ */
 function toUnixTimestamp(
   dateValue: unknown,
   columnName: string,
@@ -130,6 +136,8 @@ async function migrate(): Promise<void> {
     console.log(`  Found ${pgWatchRows.length} rows in PostgreSQL.`);
     console.log(`  Current Turso count: ${watchBeforeCount}`);
 
+    let watchVerified = isDryRun;
+
     if (isDryRun) {
       console.log(
         `  [DRY-RUN] Would upsert ${pgWatchRows.length} rows into watch_channels.`,
@@ -176,6 +184,31 @@ async function migrate(): Promise<void> {
         args: ["watch_channels"],
       });
       console.log("  ✓ Synchronized sqlite_sequence for watch_channels.");
+
+      // Strict per-row verification: verify every source ID is present in Turso
+      if (pgWatchRows.length > 0) {
+        const targetIdsRes = await turso.execute(
+          "SELECT id FROM watch_channels",
+        );
+        const targetIdSet = new Set(targetIdsRes.rows.map((r) => Number(r.id)));
+        const missing = pgWatchRows.filter(
+          (r) => !targetIdSet.has(Number(r.id)),
+        );
+        if (missing.length > 0) {
+          console.error(
+            `  ❌ Verification failed: ${missing.length} watch_channels row(s) missing in Turso! IDs:`,
+            missing.map((r) => r.id).slice(0, 10),
+          );
+          watchVerified = false;
+        } else {
+          console.log(
+            `  ✓ All ${pgWatchRows.length} source watch_channels verified present in Turso.`,
+          );
+          watchVerified = true;
+        }
+      } else {
+        watchVerified = true;
+      }
     }
 
     const tursoWatchAfter = isDryRun
@@ -190,7 +223,7 @@ async function migrate(): Promise<void> {
       sourceCount: pgWatchRows.length,
       targetBeforeCount: watchBeforeCount,
       targetAfterCount: tursoWatchAfter,
-      success: isDryRun || tursoWatchAfter >= pgWatchRows.length,
+      success: watchVerified,
     });
 
     // ==========================================
@@ -209,6 +242,8 @@ async function migrate(): Promise<void> {
 
     console.log(`  Found ${pgGuildRows.length} rows in PostgreSQL.`);
     console.log(`  Current Turso count: ${guildBeforeCount}`);
+
+    let guildVerified = isDryRun;
 
     if (isDryRun) {
       console.log(
@@ -253,6 +288,33 @@ async function migrate(): Promise<void> {
       });
 
       await executeInBatches(turso, guildStatements);
+
+      // Strict per-row verification: verify every source guild_id is present in Turso
+      if (pgGuildRows.length > 0) {
+        const targetKeysRes = await turso.execute(
+          "SELECT guild_id FROM guild_configs",
+        );
+        const targetKeySet = new Set(
+          targetKeysRes.rows.map((r) => String(r.guild_id)),
+        );
+        const missing = pgGuildRows.filter(
+          (r) => !targetKeySet.has(String(r.guild_id)),
+        );
+        if (missing.length > 0) {
+          console.error(
+            `  ❌ Verification failed: ${missing.length} guild_configs row(s) missing in Turso! IDs:`,
+            missing.map((r) => r.guild_id).slice(0, 10),
+          );
+          guildVerified = false;
+        } else {
+          console.log(
+            `  ✓ All ${pgGuildRows.length} source guild_configs verified present in Turso.`,
+          );
+          guildVerified = true;
+        }
+      } else {
+        guildVerified = true;
+      }
     }
 
     const tursoGuildAfter = isDryRun
@@ -267,7 +329,7 @@ async function migrate(): Promise<void> {
       sourceCount: pgGuildRows.length,
       targetBeforeCount: guildBeforeCount,
       targetAfterCount: tursoGuildAfter,
-      success: isDryRun || tursoGuildAfter >= pgGuildRows.length,
+      success: guildVerified,
     });
 
     // ==========================================
@@ -284,8 +346,7 @@ async function migrate(): Promise<void> {
     );
     const userBeforeCount = Number(tursoUserBefore.rows[0]?.count ?? 0);
 
-    console.log(`  Found ${pgUserRows.length} rows in PostgreSQL.`);
-    console.log(`  Current Turso count: ${userBeforeCount}`);
+    let userVerified = isDryRun;
 
     if (isDryRun) {
       console.log(
@@ -334,6 +395,33 @@ async function migrate(): Promise<void> {
       });
 
       await executeInBatches(turso, userStatements);
+
+      // Strict per-row verification: verify every source user_id is present in Turso
+      if (pgUserRows.length > 0) {
+        const targetKeysRes = await turso.execute(
+          "SELECT user_id FROM user_configs",
+        );
+        const targetKeySet = new Set(
+          targetKeysRes.rows.map((r) => String(r.user_id)),
+        );
+        const missing = pgUserRows.filter(
+          (r) => !targetKeySet.has(String(r.user_id)),
+        );
+        if (missing.length > 0) {
+          console.error(
+            `  ❌ Verification failed: ${missing.length} user_configs row(s) missing in Turso! IDs:`,
+            missing.map((r) => r.user_id).slice(0, 10),
+          );
+          userVerified = false;
+        } else {
+          console.log(
+            `  ✓ All ${pgUserRows.length} source user_configs verified present in Turso.`,
+          );
+          userVerified = true;
+        }
+      } else {
+        userVerified = true;
+      }
     }
 
     const tursoUserAfter = isDryRun
@@ -348,7 +436,7 @@ async function migrate(): Promise<void> {
       sourceCount: pgUserRows.length,
       targetBeforeCount: userBeforeCount,
       targetAfterCount: tursoUserAfter,
-      success: isDryRun || tursoUserAfter >= pgUserRows.length,
+      success: userVerified,
     });
 
     // ==========================================
