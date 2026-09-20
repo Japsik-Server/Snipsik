@@ -240,6 +240,48 @@ async function migrate(): Promise<void> {
           );
           watchVerified = true;
         }
+
+        // Deep content verification: sample rows and verify field-by-field equality
+        if (watchVerified) {
+          const sampleRows = pgWatchRows.slice(0, 20);
+          const sampleIds = sampleRows.map((r) => r.id);
+          const placeholders = sampleIds.map(() => "?").join(",");
+          const tursoRowsRes = await turso.execute({
+            sql: `SELECT id, guild_id, channel_id, created_by, created_at FROM watch_channels WHERE id IN (${placeholders})`,
+            args: sampleIds,
+          });
+          const tursoRowMap = new Map(
+            tursoRowsRes.rows.map((r) => [Number(r.id), r]),
+          );
+
+          for (const pgRow of sampleRows) {
+            const tursoRow = tursoRowMap.get(Number(pgRow.id));
+            const expectedCreatedAt = toUnixTimestamp(
+              pgRow.created_at,
+              "created_at",
+              `watch_channel:id=${pgRow.id}`,
+            );
+            if (
+              !tursoRow ||
+              tursoRow.guild_id !== pgRow.guild_id ||
+              tursoRow.channel_id !== pgRow.channel_id ||
+              tursoRow.created_by !== pgRow.created_by ||
+              tursoRow.created_at !== expectedCreatedAt
+            ) {
+              console.error(
+                `  ❌ Content mismatch for watch_channels row id=${pgRow.id}!`,
+                { pg: pgRow, turso: tursoRow },
+              );
+              watchVerified = false;
+              break;
+            }
+          }
+          if (watchVerified) {
+            console.log(
+              `  ✓ Content verification passed (${sampleRows.length} sample rows verified identical).`,
+            );
+          }
+        }
       } else {
         watchVerified = true;
       }
@@ -345,6 +387,59 @@ async function migrate(): Promise<void> {
             `  ✓ All ${pgGuildRows.length} source guild_configs verified present in Turso.`,
           );
           guildVerified = true;
+        }
+
+        // Deep content verification: sample rows and verify field-by-field equality
+        if (guildVerified) {
+          const sampleRows = pgGuildRows.slice(0, 20);
+          const sampleIds = sampleRows.map((r) => r.guild_id);
+          const placeholders = sampleIds.map(() => "?").join(",");
+          const tursoGuildRes = await turso.execute({
+            sql: `SELECT guild_id, auto_shorten_enabled, auto_shorten_min_url_length, ignored_domains, created_at, updated_at FROM guild_configs WHERE guild_id IN (${placeholders})`,
+            args: sampleIds,
+          });
+          const tursoGuildMap = new Map(
+            tursoGuildRes.rows.map((r) => [String(r.guild_id), r]),
+          );
+
+          for (const pgRow of sampleRows) {
+            const tursoRow = tursoGuildMap.get(String(pgRow.guild_id));
+            const expectedCreatedAt = toUnixTimestamp(
+              pgRow.created_at,
+              "created_at",
+              `guild_config:${pgRow.guild_id}`,
+            );
+            const expectedUpdatedAt = toUnixTimestamp(
+              pgRow.updated_at,
+              "updated_at",
+              `guild_config:${pgRow.guild_id}`,
+            );
+            const expectedAutoShorten = pgRow.auto_shorten_enabled ? 1 : 0;
+            const expectedIgnored = JSON.stringify(
+              Array.isArray(pgRow.ignored_domains) ? pgRow.ignored_domains : [],
+            );
+            if (
+              !tursoRow ||
+              tursoRow.auto_shorten_enabled !== expectedAutoShorten ||
+              tursoRow.auto_shorten_min_url_length !==
+                (pgRow.auto_shorten_min_url_length ?? null) ||
+              tursoRow.ignored_domains !== expectedIgnored ||
+              tursoRow.created_at !== expectedCreatedAt ||
+              tursoRow.updated_at !== expectedUpdatedAt
+            ) {
+              console.error(
+                `  ❌ Content mismatch for guild_configs guild_id=${pgRow.guild_id}!`,
+                { pg: pgRow, turso: tursoRow },
+              );
+              guildVerified = false;
+              break;
+            }
+          }
+          if (guildVerified) {
+            console.log(
+              `  ✓ Content verification passed (${sampleRows.length} sample rows verified identical).`,
+            );
+          }
         }
       } else {
         guildVerified = true;
@@ -452,6 +547,61 @@ async function migrate(): Promise<void> {
             `  ✓ All ${pgUserRows.length} source user_configs verified present in Turso.`,
           );
           userVerified = true;
+        }
+
+        // Deep content verification: sample rows and verify field-by-field equality
+        if (userVerified) {
+          const sampleRows = pgUserRows.slice(0, 20);
+          const sampleIds = sampleRows.map((r) => r.user_id);
+          const placeholders = sampleIds.map(() => "?").join(",");
+          const tursoUserRes = await turso.execute({
+            sql: `SELECT user_id, auto_dm_mode, dm_format, auto_shorten_min_url_length, ignored_domains, fixupx_enabled, created_at, updated_at FROM user_configs WHERE user_id IN (${placeholders})`,
+            args: sampleIds,
+          });
+          const tursoUserMap = new Map(
+            tursoUserRes.rows.map((r) => [String(r.user_id), r]),
+          );
+
+          for (const pgRow of sampleRows) {
+            const tursoRow = tursoUserMap.get(String(pgRow.user_id));
+            const expectedCreatedAt = toUnixTimestamp(
+              pgRow.created_at,
+              "created_at",
+              `user_config:${pgRow.user_id}`,
+            );
+            const expectedUpdatedAt = toUnixTimestamp(
+              pgRow.updated_at,
+              "updated_at",
+              `user_config:${pgRow.user_id}`,
+            );
+            const expectedFixupx = pgRow.fixupx_enabled ? 1 : 0;
+            const expectedIgnored = JSON.stringify(
+              Array.isArray(pgRow.ignored_domains) ? pgRow.ignored_domains : [],
+            );
+            if (
+              !tursoRow ||
+              tursoRow.auto_dm_mode !== (pgRow.auto_dm_mode ?? "inherit") ||
+              tursoRow.dm_format !== (pgRow.dm_format ?? "replace") ||
+              tursoRow.auto_shorten_min_url_length !==
+                (pgRow.auto_shorten_min_url_length ?? null) ||
+              tursoRow.fixupx_enabled !== expectedFixupx ||
+              tursoRow.ignored_domains !== expectedIgnored ||
+              tursoRow.created_at !== expectedCreatedAt ||
+              tursoRow.updated_at !== expectedUpdatedAt
+            ) {
+              console.error(
+                `  ❌ Content mismatch for user_configs user_id=${pgRow.user_id}!`,
+                { pg: pgRow, turso: tursoRow },
+              );
+              userVerified = false;
+              break;
+            }
+          }
+          if (userVerified) {
+            console.log(
+              `  ✓ Content verification passed (${sampleRows.length} sample rows verified identical).`,
+            );
+          }
         }
       } else {
         userVerified = true;

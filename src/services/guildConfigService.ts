@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { guildConfigs } from "@/db/schema";
 import { config } from "@/config";
@@ -271,8 +271,9 @@ class GuildConfigService {
 
   /**
    * Atomically mutates the ignored domains array for a guild using an application-level
-   * KeyedMutex and a database transaction.
-   * Derives the replacement array from the fresh row to prevent concurrent race conditions.
+   * KeyedMutex combined with database-level Optimistic Concurrency Control (OCC).
+   * Derives the replacement array from the fresh row to prevent concurrent race conditions
+   * across both in-process event threads and multi-process deployments.
    *
    * @param guildId - Discord guild snowflake ID.
    * @param mutator - Pure callback that computes next domains or returns an error based on fresh domains.
@@ -285,96 +286,130 @@ class GuildConfigService {
     ) => { ok: true; domains: string[] } | { ok: false; error: string },
   ): Promise<{ success: boolean; error?: string; config: GuildConfigData }> {
     const fallbackConfig = this.getGuildConfig(guildId);
-    try {
-      const result = await keyedMutex.runExclusive(guildId, async () => {
-        return await db.transaction(async (tx) => {
-          // 1. Ensure a base guild_configs row exists before querying
-          await tx
-            .insert(guildConfigs)
-            .values({
-              guildId,
-              ...DEFAULT_GUILD_CONFIG,
-              updatedAt: new Date(),
-            })
-            .onConflictDoNothing();
+    const MAX_RETRIES = 3;
 
-          // 2. Query guaranteed to hit for this guild
-          const rows = await tx
-            .select()
-            .from(guildConfigs)
-            .where(eq(guildConfigs.guildId, guildId));
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        const result = await keyedMutex.runExclusive(guildId, async () => {
+          return await db.transaction(async (tx) => {
+            // 1. Ensure a base guild_configs row exists before querying
+            await tx
+              .insert(guildConfigs)
+              .values({
+                guildId,
+                ...DEFAULT_GUILD_CONFIG,
+                updatedAt: new Date(),
+              })
+              .onConflictDoNothing();
 
-          const lockedRow = rows[0];
-          if (!lockedRow) {
-            throw new Error("Failed to read guild configuration row.");
-          }
+            // 2. Query guaranteed to hit for this guild
+            const rows = await tx
+              .select()
+              .from(guildConfigs)
+              .where(eq(guildConfigs.guildId, guildId));
 
-          const currentDomains = lockedRow.ignoredDomains ?? [];
+            const lockedRow = rows[0];
+            if (!lockedRow) {
+              throw new Error("Failed to read guild configuration row.");
+            }
 
-          const mutationResult = mutator([...currentDomains]);
-          if (!mutationResult.ok) {
-            return {
-              success: false,
-              error: mutationResult.error,
-              config: {
-                guildId: lockedRow.guildId,
-                autoShortenEnabled: lockedRow.autoShortenEnabled,
-                autoShortenMinUrlLength:
-                  lockedRow.autoShortenMinUrlLength ?? null,
-                ignoredDomains: lockedRow.ignoredDomains ?? [],
-              },
+            const currentDomains = lockedRow.ignoredDomains ?? [];
+
+            const mutationResult = mutator([...currentDomains]);
+            if (!mutationResult.ok) {
+              return {
+                success: false,
+                error: mutationResult.error,
+                config: {
+                  guildId: lockedRow.guildId,
+                  autoShortenEnabled: lockedRow.autoShortenEnabled,
+                  autoShortenMinUrlLength:
+                    lockedRow.autoShortenMinUrlLength ?? null,
+                  ignoredDomains: lockedRow.ignoredDomains ?? [],
+                },
+              };
+            }
+
+            const nextDomains = mutationResult.domains;
+
+            // Optimistic concurrency check: only update if updatedAt matches the row we read
+            const [saved] = await tx
+              .update(guildConfigs)
+              .set({
+                ignoredDomains: nextDomains,
+                updatedAt: new Date(),
+              })
+              .where(
+                and(
+                  eq(guildConfigs.guildId, guildId),
+                  eq(guildConfigs.updatedAt, lockedRow.updatedAt),
+                ),
+              )
+              .returning();
+
+            if (!saved) {
+              // Row was modified concurrently by another process; trigger retry
+              return { retry: true as const };
+            }
+
+            const savedConfig: GuildConfigData = {
+              guildId: saved.guildId,
+              autoShortenEnabled: saved.autoShortenEnabled,
+              autoShortenMinUrlLength: saved.autoShortenMinUrlLength ?? null,
+              ignoredDomains: saved.ignoredDomains ?? [],
             };
-          }
 
-          const nextDomains = mutationResult.domains;
-
-          const [saved] = await tx
-            .update(guildConfigs)
-            .set({
-              ignoredDomains: nextDomains,
-              updatedAt: new Date(),
-            })
-            .where(eq(guildConfigs.guildId, guildId))
-            .returning();
-
-          if (!saved) {
-            throw new Error("Failed to persist updated guild ignored domains.");
-          }
-
-          const savedConfig: GuildConfigData = {
-            guildId: saved.guildId,
-            autoShortenEnabled: saved.autoShortenEnabled,
-            autoShortenMinUrlLength: saved.autoShortenMinUrlLength ?? null,
-            ignoredDomains: saved.ignoredDomains ?? [],
-          };
-
-          return { success: true, config: savedConfig };
+            return { success: true, config: savedConfig };
+          });
         });
-      });
 
-      if (result.success) {
-        this.cacheEpoch++;
-        this.cache.set(guildId, result.config);
-        if (!this.cacheLoaded) {
-          this.triggerBackgroundReload();
+        if ("retry" in result) {
+          if (attempt < MAX_RETRIES) {
+            await new Promise((resolve) => setTimeout(resolve, 25 * attempt));
+            continue;
+          }
+          logger.warn(
+            `Concurrent mutation conflict on guild ${guildId} exceeded max retries (${MAX_RETRIES}).`,
+          );
+          return {
+            success: false,
+            error: "Concurrent update conflict. Please try again.",
+            config: fallbackConfig,
+          };
         }
-        logger.info(
-          `Atomically updated ignored domains for ${guildId}: count=${result.config.ignoredDomains.length}`,
-        );
-      }
 
-      return result;
-    } catch (error) {
-      logger.error(
-        `Failed to atomically mutate guild ignored domains for ${guildId}:`,
-        error,
-      );
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : "Database error",
-        config: fallbackConfig,
-      };
+        if (result.success) {
+          this.cacheEpoch++;
+          this.cache.set(guildId, result.config);
+          if (!this.cacheLoaded) {
+            this.triggerBackgroundReload();
+          }
+          logger.info(
+            `Atomically updated ignored domains for ${guildId}: count=${result.config.ignoredDomains.length}`,
+          );
+        }
+
+        return result;
+      } catch (error) {
+        logger.error(
+          `Failed to atomically mutate guild ignored domains for ${guildId} (attempt ${attempt}/${MAX_RETRIES}):`,
+          error,
+        );
+        if (attempt >= MAX_RETRIES) {
+          return {
+            success: false,
+            error: error instanceof Error ? error.message : "Database error",
+            config: fallbackConfig,
+          };
+        }
+      }
     }
+
+    return {
+      success: false,
+      error: "Database mutation failed after retries.",
+      config: fallbackConfig,
+    };
   }
 
   /**

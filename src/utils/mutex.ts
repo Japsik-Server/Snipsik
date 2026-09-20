@@ -1,6 +1,12 @@
 /**
  * A keyed in-memory async mutex that serializes asynchronous executions on a per-key basis.
- * Prevents concurrent race conditions when mutating shared resources (e.g., per-guild configuration).
+ *
+ * Concurrency Architecture:
+ * - Designed for single-process bot deployments (such as Snipsik's single-replica Discord Gateway architecture)
+ *   to serialize concurrent read-modify-write mutations per guild/user within the Node/Bun runtime without
+ *   relying on PostgreSQL's FOR UPDATE row-level locks.
+ * - Service layers combine this KeyedMutex with database-level Optimistic Concurrency Control (OCC)
+ *   on `updatedAt` to ensure safe operation even across multiple processes or deploy overlaps.
  */
 export class KeyedMutex {
   private queues: Map<string, Promise<unknown>> = new Map();
