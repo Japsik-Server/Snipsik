@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import { db } from "@/db";
 import { userConfigs } from "@/db/schema";
 import { normalizeDomain, MAX_CUSTOM_IGNORED_DOMAINS } from "@/utils/domain";
@@ -365,6 +366,7 @@ class UserConfigService {
 
     const setClause: Record<string, unknown> = {
       updatedAt: new Date(),
+      version: sql`${userConfigs.version} + 1`,
     };
     const insertValues: {
       userId: string;

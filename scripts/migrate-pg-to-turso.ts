@@ -219,6 +219,29 @@ async function migrate(): Promise<void> {
       );
       console.log("  ✓ Synchronized sqlite_sequence for watch_channels.");
 
+      // Verify that sqlite_sequence was actually updated and equals MAX(id)
+      if (pgWatchRows.length > 0) {
+        const seqCheckRes = await turso.execute({
+          sql: `SELECT seq FROM sqlite_sequence WHERE name = ?`,
+          args: ["watch_channels"],
+        });
+        const targetSeq = Number(seqCheckRes.rows[0]?.seq ?? 0);
+        const maxIdRes = await turso.execute(
+          "SELECT COALESCE(MAX(id), 0) as max_id FROM watch_channels",
+        );
+        const maxId = Number(maxIdRes.rows[0]?.max_id ?? 0);
+        if (targetSeq < maxId) {
+          console.error(
+            `  ❌ sqlite_sequence verification failed: seq=${targetSeq} is less than MAX(id)=${maxId}!`,
+          );
+          watchVerified = false;
+        } else {
+          console.log(
+            `  ✓ Verified sqlite_sequence for watch_channels: seq=${targetSeq} (MAX(id)=${maxId}).`,
+          );
+        }
+      }
+
       // Strict per-row verification: verify every source ID is present in Turso
       if (pgWatchRows.length > 0) {
         const targetIdsRes = await turso.execute(

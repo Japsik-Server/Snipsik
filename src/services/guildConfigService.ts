@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { guildConfigs } from "@/db/schema";
 import { config } from "@/config";
@@ -166,6 +166,7 @@ class GuildConfigService {
 
     const setClause: Record<string, unknown> = {
       updatedAt: new Date(),
+      version: sql`${guildConfigs.version} + 1`,
     };
     const insertValues: {
       guildId: string;
@@ -332,17 +333,18 @@ class GuildConfigService {
 
             const nextDomains = mutationResult.domains;
 
-            // Optimistic concurrency check: only update if updatedAt matches the row we read
+            // Optimistic concurrency check: only update if monotonic version matches the row we read
             const [saved] = await tx
               .update(guildConfigs)
               .set({
                 ignoredDomains: nextDomains,
                 updatedAt: new Date(),
+                version: lockedRow.version + 1,
               })
               .where(
                 and(
                   eq(guildConfigs.guildId, guildId),
-                  eq(guildConfigs.updatedAt, lockedRow.updatedAt),
+                  eq(guildConfigs.version, lockedRow.version),
                 ),
               )
               .returning();

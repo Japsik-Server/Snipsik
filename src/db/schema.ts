@@ -23,6 +23,7 @@ export const guildConfigs = sqliteTable(
       .$type<string[]>()
       .default([])
       .notNull(),
+    version: integer("version").default(1).notNull(),
     createdAt: integer("created_at", { mode: "timestamp" })
       .default(sql`(unixepoch())`)
       .notNull(),
@@ -53,6 +54,7 @@ export const userConfigs = sqliteTable(
     fixupxEnabled: integer("fixupx_enabled", { mode: "boolean" })
       .default(true)
       .notNull(),
+    version: integer("version").default(1).notNull(),
     createdAt: integer("created_at", { mode: "timestamp" })
       .default(sql`(unixepoch())`)
       .notNull(),
