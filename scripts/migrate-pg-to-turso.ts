@@ -63,6 +63,9 @@ function maskUrlCredentials(rawUrl: string): string {
     if (parsed.password) {
       parsed.password = "****";
     }
+    if (parsed.username) {
+      parsed.username = "****";
+    }
     return parsed.toString();
   } catch {
     return "[URL with masked credentials]";
@@ -70,7 +73,7 @@ function maskUrlCredentials(rawUrl: string): string {
 }
 
 console.log(`Source PG URL:   ${maskUrlCredentials(sourcePgUrl)}`);
-console.log(`Target Turso URL: ${targetTursoUrl}`);
+console.log(`Target Turso URL: ${maskUrlCredentials(targetTursoUrl)}`);
 console.log(
   `Auth Token:      ${targetTursoToken ? "Provided (masked)" : "None (e.g. local file or dev)"}`,
 );

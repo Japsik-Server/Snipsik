@@ -1,4 +1,4 @@
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { guildConfigs } from "@/db/schema";
 import { config } from "@/config";
@@ -166,7 +166,6 @@ class GuildConfigService {
 
     const setClause: Record<string, unknown> = {
       updatedAt: new Date(),
-      version: sql`${guildConfigs.version} + 1`,
     };
     const insertValues: {
       guildId: string;
