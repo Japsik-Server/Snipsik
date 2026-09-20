@@ -111,4 +111,32 @@ describe("Config Schema AUTO_SHORTEN_MIN_URL_LENGTH parsing", () => {
       }
     });
   });
+
+  describe("SINK_REQUEST_TIMEOUT_MS parsing", () => {
+    it("defaults to 10000ms", () => {
+      expect(envSchema.parse(baseEnv).SINK_REQUEST_TIMEOUT_MS).toBe(10000);
+    });
+
+    it("accepts values within 1000..60000ms and clamps outliers", () => {
+      expect(
+        envSchema.parse({ ...baseEnv, SINK_REQUEST_TIMEOUT_MS: "2500" })
+          .SINK_REQUEST_TIMEOUT_MS,
+      ).toBe(2500);
+      expect(
+        envSchema.parse({ ...baseEnv, SINK_REQUEST_TIMEOUT_MS: "100" })
+          .SINK_REQUEST_TIMEOUT_MS,
+      ).toBe(1000);
+      expect(
+        envSchema.parse({ ...baseEnv, SINK_REQUEST_TIMEOUT_MS: "90000" })
+          .SINK_REQUEST_TIMEOUT_MS,
+      ).toBe(60000);
+    });
+
+    it("falls back to 10000ms for invalid input", () => {
+      expect(
+        envSchema.parse({ ...baseEnv, SINK_REQUEST_TIMEOUT_MS: "slow" })
+          .SINK_REQUEST_TIMEOUT_MS,
+      ).toBe(10000);
+    });
+  });
 });

@@ -7,8 +7,8 @@ export interface SinkLink {
   title?: string | null;
   description?: string | null;
   unsafe?: boolean;
-  createdAt?: string;
-  updatedAt?: string;
+  createdAt?: string | number;
+  updatedAt?: string | number;
   clicks?: number;
 }
 
@@ -37,8 +37,8 @@ export interface SinkStats {
   slug: string;
   url: string;
   clicks: number;
-  createdAt?: string;
-  lastClickedAt?: string | null;
+  createdAt?: string | number;
+  lastClickedAt?: string | number | null;
   countries?: Record<string, number>;
   referrers?: Record<string, number>;
   devices?: Record<string, number>;
@@ -50,6 +50,7 @@ export interface SinkListResponse {
   page?: number;
   pageSize?: number;
   cursor?: string | null;
+  listComplete?: boolean;
 }
 
 export interface SinkQueryParams {

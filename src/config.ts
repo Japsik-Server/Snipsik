@@ -65,6 +65,17 @@ export const envSchema = z.object({
     .url("SINK_BASE_URL must be a valid URL")
     .transform((url) => url.replace(/\/+$/, "")),
   SINK_API_TOKEN: z.string().min(1, "SINK_API_TOKEN is required"),
+  SINK_REQUEST_TIMEOUT_MS: z
+    .string()
+    .optional()
+    .default("10000")
+    .transform((val) => {
+      const trimmed = val.trim();
+      if (!/^\d+$/.test(trimmed)) return 10000;
+      const parsed = parseInt(trimmed, 10);
+      if (isNaN(parsed)) return 10000;
+      return Math.min(60000, Math.max(1000, parsed));
+    }),
   RANDOM_SLUG_LENGTH: z
     .string()
     .optional()

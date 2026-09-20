@@ -1,5 +1,5 @@
 import { describe, expect, it, mock } from "bun:test";
-import { sinkClient } from "@/services/sinkClient";
+import { SinkClient, sinkClient } from "@/services/sinkClient";
 import { fetchUserDashboardStats } from "@/commands/link";
 import { getUserHash } from "@/services/slugManager";
 
@@ -201,6 +201,180 @@ describe("SinkClient New API Tests", () => {
     } finally {
       globalThis.fetch = originalFetch;
     }
+  });
+
+  it("preserves outer list metadata when links are wrapped in data", async () => {
+    const client = new SinkClient({
+      baseUrl: "https://sink.example",
+      token: "test-token",
+      fetchImpl: async () =>
+        new Response(
+          JSON.stringify({
+            data: [{ slug: "one", url: "https://example.com/one" }],
+            total: 42,
+            cursor: "next-page",
+          }),
+          { status: 200 },
+        ),
+    });
+
+    const result = await client.listLinks();
+    expect(result.success).toBe(true);
+    expect(result.list).toHaveLength(1);
+    expect(result.total).toBe(42);
+    expect(result.cursor).toBe("next-page");
+  });
+
+  it("supports the official cursor list contract", async () => {
+    const requestedUrls: string[] = [];
+    const client = new SinkClient({
+      baseUrl: "https://sink.example",
+      token: "test-token",
+      fetchImpl: async (url) => {
+        requestedUrls.push(String(url));
+        const secondPage = String(url).includes("cursor=page-2");
+        return new Response(
+          JSON.stringify({
+            links: [
+              {
+                slug: secondPage ? "two" : "one",
+                url: `https://example.com/${secondPage ? "two" : "one"}`,
+              },
+            ],
+            cursor: secondPage ? null : "page-2",
+            list_complete: secondPage,
+          }),
+          { status: 200 },
+        );
+      },
+    });
+
+    const result = await client.listAllLinks(undefined, 3);
+    expect(result.success).toBe(true);
+    expect(result.list.map((link) => link.slug)).toEqual(["one", "two"]);
+    expect(result.truncated).toBe(false);
+    expect(requestedUrls[1]).toContain("cursor=page-2");
+  });
+
+  it("rejects incomplete successful link responses", async () => {
+    const client = new SinkClient({
+      baseUrl: "https://sink.example",
+      token: "test-token",
+      fetchImpl: async () => new Response("{}", { status: 200 }),
+    });
+
+    const created = await client.createLink({
+      slug: "requested-slug",
+      url: "https://example.com",
+    });
+    expect(created.success).toBe(false);
+    expect(created.error).toContain("Invalid Sink response contract");
+
+    const queried = await client.queryLink({ slug: "requested-slug" });
+    expect(queried.success).toBe(false);
+    expect(queried.status).toBe(502);
+  });
+
+  it("rejects malformed list metadata on a 2xx response", async () => {
+    const client = new SinkClient({
+      baseUrl: "https://sink.example",
+      token: "test-token",
+      fetchImpl: async () =>
+        new Response(
+          JSON.stringify({
+            links: [{ slug: "one", url: "https://example.com/one" }],
+            cursor: 123,
+            list_complete: "no",
+          }),
+          { status: 200 },
+        ),
+    });
+
+    const result = await client.listLinks();
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("Invalid Sink response contract");
+  });
+
+  it("times out while waiting for response headers and allows a later request", async () => {
+    let calls = 0;
+    const client = new SinkClient({
+      baseUrl: "https://sink.example",
+      token: "test-token",
+      requestTimeoutMs: 20,
+      fetchImpl: async (_url, init) => {
+        calls++;
+        if (calls === 1) {
+          return await new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener(
+              "abort",
+              () => reject(new DOMException("Aborted", "AbortError")),
+              { once: true },
+            );
+          });
+        }
+        return new Response(
+          JSON.stringify({ slug: "later", url: "https://example.com/later" }),
+          { status: 200 },
+        );
+      },
+    });
+
+    const timedOut = await client.queryLink({ slug: "first" });
+    expect(timedOut.success).toBe(false);
+    expect(timedOut.error).toContain("timed out");
+
+    const later = await client.queryLink({ slug: "later" });
+    expect(later.success).toBe(true);
+    expect(later.link?.slug).toBe("later");
+  });
+
+  it("times out while reading a stalled response body", async () => {
+    const client = new SinkClient({
+      baseUrl: "https://sink.example",
+      token: "test-token",
+      requestTimeoutMs: 20,
+      fetchImpl: async (_url, init) => {
+        const body = new ReadableStream({
+          start(controller) {
+            init?.signal?.addEventListener(
+              "abort",
+              () => controller.error(new DOMException("Aborted", "AbortError")),
+              { once: true },
+            );
+          },
+        });
+        return new Response(body, { status: 200 });
+      },
+    });
+
+    const result = await client.queryLink({ slug: "slow-body" });
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("timed out");
+  });
+
+  it("does not retry a timed-out mutation", async () => {
+    let calls = 0;
+    const client = new SinkClient({
+      baseUrl: "https://sink.example",
+      token: "test-token",
+      requestTimeoutMs: 20,
+      fetchImpl: async (_url, init) => {
+        calls++;
+        return await new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener(
+            "abort",
+            () => reject(new DOMException("Aborted", "AbortError")),
+            { once: true },
+          );
+        });
+      },
+    });
+
+    const result = await client.updateLink("slug", {
+      url: "https://example.com/new",
+    });
+    expect(result.success).toBe(false);
+    expect(calls).toBe(1);
   });
 });
 

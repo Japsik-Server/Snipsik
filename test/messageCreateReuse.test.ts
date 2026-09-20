@@ -480,6 +480,60 @@ describe("Auto-Shortening Existing URL Reuse", () => {
     expect(cardJson2).toContain(`https://s.japsik.com/${newSlug}`);
   });
 
+  it("clears the in-flight key after a timeout so the same URL can be retried", async () => {
+    const targetUrl = "https://example.com/retry/after/timeout";
+    const recoveredSlug = `recovered-${testUserHash}`;
+    sinkClient.searchLinks = mock(async () => ({
+      success: true,
+      list: [],
+      total: 0,
+      status: 200,
+    }));
+
+    let createAttempts = 0;
+    sinkClient.createLink = mock(async () => {
+      createAttempts++;
+      if (createAttempts === 1) {
+        return { success: false, error: "Sink request timed out after 20ms" };
+      }
+      return {
+        success: true,
+        link: { slug: recoveredSlug, url: targetUrl },
+      };
+    });
+
+    const sentPayloads: any[] = [];
+    const mockMessage = {
+      author: {
+        id: testUserId,
+        bot: false,
+        tag: "Tester#0001",
+        createDM: async () => ({
+          send: mock(async (payload: any) => {
+            sentPayloads.push(payload);
+            return {
+              flags: { has: () => true },
+              suppressEmbeds: mock(async () => {}),
+            };
+          }),
+        }),
+      },
+      guildId: "guild-1",
+      guild: {},
+      channelId: "channel-1",
+      channel: { name: "general" },
+      content: `Retry: ${targetUrl}`,
+      url: "https://discord.com/channels/guild-1/channel-1/msg-retry",
+    };
+
+    await onMessageCreate(mockMessage as any);
+    await onMessageCreate(mockMessage as any);
+
+    expect(createAttempts).toBe(2);
+    expect(sentPayloads).toHaveLength(2);
+    expect(sentPayloads[1].content).toContain(recoveredSlug);
+  });
+
   it("does not reuse active links when target URL has different query parameters despite search match", async () => {
     const existingSlug = `different-query-${testUserHash}`;
     const searchLinksMock = mock(async () => ({
