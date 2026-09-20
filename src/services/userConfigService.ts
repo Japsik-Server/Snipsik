@@ -493,14 +493,6 @@ class UserConfigService {
               fixupxEnabled: saved.fixupxEnabled ?? true,
             };
 
-            this.cacheEpoch++;
-            this.cache.set(userId, savedConfig);
-            if (!this.cacheLoaded) {
-              this.triggerBackgroundReload();
-            }
-            logger.info(
-              `Updated user config for ${userId}: autoDmMode=${savedConfig.autoDmMode}, dmFormat=${savedConfig.dmFormat}, autoShortenMinUrlLength=${savedConfig.autoShortenMinUrlLength}, ignoredDomains=${savedConfig.ignoredDomains.length}`,
-            );
             return { success: true, config: savedConfig };
           });
         });
@@ -518,6 +510,17 @@ class UserConfigService {
             error: "Concurrent update conflict. Please try again.",
             config: current,
           };
+        }
+
+        if (result.success) {
+          this.cacheEpoch++;
+          this.cache.set(userId, result.config);
+          if (!this.cacheLoaded) {
+            this.triggerBackgroundReload();
+          }
+          logger.info(
+            `Updated user config for ${userId}: autoDmMode=${result.config.autoDmMode}, dmFormat=${result.config.dmFormat}, autoShortenMinUrlLength=${result.config.autoShortenMinUrlLength}, ignoredDomains=${result.config.ignoredDomains.length}`,
+          );
         }
 
         return result;

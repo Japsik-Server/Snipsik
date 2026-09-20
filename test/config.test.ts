@@ -92,6 +92,20 @@ describe("Config Schema AUTO_SHORTEN_MIN_URL_LENGTH parsing", () => {
             DATABASE_URL: "postgresql://user:pass@localhost:5432/db",
           }),
         ).toThrow("PostgreSQL URLs are no longer supported");
+
+        expect(() =>
+          envSchema.parse({
+            ...baseEnv,
+            DATABASE_URL: "libsql:",
+          }),
+        ).toThrow("DATABASE_URL must be a valid LibSQL connection URL");
+
+        expect(() =>
+          envSchema.parse({
+            ...baseEnv,
+            DATABASE_URL: "file:",
+          }),
+        ).toThrow("DATABASE_URL must be a valid LibSQL connection URL");
       } finally {
         process.env.NODE_ENV = originalNodeEnv;
       }

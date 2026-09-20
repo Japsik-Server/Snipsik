@@ -21,19 +21,37 @@ export const envSchema = z.object({
         .min(1, "DATABASE_URL or TURSO_DATABASE_URL is required")
         .refine(
           (url) => {
-            const lower = url.trim().toLowerCase();
-            return (
-              lower.startsWith("libsql:") ||
-              lower.startsWith("file:") ||
-              lower.startsWith("https:") ||
-              lower.startsWith("http:") ||
-              lower.startsWith("wss:") ||
-              lower.startsWith("ws:")
-            );
+            const trimmed = url.trim();
+            const lower = trimmed.toLowerCase();
+            if (
+              lower.startsWith("postgres:") ||
+              lower.startsWith("postgresql:")
+            ) {
+              return false;
+            }
+            if (lower.startsWith("file:")) {
+              return trimmed.length > 5;
+            }
+            try {
+              const parsed = new URL(trimmed);
+              const validProtocols = [
+                "libsql:",
+                "https:",
+                "http:",
+                "wss:",
+                "ws:",
+              ];
+              return (
+                validProtocols.includes(parsed.protocol) &&
+                parsed.host.length > 0
+              );
+            } catch {
+              return false;
+            }
           },
           {
             message:
-              "DATABASE_URL must be a valid LibSQL connection URL (starting with 'libsql:', 'https:', or 'file:'). PostgreSQL URLs are no longer supported.",
+              "DATABASE_URL must be a valid LibSQL connection URL with a host (e.g. 'libsql://database-org.turso.io') or a valid local file path (e.g. 'file:local.db'). PostgreSQL URLs are no longer supported.",
           },
         ),
     ),

@@ -178,11 +178,21 @@ async function migrate(): Promise<void> {
     console.log(`  Found ${pgWatchRows.length} rows in PostgreSQL.`);
     console.log(`  Current Turso count: ${watchBeforeCount}`);
 
-    let watchVerified = isDryRun;
+    let watchVerified = true;
 
     if (isDryRun) {
       console.log(
-        `  [DRY-RUN] Would upsert ${pgWatchRows.length} rows into watch_channels.`,
+        `  [DRY-RUN] Validating data transformations for ${pgWatchRows.length} rows...`,
+      );
+      for (const row of pgWatchRows) {
+        toUnixTimestamp(
+          row.created_at,
+          "created_at",
+          `watch_channel:id=${row.id}`,
+        );
+      }
+      console.log(
+        `  ✓ All ${pgWatchRows.length} rows passed conversion validation.`,
       );
       if (pgWatchRows.length > 0) {
         console.log("  Sample row:", JSON.stringify(pgWatchRows[0]));
@@ -276,7 +286,6 @@ async function migrate(): Promise<void> {
           console.log(
             `  ✓ All ${pgWatchRows.length} source watch_channels verified present in Turso.`,
           );
-          watchVerified = true;
         }
 
         // Deep content verification: sample rows and verify field-by-field equality
@@ -357,11 +366,29 @@ async function migrate(): Promise<void> {
     console.log(`  Found ${pgGuildRows.length} rows in PostgreSQL.`);
     console.log(`  Current Turso count: ${guildBeforeCount}`);
 
-    let guildVerified = isDryRun;
+    let guildVerified = true;
 
     if (isDryRun) {
       console.log(
-        `  [DRY-RUN] Would upsert ${pgGuildRows.length} rows into guild_configs.`,
+        `  [DRY-RUN] Validating data transformations for ${pgGuildRows.length} rows...`,
+      );
+      for (const row of pgGuildRows) {
+        toUnixTimestamp(
+          row.created_at,
+          "created_at",
+          `guild_config:${row.guild_id}`,
+        );
+        toUnixTimestamp(
+          row.updated_at,
+          "updated_at",
+          `guild_config:${row.guild_id}`,
+        );
+        JSON.stringify(
+          Array.isArray(row.ignored_domains) ? row.ignored_domains : [],
+        );
+      }
+      console.log(
+        `  ✓ All ${pgGuildRows.length} rows passed conversion validation.`,
       );
       if (pgGuildRows.length > 0) {
         console.log("  Sample row:", JSON.stringify(pgGuildRows[0]));
@@ -424,7 +451,6 @@ async function migrate(): Promise<void> {
           console.log(
             `  ✓ All ${pgGuildRows.length} source guild_configs verified present in Turso.`,
           );
-          guildVerified = true;
         }
 
         // Deep content verification: sample rows and verify field-by-field equality
@@ -513,11 +539,29 @@ async function migrate(): Promise<void> {
     );
     const userBeforeCount = Number(tursoUserBefore.rows[0]?.count ?? 0);
 
-    let userVerified = isDryRun;
+    let userVerified = true;
 
     if (isDryRun) {
       console.log(
-        `  [DRY-RUN] Would upsert ${pgUserRows.length} rows into user_configs.`,
+        `  [DRY-RUN] Validating data transformations for ${pgUserRows.length} rows...`,
+      );
+      for (const row of pgUserRows) {
+        toUnixTimestamp(
+          row.created_at,
+          "created_at",
+          `user_config:${row.user_id}`,
+        );
+        toUnixTimestamp(
+          row.updated_at,
+          "updated_at",
+          `user_config:${row.user_id}`,
+        );
+        JSON.stringify(
+          Array.isArray(row.ignored_domains) ? row.ignored_domains : [],
+        );
+      }
+      console.log(
+        `  ✓ All ${pgUserRows.length} rows passed conversion validation.`,
       );
       if (pgUserRows.length > 0) {
         console.log("  Sample row:", JSON.stringify(pgUserRows[0]));
@@ -584,7 +628,6 @@ async function migrate(): Promise<void> {
           console.log(
             `  ✓ All ${pgUserRows.length} source user_configs verified present in Turso.`,
           );
-          userVerified = true;
         }
 
         // Deep content verification: sample rows and verify field-by-field equality

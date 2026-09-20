@@ -280,14 +280,6 @@ class GuildConfigService {
               ignoredDomains: saved.ignoredDomains ?? [],
             };
 
-            this.cacheEpoch++;
-            this.cache.set(guildId, savedConfig);
-            if (!this.cacheLoaded) {
-              this.triggerBackgroundReload();
-            }
-            logger.info(
-              `Updated guild config for ${guildId}: autoShortenEnabled=${savedConfig.autoShortenEnabled}, autoShortenMinUrlLength=${savedConfig.autoShortenMinUrlLength}, ignoredDomains=${savedConfig.ignoredDomains.length}`,
-            );
             return { success: true, config: savedConfig };
           });
         });
@@ -305,6 +297,17 @@ class GuildConfigService {
             error: "Concurrent update conflict. Please try again.",
             config: current,
           };
+        }
+
+        if (result.success) {
+          this.cacheEpoch++;
+          this.cache.set(guildId, result.config);
+          if (!this.cacheLoaded) {
+            this.triggerBackgroundReload();
+          }
+          logger.info(
+            `Updated guild config for ${guildId}: autoShortenEnabled=${result.config.autoShortenEnabled}, autoShortenMinUrlLength=${result.config.autoShortenMinUrlLength}, ignoredDomains=${result.config.ignoredDomains.length}`,
+          );
         }
 
         return result;
