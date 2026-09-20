@@ -57,7 +57,19 @@ if (!targetTursoUrl) {
   process.exit(1);
 }
 
-console.log(`Source PG URL:   ${sourcePgUrl.replace(/:[^:@]+@/, ":****@")}`);
+function maskUrlCredentials(rawUrl: string): string {
+  try {
+    const parsed = new URL(rawUrl);
+    if (parsed.password) {
+      parsed.password = "****";
+    }
+    return parsed.toString();
+  } catch {
+    return "[URL with masked credentials]";
+  }
+}
+
+console.log(`Source PG URL:   ${maskUrlCredentials(sourcePgUrl)}`);
 console.log(`Target Turso URL: ${targetTursoUrl}`);
 console.log(
   `Auth Token:      ${targetTursoToken ? "Provided (masked)" : "None (e.g. local file or dev)"}`,

@@ -228,46 +228,107 @@ class GuildConfigService {
       insertValues.ignoredDomains = normalizedList;
     }
 
-    try {
-      return await keyedMutex.runExclusive(guildId, async () => {
-        const [saved] = await db
-          .insert(guildConfigs)
-          .values(insertValues)
-          .onConflictDoUpdate({
-            target: guildConfigs.guildId,
-            set: setClause,
-          })
-          .returning();
+    const MAX_RETRIES = 3;
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        const result = await keyedMutex.runExclusive(guildId, async () => {
+          return await db.transaction(async (tx) => {
+            const [existing] = await tx
+              .select()
+              .from(guildConfigs)
+              .where(eq(guildConfigs.guildId, guildId));
 
-        if (!saved) {
-          throw new Error("Failed to persist guild configuration.");
+            let saved: typeof guildConfigs.$inferSelect | undefined;
+
+            if (!existing) {
+              const [inserted] = await tx
+                .insert(guildConfigs)
+                .values(insertValues)
+                .onConflictDoNothing()
+                .returning();
+
+              if (!inserted) {
+                // Raced with concurrent insert
+                return { retry: true as const };
+              }
+              saved = inserted;
+            } else {
+              const [updated] = await tx
+                .update(guildConfigs)
+                .set({
+                  ...setClause,
+                  version: existing.version + 1,
+                })
+                .where(
+                  and(
+                    eq(guildConfigs.guildId, guildId),
+                    eq(guildConfigs.version, existing.version),
+                  ),
+                )
+                .returning();
+
+              if (!updated) {
+                // Raced with concurrent update
+                return { retry: true as const };
+              }
+              saved = updated;
+            }
+
+            const savedConfig: GuildConfigData = {
+              guildId: saved.guildId,
+              autoShortenEnabled: saved.autoShortenEnabled,
+              autoShortenMinUrlLength: saved.autoShortenMinUrlLength ?? null,
+              ignoredDomains: saved.ignoredDomains ?? [],
+            };
+
+            this.cacheEpoch++;
+            this.cache.set(guildId, savedConfig);
+            if (!this.cacheLoaded) {
+              this.triggerBackgroundReload();
+            }
+            logger.info(
+              `Updated guild config for ${guildId}: autoShortenEnabled=${savedConfig.autoShortenEnabled}, autoShortenMinUrlLength=${savedConfig.autoShortenMinUrlLength}, ignoredDomains=${savedConfig.ignoredDomains.length}`,
+            );
+            return { success: true, config: savedConfig };
+          });
+        });
+
+        if ("retry" in result) {
+          if (attempt < MAX_RETRIES) {
+            await new Promise((resolve) => setTimeout(resolve, 25 * attempt));
+            continue;
+          }
+          logger.warn(
+            `Concurrent mutation conflict on guild ${guildId} exceeded max retries (${MAX_RETRIES}).`,
+          );
+          return {
+            success: false,
+            error: "Concurrent update conflict. Please try again.",
+            config: current,
+          };
         }
 
-        const savedConfig: GuildConfigData = {
-          guildId: saved.guildId,
-          autoShortenEnabled: saved.autoShortenEnabled,
-          autoShortenMinUrlLength: saved.autoShortenMinUrlLength ?? null,
-          ignoredDomains: saved.ignoredDomains ?? [],
-        };
-
-        this.cacheEpoch++;
-        this.cache.set(guildId, savedConfig);
-        if (!this.cacheLoaded) {
-          this.triggerBackgroundReload();
-        }
-        logger.info(
-          `Updated guild config for ${guildId}: autoShortenEnabled=${savedConfig.autoShortenEnabled}, autoShortenMinUrlLength=${savedConfig.autoShortenMinUrlLength}, ignoredDomains=${savedConfig.ignoredDomains.length}`,
+        return result;
+      } catch (error) {
+        logger.error(
+          `Failed to update guild config for ${guildId} (attempt ${attempt}/${MAX_RETRIES}):`,
+          error,
         );
-        return { success: true, config: savedConfig };
-      });
-    } catch (error) {
-      logger.error(`Failed to update guild config for ${guildId}:`, error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : "Database error",
-        config: current,
-      };
+        if (attempt >= MAX_RETRIES) {
+          return {
+            success: false,
+            error: error instanceof Error ? error.message : "Database error",
+            config: current,
+          };
+        }
+      }
     }
+
+    return {
+      success: false,
+      error: "Database update failed after retries.",
+      config: current,
+    };
   }
 
   /**

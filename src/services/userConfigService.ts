@@ -1,4 +1,4 @@
-import { sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { db } from "@/db";
 import { userConfigs } from "@/db/schema";
 import { normalizeDomain, MAX_CUSTOM_IGNORED_DOMAINS } from "@/utils/domain";
@@ -439,48 +439,109 @@ class UserConfigService {
       insertValues.fixupxEnabled = normalizedFixupx;
     }
 
-    try {
-      return await keyedMutex.runExclusive(userId, async () => {
-        const [saved] = await db
-          .insert(userConfigs)
-          .values(insertValues)
-          .onConflictDoUpdate({
-            target: userConfigs.userId,
-            set: setClause,
-          })
-          .returning();
+    const MAX_RETRIES = 3;
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        const result = await keyedMutex.runExclusive(userId, async () => {
+          return await db.transaction(async (tx) => {
+            const [existing] = await tx
+              .select()
+              .from(userConfigs)
+              .where(eq(userConfigs.userId, userId));
 
-        if (!saved) {
-          throw new Error("Failed to persist user configuration.");
+            let saved: typeof userConfigs.$inferSelect | undefined;
+
+            if (!existing) {
+              const [inserted] = await tx
+                .insert(userConfigs)
+                .values(insertValues)
+                .onConflictDoNothing()
+                .returning();
+
+              if (!inserted) {
+                // Raced with concurrent insert
+                return { retry: true as const };
+              }
+              saved = inserted;
+            } else {
+              const [updated] = await tx
+                .update(userConfigs)
+                .set({
+                  ...setClause,
+                  version: existing.version + 1,
+                })
+                .where(
+                  and(
+                    eq(userConfigs.userId, userId),
+                    eq(userConfigs.version, existing.version),
+                  ),
+                )
+                .returning();
+
+              if (!updated) {
+                // Raced with concurrent update
+                return { retry: true as const };
+              }
+              saved = updated;
+            }
+
+            const savedConfig: UserConfigData = {
+              userId: saved.userId,
+              autoDmMode: normalizeAutoDmMode(saved.autoDmMode) ?? "inherit",
+              dmFormat: normalizeDmFormat(saved.dmFormat) ?? "replace",
+              autoShortenMinUrlLength: saved.autoShortenMinUrlLength ?? null,
+              ignoredDomains: saved.ignoredDomains ?? [],
+              fixupxEnabled: saved.fixupxEnabled ?? true,
+            };
+
+            this.cacheEpoch++;
+            this.cache.set(userId, savedConfig);
+            if (!this.cacheLoaded) {
+              this.triggerBackgroundReload();
+            }
+            logger.info(
+              `Updated user config for ${userId}: autoDmMode=${savedConfig.autoDmMode}, dmFormat=${savedConfig.dmFormat}, autoShortenMinUrlLength=${savedConfig.autoShortenMinUrlLength}, ignoredDomains=${savedConfig.ignoredDomains.length}`,
+            );
+            return { success: true, config: savedConfig };
+          });
+        });
+
+        if ("retry" in result) {
+          if (attempt < MAX_RETRIES) {
+            await new Promise((resolve) => setTimeout(resolve, 25 * attempt));
+            continue;
+          }
+          logger.warn(
+            `Concurrent mutation conflict on user ${userId} exceeded max retries (${MAX_RETRIES}).`,
+          );
+          return {
+            success: false,
+            error: "Concurrent update conflict. Please try again.",
+            config: current,
+          };
         }
 
-        const savedConfig: UserConfigData = {
-          userId: saved.userId,
-          autoDmMode: normalizeAutoDmMode(saved.autoDmMode) ?? "inherit",
-          dmFormat: normalizeDmFormat(saved.dmFormat) ?? "replace",
-          autoShortenMinUrlLength: saved.autoShortenMinUrlLength ?? null,
-          ignoredDomains: saved.ignoredDomains ?? [],
-          fixupxEnabled: saved.fixupxEnabled ?? true,
-        };
-
-        this.cacheEpoch++;
-        this.cache.set(userId, savedConfig);
-        if (!this.cacheLoaded) {
-          this.triggerBackgroundReload();
-        }
-        logger.info(
-          `Updated user config for ${userId}: autoDmMode=${savedConfig.autoDmMode}, dmFormat=${savedConfig.dmFormat}, autoShortenMinUrlLength=${savedConfig.autoShortenMinUrlLength}, ignoredDomains=${savedConfig.ignoredDomains.length}`,
+        return result;
+      } catch (error) {
+        logger.error(
+          `Failed to update user config for ${userId} (attempt ${attempt}/${MAX_RETRIES}):`,
+          error,
         );
-        return { success: true, config: savedConfig };
-      });
-    } catch (error) {
-      logger.error(`Failed to update user config for ${userId}:`, error);
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : "Database error",
-        config: current,
-      };
+        if (attempt >= MAX_RETRIES) {
+          return {
+            success: false,
+            error: error instanceof Error ? error.message : "Database error",
+            config: current,
+          };
+        }
+      }
     }
+
+    return {
+      success: false,
+      error: "Database update failed after retries.",
+      config: current,
+    };
   }
 
   /**
