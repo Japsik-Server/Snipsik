@@ -3,7 +3,63 @@ import { z } from "zod";
 export const envSchema = z.object({
   DISCORD_TOKEN: z.string().min(1, "DISCORD_TOKEN is required"),
   DISCORD_CLIENT_ID: z.string().min(1, "DISCORD_CLIENT_ID is required"),
-  DATABASE_URL: z.string().url("DATABASE_URL must be a valid connection URL"),
+  DATABASE_URL: z
+    .string()
+    .optional()
+    .transform((val) => {
+      // In test mode, default to isolated in-memory SQLite database if omitted or if a legacy postgres URL is present in local .env
+      if (
+        process.env.NODE_ENV === "test" &&
+        (!val || val.startsWith("postgres:") || val.startsWith("postgresql:"))
+      ) {
+        return "file::memory:";
+      }
+      return val || process.env.TURSO_DATABASE_URL || "";
+    })
+    .pipe(
+      z
+        .string()
+        .min(1, "DATABASE_URL or TURSO_DATABASE_URL is required")
+        .refine(
+          (url) => {
+            const trimmed = url.trim();
+            const lower = trimmed.toLowerCase();
+            if (
+              lower.startsWith("postgres:") ||
+              lower.startsWith("postgresql:")
+            ) {
+              return false;
+            }
+            if (lower.startsWith("file:")) {
+              return trimmed.length > 5;
+            }
+            try {
+              const parsed = new URL(trimmed);
+              const validProtocols = [
+                "libsql:",
+                "https:",
+                "http:",
+                "wss:",
+                "ws:",
+              ];
+              return (
+                validProtocols.includes(parsed.protocol) &&
+                parsed.host.length > 0
+              );
+            } catch {
+              return false;
+            }
+          },
+          {
+            message:
+              "DATABASE_URL must be a valid LibSQL connection URL with a host (e.g. 'libsql://database-org.turso.io') or a valid local file path (e.g. 'file:local.db'). PostgreSQL URLs are no longer supported.",
+          },
+        ),
+    ),
+  DATABASE_AUTH_TOKEN: z
+    .string()
+    .optional()
+    .transform((val) => val || process.env.TURSO_AUTH_TOKEN || undefined),
   SINK_BASE_URL: z
     .string()
     .url("SINK_BASE_URL must be a valid URL")
