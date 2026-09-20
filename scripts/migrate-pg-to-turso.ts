@@ -97,13 +97,40 @@ function toUnixTimestamp(
   );
 }
 
-async function executeInBatches(
+/**
+ * Executes a set of statements in batches inside a single atomic write transaction.
+ * If any batch or extra statement fails, rolls back the entire transaction to prevent partial state.
+ */
+async function executeTableInTransaction(
   client: ReturnType<typeof createClient>,
+  tableName: string,
   statements: InStatement[],
+  extraStatements: InStatement[] = [],
 ): Promise<void> {
-  for (let i = 0; i < statements.length; i += BATCH_SIZE) {
-    const chunk = statements.slice(i, i + BATCH_SIZE);
-    await client.batch(chunk, "write");
+  if (statements.length === 0 && extraStatements.length === 0) {
+    return;
+  }
+  console.log(
+    `  Executing atomic transaction for [${tableName}] (${statements.length} row statements)...`,
+  );
+  const tx = await client.transaction("write");
+  try {
+    for (let i = 0; i < statements.length; i += BATCH_SIZE) {
+      const chunk = statements.slice(i, i + BATCH_SIZE);
+      await tx.batch(chunk);
+    }
+    for (const stmt of extraStatements) {
+      await tx.execute(stmt);
+    }
+    await tx.commit();
+    console.log(`  ✓ Successfully committed transaction for [${tableName}].`);
+  } catch (error) {
+    console.error(
+      `  ❌ Transaction failed for [${tableName}], rolling back...`,
+      error,
+    );
+    await tx.rollback().catch(() => {});
+    throw error;
   }
 }
 
@@ -169,20 +196,27 @@ async function migrate(): Promise<void> {
         ],
       }));
 
-      await executeInBatches(turso, watchStatements);
+      // Extra statements: synchronize SQLite AUTOINCREMENT sequence counter atomically with rows
+      const sequenceStatements: InStatement[] = [
+        {
+          sql: `DELETE FROM sqlite_sequence WHERE name = ?`,
+          args: ["watch_channels"],
+        },
+        {
+          sql: `
+            INSERT INTO sqlite_sequence (name, seq)
+            VALUES (?, (SELECT COALESCE(MAX(id), 0) FROM watch_channels))
+          `,
+          args: ["watch_channels"],
+        },
+      ];
 
-      // Synchronize SQLite AUTOINCREMENT sequence counter to prevent collisions on future inserts
-      await turso.execute({
-        sql: `DELETE FROM sqlite_sequence WHERE name = ?`,
-        args: ["watch_channels"],
-      });
-      await turso.execute({
-        sql: `
-          INSERT INTO sqlite_sequence (name, seq)
-          VALUES (?, (SELECT COALESCE(MAX(id), 0) FROM watch_channels))
-        `,
-        args: ["watch_channels"],
-      });
+      await executeTableInTransaction(
+        turso,
+        "watch_channels",
+        watchStatements,
+        sequenceStatements,
+      );
       console.log("  ✓ Synchronized sqlite_sequence for watch_channels.");
 
       // Strict per-row verification: verify every source ID is present in Turso
@@ -287,7 +321,7 @@ async function migrate(): Promise<void> {
         };
       });
 
-      await executeInBatches(turso, guildStatements);
+      await executeTableInTransaction(turso, "guild_configs", guildStatements);
 
       // Strict per-row verification: verify every source guild_id is present in Turso
       if (pgGuildRows.length > 0) {
@@ -375,8 +409,8 @@ async function migrate(): Promise<void> {
           `,
           args: [
             row.user_id,
-            row.auto_dm_mode || "inherit",
-            row.dm_format || "replace",
+            row.auto_dm_mode ?? "inherit",
+            row.dm_format ?? "replace",
             row.auto_shorten_min_url_length ?? null,
             ignoredDomainsJson,
             row.fixupx_enabled ? 1 : 0,
@@ -394,7 +428,7 @@ async function migrate(): Promise<void> {
         };
       });
 
-      await executeInBatches(turso, userStatements);
+      await executeTableInTransaction(turso, "user_configs", userStatements);
 
       // Strict per-row verification: verify every source user_id is present in Turso
       if (pgUserRows.length > 0) {
