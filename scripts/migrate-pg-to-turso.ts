@@ -9,6 +9,26 @@ interface MigrationSummary {
   success: boolean;
 }
 
+interface GuildRow {
+  guild_id: string;
+  auto_shorten_enabled: boolean;
+  auto_shorten_min_url_length: number | null;
+  ignored_domains: string[];
+  created_at: unknown;
+  updated_at: unknown;
+}
+
+interface UserRow {
+  user_id: string;
+  auto_dm_mode: string;
+  dm_format: string;
+  auto_shorten_min_url_length: number | null;
+  ignored_domains: string[];
+  fixupx_enabled: boolean;
+  created_at: unknown;
+  updated_at: unknown;
+}
+
 const BATCH_SIZE = 100;
 
 // Parse command line arguments
@@ -358,19 +378,19 @@ async function migrate(): Promise<void> {
     console.log(`  Current Turso count: ${guildBeforeCount}`);
 
     let guildVerified = true;
-    let lastGuildId = "";
+    let lastGuildId: string | null = null;
     let processedGuildRows = 0;
 
     while (true) {
-      const chunk =
-        lastGuildId === ""
-          ? await pg`
+      const chunk: postgres.RowList<GuildRow[]> =
+        lastGuildId === null
+          ? await pg<GuildRow[]>`
               SELECT guild_id, auto_shorten_enabled, auto_shorten_min_url_length, ignored_domains, created_at, updated_at
               FROM guild_configs
               ORDER BY guild_id ASC
               LIMIT ${BATCH_SIZE}
             `
-          : await pg`
+          : await pg<GuildRow[]>`
               SELECT guild_id, auto_shorten_enabled, auto_shorten_min_url_length, ignored_domains, created_at, updated_at
               FROM guild_configs
               WHERE guild_id > ${lastGuildId}
@@ -380,8 +400,17 @@ async function migrate(): Promise<void> {
 
       if (chunk.length === 0) break;
 
-      // Validate data conversions for every row in chunk
+      // Validate data conversions and key integrity for every row in chunk
       for (const row of chunk) {
+        if (
+          !row.guild_id ||
+          typeof row.guild_id !== "string" ||
+          !row.guild_id.trim()
+        ) {
+          throw new Error(
+            "Invalid empty or whitespace-only guild_id encountered in PostgreSQL!",
+          );
+        }
         toTimestampMs(
           row.created_at,
           "created_at",
@@ -512,19 +541,19 @@ async function migrate(): Promise<void> {
     console.log(`  Current Turso count: ${userBeforeCount}`);
 
     let userVerified = true;
-    let lastUserId = "";
+    let lastUserId: string | null = null;
     let processedUserRows = 0;
 
     while (true) {
-      const chunk =
-        lastUserId === ""
-          ? await pg`
+      const chunk: postgres.RowList<UserRow[]> =
+        lastUserId === null
+          ? await pg<UserRow[]>`
               SELECT user_id, auto_dm_mode, dm_format, auto_shorten_min_url_length, ignored_domains, fixupx_enabled, created_at, updated_at
               FROM user_configs
               ORDER BY user_id ASC
               LIMIT ${BATCH_SIZE}
             `
-          : await pg`
+          : await pg<UserRow[]>`
               SELECT user_id, auto_dm_mode, dm_format, auto_shorten_min_url_length, ignored_domains, fixupx_enabled, created_at, updated_at
               FROM user_configs
               WHERE user_id > ${lastUserId}
@@ -534,8 +563,17 @@ async function migrate(): Promise<void> {
 
       if (chunk.length === 0) break;
 
-      // Validate data conversions for every row in chunk
+      // Validate data conversions and key integrity for every row in chunk
       for (const row of chunk) {
+        if (
+          !row.user_id ||
+          typeof row.user_id !== "string" ||
+          !row.user_id.trim()
+        ) {
+          throw new Error(
+            "Invalid empty or whitespace-only user_id encountered in PostgreSQL!",
+          );
+        }
         toTimestampMs(
           row.created_at,
           "created_at",
