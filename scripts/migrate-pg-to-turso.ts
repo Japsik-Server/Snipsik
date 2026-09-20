@@ -14,6 +14,7 @@ const BATCH_SIZE = 100;
 // Parse command line arguments
 const args = process.argv.slice(2);
 const isDryRun = args.includes("--dry-run");
+const isForce = args.includes("--force");
 
 // Resolve Source (PostgreSQL) URL
 const sourcePgUrl =
@@ -160,6 +161,49 @@ async function migrate(): Promise<void> {
     await turso.execute("SELECT 1");
     console.log("  ✓ Turso / LibSQL connected successfully.");
     console.log("-------------------------------------------------");
+
+    // Pre-flight safety check: prevent accidental clobbering of post-cutover Turso data
+    const preflightCounts = {
+      watchChannels: Number(
+        (await turso.execute("SELECT count(*) as c FROM watch_channels"))
+          .rows[0]?.c ?? 0,
+      ),
+      guildConfigs: Number(
+        (await turso.execute("SELECT count(*) as c FROM guild_configs")).rows[0]
+          ?.c ?? 0,
+      ),
+      userConfigs: Number(
+        (await turso.execute("SELECT count(*) as c FROM user_configs")).rows[0]
+          ?.c ?? 0,
+      ),
+    };
+    const hasExistingData =
+      preflightCounts.watchChannels > 0 ||
+      preflightCounts.guildConfigs > 0 ||
+      preflightCounts.userConfigs > 0;
+
+    if (!isDryRun && hasExistingData && !isForce) {
+      console.error(
+        "\n⚠️  SAFETY ABORT: Target Turso database already contains existing data!",
+      );
+      console.error(
+        `   - watch_channels: ${preflightCounts.watchChannels} row(s)`,
+      );
+      console.error(
+        `   - guild_configs:  ${preflightCounts.guildConfigs} row(s)`,
+      );
+      console.error(
+        `   - user_configs:   ${preflightCounts.userConfigs} row(s)`,
+      );
+      console.error(
+        "\nTo prevent accidental data loss or clobbering post-cutover changes, live migration is halted.",
+      );
+      console.error(
+        "If you intentionally want to overwrite existing target rows, re-run with --force:",
+      );
+      console.error("  bun run db:transfer --force\n");
+      process.exit(1);
+    }
 
     // ==========================================
     // Table 1: watch_channels

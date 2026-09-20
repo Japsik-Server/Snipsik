@@ -59,8 +59,11 @@ bun run db:push
 # 사전 검증 (Dry-run)
 SOURCE_PG_URL="postgresql://..." TARGET_TURSO_URL="libsql://..." TARGET_TURSO_AUTH_TOKEN="..." bun run db:transfer --dry-run
 
-# 실제 이전
+# 실제 이전 (타깃 DB가 비어있는 상태)
 SOURCE_PG_URL="postgresql://..." TARGET_TURSO_URL="libsql://..." TARGET_TURSO_AUTH_TOKEN="..." bun run db:transfer
+
+# 타깃 DB에 이미 데이터가 있을 때 덮어쓰기 허용 (안전 가드 해제)
+SOURCE_PG_URL="postgresql://..." TARGET_TURSO_URL="libsql://..." TARGET_TURSO_AUTH_TOKEN="..." bun run db:transfer --force
 ```
 
 ### 4. 봇 실행
