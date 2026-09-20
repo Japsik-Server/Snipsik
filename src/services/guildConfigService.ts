@@ -13,6 +13,7 @@ import {
   MAX_CUSTOM_IGNORED_DOMAINS,
 } from "@/utils/domain";
 import { logger } from "@/utils/logger";
+import { keyedMutex } from "@/utils/mutex";
 
 export interface GuildConfigData {
   guildId?: string;
@@ -227,35 +228,37 @@ class GuildConfigService {
     }
 
     try {
-      const [saved] = await db
-        .insert(guildConfigs)
-        .values(insertValues)
-        .onConflictDoUpdate({
-          target: guildConfigs.guildId,
-          set: setClause,
-        })
-        .returning();
+      return await keyedMutex.runExclusive(guildId, async () => {
+        const [saved] = await db
+          .insert(guildConfigs)
+          .values(insertValues)
+          .onConflictDoUpdate({
+            target: guildConfigs.guildId,
+            set: setClause,
+          })
+          .returning();
 
-      if (!saved) {
-        throw new Error("Failed to persist guild configuration.");
-      }
+        if (!saved) {
+          throw new Error("Failed to persist guild configuration.");
+        }
 
-      const savedConfig: GuildConfigData = {
-        guildId: saved.guildId,
-        autoShortenEnabled: saved.autoShortenEnabled,
-        autoShortenMinUrlLength: saved.autoShortenMinUrlLength ?? null,
-        ignoredDomains: saved.ignoredDomains ?? [],
-      };
+        const savedConfig: GuildConfigData = {
+          guildId: saved.guildId,
+          autoShortenEnabled: saved.autoShortenEnabled,
+          autoShortenMinUrlLength: saved.autoShortenMinUrlLength ?? null,
+          ignoredDomains: saved.ignoredDomains ?? [],
+        };
 
-      this.cacheEpoch++;
-      this.cache.set(guildId, savedConfig);
-      if (!this.cacheLoaded) {
-        this.triggerBackgroundReload();
-      }
-      logger.info(
-        `Updated guild config for ${guildId}: autoShortenEnabled=${savedConfig.autoShortenEnabled}, autoShortenMinUrlLength=${savedConfig.autoShortenMinUrlLength}, ignoredDomains=${savedConfig.ignoredDomains.length}`,
-      );
-      return { success: true, config: savedConfig };
+        this.cacheEpoch++;
+        this.cache.set(guildId, savedConfig);
+        if (!this.cacheLoaded) {
+          this.triggerBackgroundReload();
+        }
+        logger.info(
+          `Updated guild config for ${guildId}: autoShortenEnabled=${savedConfig.autoShortenEnabled}, autoShortenMinUrlLength=${savedConfig.autoShortenMinUrlLength}, ignoredDomains=${savedConfig.ignoredDomains.length}`,
+        );
+        return { success: true, config: savedConfig };
+      });
     } catch (error) {
       logger.error(`Failed to update guild config for ${guildId}:`, error);
       return {
@@ -267,11 +270,12 @@ class GuildConfigService {
   }
 
   /**
-   * Atomically mutates the ignored domains array for a guild using a database transaction with row-level locking (FOR UPDATE).
-   * Derives the replacement array from the fresh, locked row to prevent concurrent race conditions.
+   * Atomically mutates the ignored domains array for a guild using an application-level
+   * KeyedMutex and a database transaction.
+   * Derives the replacement array from the fresh row to prevent concurrent race conditions.
    *
    * @param guildId - Discord guild snowflake ID.
-   * @param mutator - Pure callback that computes next domains or returns an error based on fresh locked domains.
+   * @param mutator - Pure callback that computes next domains or returns an error based on fresh domains.
    * @returns Updated config or error status.
    */
   private async mutateIgnoredDomains(
@@ -282,69 +286,70 @@ class GuildConfigService {
   ): Promise<{ success: boolean; error?: string; config: GuildConfigData }> {
     const fallbackConfig = this.getGuildConfig(guildId);
     try {
-      const result = await db.transaction(async (tx) => {
-        // 1. Ensure a base guild_configs row exists before locking to avoid empty row lock misses
-        await tx
-          .insert(guildConfigs)
-          .values({
-            guildId,
-            ...DEFAULT_GUILD_CONFIG,
-            updatedAt: new Date(),
-          })
-          .onConflictDoNothing();
+      const result = await keyedMutex.runExclusive(guildId, async () => {
+        return await db.transaction(async (tx) => {
+          // 1. Ensure a base guild_configs row exists before querying
+          await tx
+            .insert(guildConfigs)
+            .values({
+              guildId,
+              ...DEFAULT_GUILD_CONFIG,
+              updatedAt: new Date(),
+            })
+            .onConflictDoNothing();
 
-        // 2. Row-level lock guaranteed to hit and serialize concurrent mutations for this guild
-        const rows = await tx
-          .select()
-          .from(guildConfigs)
-          .where(eq(guildConfigs.guildId, guildId))
-          .for("update");
+          // 2. Query guaranteed to hit for this guild
+          const rows = await tx
+            .select()
+            .from(guildConfigs)
+            .where(eq(guildConfigs.guildId, guildId));
 
-        const lockedRow = rows[0];
-        if (!lockedRow) {
-          throw new Error("Failed to lock guild configuration row.");
-        }
+          const lockedRow = rows[0];
+          if (!lockedRow) {
+            throw new Error("Failed to read guild configuration row.");
+          }
 
-        const currentDomains = lockedRow.ignoredDomains ?? [];
+          const currentDomains = lockedRow.ignoredDomains ?? [];
 
-        const mutationResult = mutator([...currentDomains]);
-        if (!mutationResult.ok) {
-          return {
-            success: false,
-            error: mutationResult.error,
-            config: {
-              guildId: lockedRow.guildId,
-              autoShortenEnabled: lockedRow.autoShortenEnabled,
-              autoShortenMinUrlLength:
-                lockedRow.autoShortenMinUrlLength ?? null,
-              ignoredDomains: lockedRow.ignoredDomains ?? [],
-            },
+          const mutationResult = mutator([...currentDomains]);
+          if (!mutationResult.ok) {
+            return {
+              success: false,
+              error: mutationResult.error,
+              config: {
+                guildId: lockedRow.guildId,
+                autoShortenEnabled: lockedRow.autoShortenEnabled,
+                autoShortenMinUrlLength:
+                  lockedRow.autoShortenMinUrlLength ?? null,
+                ignoredDomains: lockedRow.ignoredDomains ?? [],
+              },
+            };
+          }
+
+          const nextDomains = mutationResult.domains;
+
+          const [saved] = await tx
+            .update(guildConfigs)
+            .set({
+              ignoredDomains: nextDomains,
+              updatedAt: new Date(),
+            })
+            .where(eq(guildConfigs.guildId, guildId))
+            .returning();
+
+          if (!saved) {
+            throw new Error("Failed to persist updated guild ignored domains.");
+          }
+
+          const savedConfig: GuildConfigData = {
+            guildId: saved.guildId,
+            autoShortenEnabled: saved.autoShortenEnabled,
+            autoShortenMinUrlLength: saved.autoShortenMinUrlLength ?? null,
+            ignoredDomains: saved.ignoredDomains ?? [],
           };
-        }
 
-        const nextDomains = mutationResult.domains;
-
-        const [saved] = await tx
-          .update(guildConfigs)
-          .set({
-            ignoredDomains: nextDomains,
-            updatedAt: new Date(),
-          })
-          .where(eq(guildConfigs.guildId, guildId))
-          .returning();
-
-        if (!saved) {
-          throw new Error("Failed to persist updated guild ignored domains.");
-        }
-
-        const savedConfig: GuildConfigData = {
-          guildId: saved.guildId,
-          autoShortenEnabled: saved.autoShortenEnabled,
-          autoShortenMinUrlLength: saved.autoShortenMinUrlLength ?? null,
-          ignoredDomains: saved.ignoredDomains ?? [],
-        };
-
-        return { success: true, config: savedConfig };
+          return { success: true, config: savedConfig };
+        });
       });
 
       if (result.success) {

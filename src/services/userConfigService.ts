@@ -2,6 +2,7 @@ import { db } from "@/db";
 import { userConfigs } from "@/db/schema";
 import { normalizeDomain, MAX_CUSTOM_IGNORED_DOMAINS } from "@/utils/domain";
 import { logger } from "@/utils/logger";
+import { keyedMutex } from "@/utils/mutex";
 
 export type AutoDmMode = "inherit" | "on" | "off";
 export type DmFormat = "replace" | "list";
@@ -437,37 +438,39 @@ class UserConfigService {
     }
 
     try {
-      const [saved] = await db
-        .insert(userConfigs)
-        .values(insertValues)
-        .onConflictDoUpdate({
-          target: userConfigs.userId,
-          set: setClause,
-        })
-        .returning();
+      return await keyedMutex.runExclusive(userId, async () => {
+        const [saved] = await db
+          .insert(userConfigs)
+          .values(insertValues)
+          .onConflictDoUpdate({
+            target: userConfigs.userId,
+            set: setClause,
+          })
+          .returning();
 
-      if (!saved) {
-        throw new Error("Failed to persist user configuration.");
-      }
+        if (!saved) {
+          throw new Error("Failed to persist user configuration.");
+        }
 
-      const savedConfig: UserConfigData = {
-        userId: saved.userId,
-        autoDmMode: normalizeAutoDmMode(saved.autoDmMode) ?? "inherit",
-        dmFormat: normalizeDmFormat(saved.dmFormat) ?? "replace",
-        autoShortenMinUrlLength: saved.autoShortenMinUrlLength ?? null,
-        ignoredDomains: saved.ignoredDomains ?? [],
-        fixupxEnabled: saved.fixupxEnabled ?? true,
-      };
+        const savedConfig: UserConfigData = {
+          userId: saved.userId,
+          autoDmMode: normalizeAutoDmMode(saved.autoDmMode) ?? "inherit",
+          dmFormat: normalizeDmFormat(saved.dmFormat) ?? "replace",
+          autoShortenMinUrlLength: saved.autoShortenMinUrlLength ?? null,
+          ignoredDomains: saved.ignoredDomains ?? [],
+          fixupxEnabled: saved.fixupxEnabled ?? true,
+        };
 
-      this.cacheEpoch++;
-      this.cache.set(userId, savedConfig);
-      if (!this.cacheLoaded) {
-        this.triggerBackgroundReload();
-      }
-      logger.info(
-        `Updated user config for ${userId}: autoDmMode=${savedConfig.autoDmMode}, dmFormat=${savedConfig.dmFormat}, autoShortenMinUrlLength=${savedConfig.autoShortenMinUrlLength}, ignoredDomains=${savedConfig.ignoredDomains.length}`,
-      );
-      return { success: true, config: savedConfig };
+        this.cacheEpoch++;
+        this.cache.set(userId, savedConfig);
+        if (!this.cacheLoaded) {
+          this.triggerBackgroundReload();
+        }
+        logger.info(
+          `Updated user config for ${userId}: autoDmMode=${savedConfig.autoDmMode}, dmFormat=${savedConfig.dmFormat}, autoShortenMinUrlLength=${savedConfig.autoShortenMinUrlLength}, ignoredDomains=${savedConfig.ignoredDomains.length}`,
+        );
+        return { success: true, config: savedConfig };
+      });
     } catch (error) {
       logger.error(`Failed to update user config for ${userId}:`, error);
       return {

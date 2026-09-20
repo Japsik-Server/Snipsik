@@ -13,18 +13,20 @@
     "db:migrate": "drizzle-kit migrate",
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",
+    "db:transfer": "bun run scripts/migrate-pg-to-turso.ts",
     "test": "bun test"
   },
   "dependencies": {
+    "@libsql/client": "^0.18.0",
     "discord.js": "^14.18.0",
     "drizzle-orm": "^0.39.3",
-    "postgres": "^3.4.5",
     "zod": "^3.24.2"
   },
   "devDependencies": {
     "@types/bun": "latest",
     "dotenv": "^17.4.2",
     "drizzle-kit": "^0.30.4",
+    "postgres": "^3.4.9",
     "typescript": "^5.7.3"
   }
 }

@@ -3,7 +3,23 @@ import { z } from "zod";
 export const envSchema = z.object({
   DISCORD_TOKEN: z.string().min(1, "DISCORD_TOKEN is required"),
   DISCORD_CLIENT_ID: z.string().min(1, "DISCORD_CLIENT_ID is required"),
-  DATABASE_URL: z.string().url("DATABASE_URL must be a valid connection URL"),
+  DATABASE_URL: z
+    .string()
+    .optional()
+    .transform((val) => {
+      if (
+        process.env.NODE_ENV === "test" &&
+        (!val || val.startsWith("postgres:") || val.startsWith("postgresql:"))
+      ) {
+        return "file::memory:";
+      }
+      return val || process.env.TURSO_DATABASE_URL || "";
+    })
+    .pipe(z.string().min(1, "DATABASE_URL or TURSO_DATABASE_URL is required")),
+  DATABASE_AUTH_TOKEN: z
+    .string()
+    .optional()
+    .transform((val) => val || process.env.TURSO_AUTH_TOKEN || undefined),
   SINK_BASE_URL: z
     .string()
     .url("SINK_BASE_URL must be a valid URL")

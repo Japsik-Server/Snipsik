@@ -1,39 +1,34 @@
 import { sql } from "drizzle-orm";
-import {
-  check,
-  pgTable,
-  serial,
-  text,
-  timestamp,
-  boolean,
-  integer,
-} from "drizzle-orm/pg-core";
+import { check, integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 
-export const watchChannels = pgTable("watch_channels", {
-  id: serial("id").primaryKey(),
+export const watchChannels = sqliteTable("watch_channels", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
   guildId: text("guild_id").notNull(),
   channelId: text("channel_id").notNull(),
   createdBy: text("created_by").notNull(),
-  createdAt: timestamp("created_at", { withTimezone: true })
-    .defaultNow()
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .default(sql`(unixepoch())`)
     .notNull(),
 });
 
-export const guildConfigs = pgTable(
+export const guildConfigs = sqliteTable(
   "guild_configs",
   {
     guildId: text("guild_id").primaryKey(),
-    autoShortenEnabled: boolean("auto_shorten_enabled").default(true).notNull(),
+    autoShortenEnabled: integer("auto_shorten_enabled", { mode: "boolean" })
+      .default(true)
+      .notNull(),
     autoShortenMinUrlLength: integer("auto_shorten_min_url_length"),
-    ignoredDomains: text("ignored_domains")
-      .array()
-      .default(sql`ARRAY[]::text[]`)
+    ignoredDomains: text("ignored_domains", { mode: "json" })
+      .$type<string[]>()
+      .default([])
       .notNull(),
-    createdAt: timestamp("created_at", { withTimezone: true })
-      .defaultNow()
+    createdAt: integer("created_at", { mode: "timestamp" })
+      .default(sql`(unixepoch())`)
       .notNull(),
-    updatedAt: timestamp("updated_at", { withTimezone: true })
-      .defaultNow()
+    updatedAt: integer("updated_at", { mode: "timestamp" })
+      .default(sql`(unixepoch())`)
+      .$onUpdateFn(() => new Date())
       .notNull(),
   },
   (table) => [
@@ -44,23 +39,26 @@ export const guildConfigs = pgTable(
   ],
 );
 
-export const userConfigs = pgTable(
+export const userConfigs = sqliteTable(
   "user_configs",
   {
     userId: text("user_id").primaryKey(),
     autoDmMode: text("auto_dm_mode").default("inherit").notNull(),
     dmFormat: text("dm_format").default("replace").notNull(),
     autoShortenMinUrlLength: integer("auto_shorten_min_url_length"),
-    ignoredDomains: text("ignored_domains")
-      .array()
-      .default(sql`ARRAY[]::text[]`)
+    ignoredDomains: text("ignored_domains", { mode: "json" })
+      .$type<string[]>()
+      .default([])
       .notNull(),
-    fixupxEnabled: boolean("fixupx_enabled").default(true).notNull(),
-    createdAt: timestamp("created_at", { withTimezone: true })
-      .defaultNow()
+    fixupxEnabled: integer("fixupx_enabled", { mode: "boolean" })
+      .default(true)
       .notNull(),
-    updatedAt: timestamp("updated_at", { withTimezone: true })
-      .defaultNow()
+    createdAt: integer("created_at", { mode: "timestamp" })
+      .default(sql`(unixepoch())`)
+      .notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp" })
+      .default(sql`(unixepoch())`)
+      .$onUpdateFn(() => new Date())
       .notNull(),
   },
   (table) => [

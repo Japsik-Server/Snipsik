@@ -11,19 +11,21 @@
 - 👑 **커스텀 슬러그 권한 제어**: `ADMIN_USER_IDS`에 지정된 관리자만 `/link custom` 생성 허용
 - 📊 **유저 개인 전용 일시성(Ephemeral) 대시보드**: 누적 클릭 통계 요약, 링크 선택 드롭다운, Modal 팝업 생성/수정, 삭제 확인
 - 👁️ **채널 감시(Watcher) & 모바일 최적화 DM**: 감시 채널에서 긴 URL 감지 시 자동 단축 후 1차 UI 카드 및 2차 원터치 복사용 순수 Plain URL 전송
-- 🛡️ **Strict TypeScript & Supabase**: `any` 타입 배제 엄격한 타입 안정성, Supabase + Drizzle ORM 설정 저장
+- 🛡️ **Strict TypeScript & Turso**: `any` 타입 배제 엄격한 타입 안정성, Turso(LibSQL) + Drizzle ORM 설정 저장
 
 ---
 
 ## 🚀 빠른 시작 가이드 (Quick Start)
 
 ### 1. 사전 요구사항
+
 - [Bun](https://bun.sh/) (v1.x 이상)
-- Supabase PostgreSQL 데이터베이스
+- [Turso](https://turso.tech/) (LibSQL) 데이터베이스 (또는 로컬 SQLite)
 - [Sink](https://github.com/Japsik-Server/Sink) 인스턴스 및 API 토큰 (`NUXT_SITE_TOKEN`)
 - Discord Bot 토큰 및 클라이언트 ID
 
 ### 2. 설치 및 환경 변수 설정
+
 ```bash
 # 의존성 설치
 bun install
@@ -33,10 +35,12 @@ cp .env.example .env
 ```
 
 `.env` 파일에 필요한 값들을 입력합니다:
+
 ```env
 DISCORD_TOKEN=your_bot_token
 DISCORD_CLIENT_ID=your_client_id
-DATABASE_URL=postgresql://postgres:...@...supabase.com:6543/postgres
+DATABASE_URL=libsql://your-database-org.turso.io
+DATABASE_AUTH_TOKEN=your_turso_auth_token
 SINK_BASE_URL=https://s.japsik.com
 SINK_API_TOKEN=your_sink_token
 RANDOM_SLUG_LENGTH=3
@@ -44,11 +48,23 @@ ADMIN_USER_IDS=294123456789012345
 ```
 
 ### 3. 데이터베이스 스키마 푸시
+
 ```bash
 bun run db:push
 ```
 
+기존 PostgreSQL에서 Turso로 데이터를 이전해야 하는 경우:
+
+```bash
+# 사전 검증 (Dry-run)
+SOURCE_PG_URL="postgresql://..." TARGET_TURSO_URL="libsql://..." TARGET_TURSO_AUTH_TOKEN="..." bun run db:transfer --dry-run
+
+# 실제 이전
+SOURCE_PG_URL="postgresql://..." TARGET_TURSO_URL="libsql://..." TARGET_TURSO_AUTH_TOKEN="..." bun run db:transfer
+```
+
 ### 4. 봇 실행
+
 ```bash
 # 개발 모드 (핫 리로드)
 bun run dev
@@ -58,6 +74,7 @@ bun run start
 ```
 
 ### 5. 테스트 및 빌드 검증
+
 ```bash
 # 단위 테스트 실행
 bun test
