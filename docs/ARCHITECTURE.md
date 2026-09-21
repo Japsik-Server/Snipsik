@@ -72,7 +72,7 @@ Snipsik/
     │   ├── cacheRecovery.ts    # DB 연결 장애 시 지수 백오프 기반 캐시 복구 루프
     │   ├── dashboardLinkSnapshot.ts # 대시보드 링크 상세 모달 입력값 스냅샷 관리 (유실 방지)
     │   ├── guildConfigService.ts    # 서버별 자동 단축/최소 길이/제외 도메인 설정 캐시/CRUD/OCC
-    │   ├── sinkClient.ts       # Sink REST API 통신 클라이언트 (Fetch 및 safeHttp 기반)
+    │   ├── sinkClient.ts       # Sink REST API 통신 클라이언트 (Fetch 기반 타임아웃 및 계약 검증)
     │   ├── slugManager.ts      # Slug 생성, Base36 유저 해시 인코딩, 커스텀 슬러그 권한 검증기
     │   ├── userConfigService.ts# 유저별 감시 오버라이드 및 DM 포맷 설정 캐시/CRUD/OCC
     │   └── watchService.ts     # Drizzle ORM 기반 Watch 채널 캐시 및 CRUD
@@ -207,8 +207,9 @@ export const userConfigs = sqliteTable(
   - Snipsik은 단일 프로세스 봇 배포 모델에 맞추어 다음 2단계 동시성 보호를 구현합니다:
     1. **1차 인메모리 직렬화 (`KeyedMutex`)**: 동일 길드(`guildId`) 또는 동일 유저(`userId`)에 대한 동시 설정 변경 작업을 프로세스 내부에서 뮤텍스로 큐잉하여 원자적으로 순차 실행합니다.
     2. **2차 낙관적 동시성 제어 (OCC)**: `version` 단조 증가 카운터 컬럼을 활용하여 업데이트 시 `WHERE version = :currentVersion` 조건을 검증하며, 버전 불일치 발생 시 최신 데이터를 재조회하여 최대 3회 자동 재시도합니다.
-- **외부 요청 보안 (SSRF Mitigation)**:
-  - `/link check` 및 Sink API 통신 시 `safeHttp` 유틸리티를 적용하여 사설 IP 대역(RFC 1918, RFC 4193, 루프백, 링크 로컬 등)으로의 요청을 차단하고, DNS Rebinding 및 비정상 리다이렉트를 방지합니다.
+- **외부 요청 보안 (SSRF Mitigation & Request Safety)**:
+  - 임의의 외부 대상 URL을 검사하는 `/link check` 요청 시 `safeHttp`(`safeHttpGet`) 유틸리티를 적용하여 사설 IP 대역(RFC 1918, RFC 4193, 루프백, 링크 로컬 등)으로의 요청을 차단하고, DNS Rebinding 및 비정상 리다이렉트를 방지합니다.
+  - Sink 인스턴스와의 REST API 통신 시에는 `SINK_REQUEST_TIMEOUT_MS`에 따른 헤더/본문 타임아웃 제한 및 엄격한 응답 계약 검증을 적용합니다.
 - **회복 탄력적 캐시 복구 (Resilient Cache Recovery)**:
   - 봇 구동 시 DB 일시 장애가 발생하더라도 프로세스가 크래시되지 않고 지수 백오프(1초, 2초, 4초, 8초, 16초, 최대 30초) 기반의 비동기 복구 루프(`cacheRecovery.ts`)로 전환되며, 복구 전까지 안전한 Fail-closed 정책 및 직전 유효 스냅샷을 유지합니다.
 

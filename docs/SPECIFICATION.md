@@ -120,7 +120,7 @@
    - 3순위: 전역 환경변수 기본값 (`AUTO_SHORTEN_MIN_URL_LENGTH`, 기본 70)
    - _값 규칙_: `-1`(상속/초기화), `0`(제한 없음/전체 단축), `1~2048`(지정 길이 이상 단축)
    - 추출된 URL 중 `url.length >= effectiveMinLength` 검사를 통과한 링크만 단축 대상에 포함.
-9. 작성자의 `userHash`를 부착한 슬러그로 Sink API에 단축 링크 생성 요청 (또는 기존 활성 링크 재사용). 모든 외부 요청은 `safeHttp`를 거쳐 SSRF 공격 및 타임아웃을 방어.
+9. 작성자의 `userHash`를 부착한 슬러그로 Sink API에 단축 링크 생성 요청 (또는 기존 활성 링크 재사용, `SINK_REQUEST_TIMEOUT_MS` 타임아웃 적용). `/link check` 등 임의의 외부 대상 URL 검사에는 `safeHttp`(`safeHttpGet`)를 적용하여 SSRF 공격 및 타임아웃을 방어.
 10. 작성자의 **Discord DM**으로 2단계 포맷 메시지 발송.
 
 ### 5.2 DM 메시지 전송 포맷 및 임베드 억제 (Embed Suppression)
