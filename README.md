@@ -7,11 +7,12 @@
 ## ✨ 주요 기능
 
 - 🧩 **100% Discord Components v2 레이아웃**: 모든 커맨드 응답, 대시보드, DM에 모던 인터랙티브 컴포넌트 적용
-- ⚡ **초경량 유저 해시 슬러그**: 별도 링크 DB 저장 없이 슬러그의 CRC32 -> Base62 유저 해시로 $O(1)$ 소유권 식별 (`{랜덤N자리}-{유저해시}`)
+- ⚡ **초경량 유저 해시 슬러그**: 별도 링크 DB 저장 없이 슬러그의 CRC32 -> Base36 유저 해시로 O(1) 소유권 식별 (`{랜덤N자리}-{유저해시}`)
 - 👑 **커스텀 슬러그 권한 제어**: `ADMIN_USER_IDS`에 지정된 관리자만 `/link custom` 생성 허용
 - 📊 **유저 개인 전용 일시성(Ephemeral) 대시보드**: 누적 클릭 통계 요약, 링크 선택 드롭다운, Modal 팝업 생성/수정, 삭제 확인
 - 👁️ **채널 감시(Watcher) & 모바일 최적화 DM**: 감시 채널에서 긴 URL 감지 시 자동 단축 후 1차 UI 카드 및 2차 원터치 복사용 순수 Plain URL 전송
-- 🛡️ **Strict TypeScript & Turso**: `any` 타입 배제 엄격한 타입 안정성, Turso(LibSQL) + Drizzle ORM 설정 저장
+- 🐦 **Twitter/X fixupx 자동 변환**: 감시 채널 내 twitter.com / x.com 상태 링크를 Discord 임베드에 최적화된 fixupx.com 링크로 자동 변환 (유저별 on/off 지원)
+- 🛡️ **Strict TypeScript, Turso & 보안 강화**: `any` 타입 배제, Turso(LibSQL) + Drizzle ORM 설정 저장, KeyedMutex & OCC 동시성 제어 및 SSRF 방어
 
 ---
 
@@ -46,6 +47,8 @@ SINK_API_TOKEN=your_sink_token
 SINK_REQUEST_TIMEOUT_MS=10000
 RANDOM_SLUG_LENGTH=3
 ADMIN_USER_IDS=294123456789012345
+AUTO_SHORTEN_MIN_URL_LENGTH=70
+IGNORED_DOMAINS=tenor.com,giphy.com
 ```
 
 ### 3. 데이터베이스 스키마 푸시

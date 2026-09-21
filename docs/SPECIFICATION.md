@@ -10,7 +10,7 @@
 - **AI 배제**: `/api/link/ai`, `/api/link/og-ai` 등 AI 엔드포인트는 일절 호출하지 않음
 - **데이터베이스 역할 제한**:
   - 링크와 슬러그 매핑 데이터는 DB에 저장하지 않음 (Sink API 자체 관리 및 슬러그 규칙으로 소유권 검증)
-  - Supabase PostgreSQL + Drizzle ORM은 **설정(Config) 및 Watch 채널 목록** 저장용으로만 사용
+  - Turso (LibSQL) + Drizzle ORM은 **설정(Config) 및 Watch 채널 목록** 저장용으로만 사용
 
 ---
 
@@ -47,24 +47,26 @@
 
 ### 3.1 `/link` 서브커맨드 및 서브커맨드 그룹
 
-| 명령어                   | 매개변수                                                                                                                                               | 설명                                                                                  | 권한                            |
-| :----------------------- | :----------------------------------------------------------------------------------------------------------------------------------------------------- | :------------------------------------------------------------------------------------ | :------------------------------ |
-| `/link dashboard`        | 없음                                                                                                                                                   | 유저 개인 전용 일시성(Ephemeral) 인터랙티브 대시보드 열기                             | 전체 유저                       |
-| `/link config`           | `key` (선택, Autocomplete)<br>`value` (선택, Autocomplete)                                                                                             | 개인별 URL 감시 오버라이드 및 DM 메시지 포맷 설정 조회/변경                           | 전체 유저                       |
+| 명령어                   | 매개변수                                                                                                                                                                                    | 설명                                                                                  | 권한                            |
+| :----------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | :------------------------------------------------------------------------------------ | :------------------------------ |
+| `/link dashboard`        | 없음                                                                                                                                                                                        | 유저 개인 전용 일시성(Ephemeral) 인터랙티브 대시보드 열기                             | 전체 유저                       |
+| `/link config`           | `key` (선택, Autocomplete: `auto_dm`, `dm_format`, `min_length`, `ignored_domains`, `fixupx`)<br>`value` (선택, Autocomplete 또는 직접 입력)                                                | 개인별 URL 감시 오버라이드 및 DM 메시지 포맷 설정 조회/변경                           | 전체 유저                       |
 | `/link create`           | `url` (필수)<br>`expiration` (선택, 상대 기간·ISO 날짜, 빈 값은 무기한)<br>`password` (선택)<br>`tag` (선택, 쉼표로 최대 10개)<br>`title` (선택)<br>`description` (선택)<br>`unsafe` (선택) | 일반 단축 링크 생성 (`{랜덤N}-{유저해시}`)                                            | 전체 유저                       |
-| `/link custom`           | `url` (필수)<br>`custom_slug` (필수)<br>기타 옵션 동일                                                                                                 | 순수 커스텀 슬러그 링크 생성                                                          | `ADMIN_USER_IDS` 등록 유저 전용 |
-| `/link list`             | `tag` (선택)<br>`page` (선택, 기본 1)                                                                                                                  | 본인의 `userHash`가 포함된 생성 링크 목록 조회                                        | 전체 유저 (본인 링크만)         |
-| `/link stats`            | `slug` (필수)                                                                                                                                          | 특정 슬러그의 클릭 수 및 방문 통계 조회                                               | 본인 소유 링크 또는 관리자      |
-| `/link delete`           | `slug` (필수)                                                                                                                                          | 단축 링크 영구 삭제                                                                   | 본인 소유 링크 또는 관리자      |
-| `/link check`            | `url` (필수)                                                                                                                                           | 대상 웹사이트의 생존 여부(HTTP 상태코드) 헬스체크                                     | 전체 유저                       |
-| `/link watch add`        | `channel` (필수)                                                                                                                                       | 해당 채널을 URL 감시 대상에 추가                                                      | 서버 관리자 (`ManageGuild`)     |
-| `/link watch remove`     | `channel` (필수)                                                                                                                                       | 해당 채널을 URL 감시 대상에서 제거                                                    | 서버 관리자 (`ManageGuild`)     |
-| `/link watch list`       | 없음                                                                                                                                                   | 현재 서버의 감시 대상 채널 목록 조회                                                  | 서버 관리자 (`ManageGuild`)     |
-| `/link watch min-length` | `length` (선택, -1~2048)                                                                                                                               | 서버 내 URL 자동 단축 최소 길이 설정 및 조회 (-1: 초기화, 0: 전체, 1~2048: 지정 길이) | 서버 관리자 (`ManageGuild`)     |
-| `/link admin overview`   | 없음                                                                                                                                                   | Sink 인스턴스 전체 링크/클릭 종합 현황 및 TOP 5 링크 조회                             | 봇 관리자 (`ADMIN_USER_IDS`)    |
-| `/link admin list`       | `tag` (선택)<br>`query` (선택, 검색어)<br>`page` (선택, 기본 1)                                                                                        | 인스턴스의 모든 단축 링크 목록 검색 및 페이징 조회                                    | 봇 관리자 (`ADMIN_USER_IDS`)    |
-| `/link admin user`       | `user` (필수)<br>`tag` (선택)<br>`page` (선택, 기본 1)                                                                                                 | 특정 대상 유저가 생성한 링크 목록 조회                                                | 봇 관리자 (`ADMIN_USER_IDS`)    |
-| `/link admin delete`     | `slug` (필수)                                                                                                                                          | 소유권과 무관하게 지정한 슬러그 링크 강제 영구 삭제                                   | 봇 관리자 (`ADMIN_USER_IDS`)    |
+| `/link custom`           | `url` (필수)<br>`custom_slug` (필수)<br>기타 옵션 동일                                                                                                                                      | 순수 커스텀 슬러그 링크 생성                                                          | `ADMIN_USER_IDS` 등록 유저 전용 |
+| `/link list`             | `tag` (선택)<br>`page` (선택, 기본 1)                                                                                                                                                       | 본인의 `userHash`가 포함된 생성 링크 목록 조회                                        | 전체 유저 (본인 링크만)         |
+| `/link stats`            | `slug` (필수)                                                                                                                                                                               | 특정 슬러그의 클릭 수 및 방문 통계 조회                                               | 본인 소유 링크 또는 관리자      |
+| `/link delete`           | `slug` (필수)                                                                                                                                                                               | 단축 링크 영구 삭제                                                                   | 본인 소유 링크 또는 관리자      |
+| `/link check`            | `url` (필수)                                                                                                                                                                                | 대상 웹사이트의 생존 여부(HTTP 상태코드) 헬스체크 (SSRF 차단 안전 검사 적용)          | 전체 유저                       |
+| `/link watch add`        | `channel` (필수)                                                                                                                                                                            | 해당 채널을 URL 감시 대상에 추가                                                      | 서버 관리자 (`ManageGuild`)     |
+| `/link watch remove`     | `channel` (필수)                                                                                                                                                                            | 해당 채널을 URL 감시 대상에서 제거                                                    | 서버 관리자 (`ManageGuild`)     |
+| `/link watch list`       | 없음                                                                                                                                                                                        | 현재 서버의 감시 대상 채널 목록 조회                                                  | 서버 관리자 (`ManageGuild`)     |
+| `/link watch min-length` | `length` (선택, -1~2048)                                                                                                                                                                    | 서버 내 URL 자동 단축 최소 길이 설정 및 조회 (-1: 초기화, 0: 전체, 1~2048: 지정 길이) | 서버 관리자 (`ManageGuild`)     |
+| `/link admin overview`   | 없음                                                                                                                                                                                        | Sink 인스턴스 전체 링크/클릭 종합 현황 및 TOP 5 링크 조회                             | 봇 관리자 (`ADMIN_USER_IDS`)    |
+| `/link admin list`       | `tag` (선택)<br>`query` (선택, 검색어)<br>`page` (선택, 기본 1)                                                                                                                             | 인스턴스의 모든 단축 링크 목록 검색 및 페이징 조회                                    | 봇 관리자 (`ADMIN_USER_IDS`)    |
+| `/link admin user`       | `user` (필수)<br>`tag` (선택)<br>`page` (선택, 기본 1)                                                                                                                                      | 특정 대상 유저가 생성한 링크 목록 조회                                                | 봇 관리자 (`ADMIN_USER_IDS`)    |
+| `/link admin delete`     | `slug` (필수)                                                                                                                                                                               | 소유권과 무관하게 지정한 슬러그 링크 강제 영구 삭제                                   | 봇 관리자 (`ADMIN_USER_IDS`)    |
+
+> **참고**: 감시 대상 채널이나 스레드가 Discord 상에서 삭제될 경우, `channelDelete` 및 `threadDelete` 이벤트를 감지하여 데이터베이스 및 인메모리 캐시에서 해당 감시 채널을 자동으로 정리합니다.
 
 ---
 
@@ -79,7 +81,7 @@
 - **인터랙티브 컴포넌트**:
   - ➕ **[새 링크 생성] 버튼**: 클릭 시 URL, 만료일, 비밀번호 등을 입력할 수 있는 Discord Modal 팝업 호출.
   - 📋 **[내 링크 선택] Select Menu**: 최근 생성한 내 링크 목록 드롭다운 (선택 시 해당 링크 상세 정보 카드로 전환).
-  - ✏️ **[링크 수정] 버튼**: 대시보드 스냅샷의 현재 값으로 타겟 URL, 제목, 태그, 설명, 비밀번호 수정 Modal을 즉시 호출.
+  - ✏️ **[링크 수정] 버튼**: 대시보드 스냅샷(`dashboardLinkSnapshot`)의 5분 캐시 기반으로 타겟 URL, 제목, 태그, 설명, 비밀번호를 안전하게 프리필하여 수정 Modal 즉시 호출.
   - 🗑️ **[링크 삭제] 버튼**: 확인 팝업 후 즉시 삭제.
   - 🔄 **[새로고침] 버튼**: 대시보드 통계 및 목록 갱신.
   - ⚙️ **[설정] 버튼**: 개인 설정 전용 패널(`Config Panel`)로 화면 전환.
@@ -87,6 +89,8 @@
   - `auto_dm` (자동 DM 수신 모드): `inherit` (서버 설정 따름, 기본값) / `on` (모든 채널에서 항상 켬) / `off` (항상 끔) 원클릭 토글.
   - `dm_format` (DM 메시지 포맷): `replace` (본문 치환, 기본값) / `list` (단축 URL 목록 나열) 원클릭 토글.
   - `min_length` (최소 URL 길이): `상속 (-1)` / `전체 (0)` / `직접 입력... (모달)`을 통해 설정 가능 (기본값: 서버 설정 우선 상속, 서버 미설정 시 전역 기본값 `AUTO_SHORTEN_MIN_URL_LENGTH` 상속).
+  - `fixupx` (트위터/X 링크 fixupx 변환): `on` (기본값, 감시 채널 내 twitter/x 링크를 fixupx로 자동 변환) / `off` (변환 비활성화) 원클릭 토글.
+  - `ignored_domains` (제외 도메인): 개인별 단축 제외 도메인 설정 및 확인.
   - `[📊 대시보드로 이동]` 버튼을 통해 언제든지 메인 대시보드로 복귀 가능.
 
 ---
@@ -102,14 +106,22 @@
    - `off`: 서버 감시 채널 여부와 무관하게 DM 발송 스킵.
    - `on`: 서버 감시 채널 등록 여부와 무관하게 봇이 접근 가능한 모든 채널에서 자동 감시 진행.
    - `inherit` (기본값): 서버 감시 채널(`isChannelWatched === true`)일 때만 진행.
-5. **최소 URL 길이 3단계 계층 해석 (`resolveEffectiveMinUrlLength`)**:
+5. **URL 추출 및 마크다운 서식 경계 처리**:
+   - 메시지 본문에서 정규식을 통해 유효 URL(`https?://...`)을 추출하되, 마크다운 파이프(`|`), 스포일러(`||...||`), 굵은 글씨(`**`), 괄호(`()`) 등 인접 서식 기호가 URL에 오포함되지 않도록 안전하게 분리 추출.
+6. **제외 도메인(Ignored Domains) 필터링**:
+   - Tenor(`tenor.com`), Giphy(`giphy.com`) 등 기본 시스템 미디어 서비스 도메인은 자동 단축 대상에서 기본 제외.
+   - 서버 설정(`guild_configs.ignored_domains`), 유저 개인 설정(`user_configs.ignored_domains`), 전역 환경변수(`IGNORED_DOMAINS`)에 등록된 도메인(서브도메인 포함)은 단축 대상에서 제외.
+7. **Twitter/X 상태 링크 fixupx 자동 변환 (`fixupxEnabled`)**:
+   - 제외 도메인이 아닌 유효한 `twitter.com` 또는 `x.com` 상태(Status) URL이 감지되면, 작성자의 `fixupx_enabled` 설정(기본 true)에 따라 `fixupx.com`으로 자동 변환.
+   - Discord 임베드 최적화를 위해 본문 치환 DM 또는 변환 안내 카드 발송.
+8. **최소 URL 길이 3단계 계층 해석 (`resolveEffectiveMinUrlLength`)**:
    - 1순위: 유저 개인 설정 (`user_configs.auto_shorten_min_url_length`가 null이 아닌 경우)
    - 2순위: 서버(길드) 설정 (`guild_configs.auto_shorten_min_url_length`가 null이 아닌 경우)
    - 3순위: 전역 환경변수 기본값 (`AUTO_SHORTEN_MIN_URL_LENGTH`, 기본 70)
    - _값 규칙_: `-1`(상속/초기화), `0`(제한 없음/전체 단축), `1~2048`(지정 길이 이상 단축)
-6. 메시지 본문에서 정규식(`https?://[^\s]+`)으로 유효 URL 추출 후, 개별 URL마다 `url.length >= effectiveMinLength` 검사를 통과한 링크만 단축 대상에 포함.
-7. 작성자의 `userHash`를 부착한 슬러그로 Sink API에 단축 링크 생성 요청 (또는 기존 활성 링크 재사용).
-8. 작성자의 **Discord DM**으로 2단계 포맷 메시지 발송.
+   - 추출된 URL 중 `url.length >= effectiveMinLength` 검사를 통과한 링크만 단축 대상에 포함.
+9. 작성자의 `userHash`를 부착한 슬러그로 Sink API에 단축 링크 생성 요청 (또는 기존 활성 링크 재사용, `SINK_REQUEST_TIMEOUT_MS` 타임아웃 적용). `/link check` 등 임의의 외부 대상 URL 검사에는 `safeHttp`(`safeHttpGet`)를 적용하여 SSRF 공격 및 타임아웃을 방어.
+10. 작성자의 **Discord DM**으로 2단계 포맷 메시지 발송.
 
 ### 5.2 DM 메시지 전송 포맷 및 임베드 억제 (Embed Suppression)
 
@@ -120,3 +132,15 @@
 2. **2차 메시지 (유저의 `dmFormat` 설정에 따른 분기)**:
    - **`replace` 모드 (기본값)**: 원본 메시지 텍스트 본문에서 긴 URL들만 생성된 단축 URL로 정밀 치환한 완성형 본문 전송 (2,000자 초과 시 자동 분할 전송, `flags: SuppressEmbeds`).
    - **`list` 모드 (레거시/목록형)**: `<>` 기호나 기타 텍스트 없이 순수 단축 URL 문자열만을 순차 전송 (모바일 Long-press 복사 최적화, `flags: SuppressEmbeds`).
+
+### 5.3 캐시 준비성 및 회복 탄력적 복구 정책 (Cache Readiness & Resilience)
+
+- **캐시 상태 모델 (Cache State Model)**:
+  - `uninitialized`: 봇 기동 직후 초기화 대기 상태. 필수 캐시가 로드되지 않았으므로 자동 단축 처리를 중단(Fail-closed)하여 안전을 보장합니다.
+  - `loading`: 데이터베이스로부터 Watch 채널 및 길드/유저 설정을 비동기로 로드 중인 상태.
+  - `ready`: 초기 데이터 로드 및 검증이 완료되어 정상적인 캐시 읽기/쓰기가 가능한 상태.
+  - `degraded`: 런타임 중 DB 재연결/재로드에 실패했으나 기존 검증된 인메모리 스냅샷을 보존하여 정상 동작을 유지하는 상태.
+- **지수 백오프 자동 복구 (Exponential Backoff Recovery)**:
+  - 봇 기동 시 DB 연결 실패 등으로 캐시 초기화가 실패하면, 프로세스가 종료되지 않고 백그라운드 복구 루프(`cacheRecovery.ts`)가 작동합니다.
+  - 재시도 간격은 1초, 2초, 4초, 8초, 16초 후 최대 30초로 캡이 적용되어 DB가 복구되는 즉시 자동으로 최신 스냅샷을 로드하고 `ready` 상태로 전이됩니다.
+  - 스냅샷 로드 중에 발생한 감시 채널 추가/삭제는 인플라이트 병합을 통해 누락 없이 원자적으로 보존됩니다.
