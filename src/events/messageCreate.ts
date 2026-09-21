@@ -3,6 +3,7 @@ import { config } from "@/config";
 import { watchService } from "@/services/watchService";
 import { userConfigService } from "@/services/userConfigService";
 import { guildConfigService } from "@/services/guildConfigService";
+import { ensureAutomaticProcessingReadiness } from "@/services/cacheReadiness";
 import { generateSlug, verifyOwnership } from "@/services/slugManager";
 import { sinkClient } from "@/services/sinkClient";
 import { isDomainIgnored } from "@/utils/domain";
@@ -205,6 +206,9 @@ export async function onMessageCreate(message: Message): Promise<void> {
 
   // Only check guild messages
   if (!message.guildId || !message.guild) return;
+
+  // Fail closed until every policy cache has either a fresh or validated stale snapshot.
+  if (!ensureAutomaticProcessingReadiness()) return;
 
   // Fast in-memory check if user wants DM (tri-state override + channel/parent watch)
   const isChannelWatched = watchService.isChannelWatched(

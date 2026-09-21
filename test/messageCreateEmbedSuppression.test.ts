@@ -3,6 +3,7 @@ import { MessageFlags } from "discord.js";
 import { onMessageCreate } from "@/events/messageCreate";
 import { watchService } from "@/services/watchService";
 import { userConfigService } from "@/services/userConfigService";
+import { guildConfigService } from "@/services/guildConfigService";
 import { sinkClient } from "@/services/sinkClient";
 
 describe("Message Embed Suppression Workflow in DM Auto-Shortening", () => {
@@ -13,6 +14,9 @@ describe("Message Embed Suppression Workflow in DM Auto-Shortening", () => {
   const originalGetFullShortUrl = sinkClient.getFullShortUrl;
 
   beforeEach(() => {
+    watchService.setCacheLoadedForTest(true);
+    userConfigService.setCacheLoadedForTest(true);
+    guildConfigService.setCacheLoadedForTest(true);
     watchService.isWatched = () => true;
     userConfigService.shouldProcessUser = () => true;
     userConfigService.getUserConfig = () => ({
@@ -32,6 +36,9 @@ describe("Message Embed Suppression Workflow in DM Auto-Shortening", () => {
   });
 
   afterEach(() => {
+    watchService.setCacheLoadedForTest(false);
+    userConfigService.setCacheLoadedForTest(false);
+    guildConfigService.setCacheLoadedForTest(false);
     watchService.isWatched = originalIsWatched;
     userConfigService.getUserConfig = originalGetUserConfig;
     userConfigService.shouldProcessUser = originalShouldProcessUser;

@@ -6,6 +6,7 @@ import { onMessageCreate } from "@/events/messageCreate";
 import { onChannelDelete } from "@/events/channelDelete";
 import { onThreadDelete } from "@/events/threadDelete";
 import { logger } from "@/utils/logger";
+import { stopAutomaticProcessingCacheRecovery } from "@/services/cacheReadiness";
 
 logger.info("Starting Snipsik Discord Bot...");
 
@@ -52,6 +53,19 @@ process.on("unhandledRejection", (reason) => {
 process.on("uncaughtException", (error) => {
   logger.error("Uncaught Exception:", error);
 });
+
+let shuttingDown = false;
+const shutdown = (signal: string): void => {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  logger.info(`Received ${signal}; stopping cache recovery and Discord client.`);
+  stopAutomaticProcessingCacheRecovery();
+  client.destroy();
+  process.exit(0);
+};
+
+process.once("SIGINT", () => shutdown("SIGINT"));
+process.once("SIGTERM", () => shutdown("SIGTERM"));
 
 // Login
 client.login(config.DISCORD_TOKEN).catch((err) => {

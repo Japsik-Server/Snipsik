@@ -24,6 +24,9 @@ describe("MessageCreate Ignored Domains Filtering (Issue #21)", () => {
   const testChannelId = "channel-ignore-test";
 
   beforeEach(() => {
+    watchService.setCacheLoadedForTest(true);
+    userConfigService.setCacheLoadedForTest(true);
+    guildConfigService.setCacheLoadedForTest(true);
     watchService.isChannelWatched = () => true;
     userConfigService.shouldProcessUser = () => true;
     userConfigService.getUserConfig = () => ({
@@ -52,6 +55,9 @@ describe("MessageCreate Ignored Domains Filtering (Issue #21)", () => {
   });
 
   afterEach(() => {
+    watchService.setCacheLoadedForTest(false);
+    userConfigService.setCacheLoadedForTest(false);
+    guildConfigService.setCacheLoadedForTest(false);
     watchService.isChannelWatched = originalIsChannelWatched;
     userConfigService.getUserConfig = originalGetUserConfig;
     userConfigService.shouldProcessUser = originalShouldProcessUser;
@@ -147,6 +153,32 @@ describe("MessageCreate Ignored Domains Filtering (Issue #21)", () => {
 
     expect(createLinkMock).not.toHaveBeenCalled();
     expect(dmSent).toBe(false);
+  });
+
+  it("fails closed before calling Sink when only the guild cache is unavailable", async () => {
+    guildConfigService.setCacheLoadedForTest(false);
+    const createLinkMock = mock(async () => ({
+      success: true,
+      link: { slug: "must-not-run", url: "https://example.com/long/path" },
+    }));
+    sinkClient.createLink = createLinkMock;
+
+    await onMessageCreate({
+      author: {
+        id: testUserId,
+        bot: false,
+        tag: "Tester#0001",
+        createDM: async () => ({ send: async () => ({}) }),
+      },
+      webhookId: null,
+      guildId: testGuildId,
+      guild: { id: testGuildId },
+      channelId: testChannelId,
+      channel: { id: testChannelId, name: "general" },
+      content: "https://example.com/a-very-long-url-that-must-not-be-shortened",
+    } as any);
+
+    expect(createLinkMock).not.toHaveBeenCalled();
   });
 
   it("ignores Discord media proxy links and Giphy links", async () => {

@@ -14,6 +14,10 @@ import {
 } from "@/utils/domain";
 import { logger } from "@/utils/logger";
 import { keyedMutex } from "@/utils/mutex";
+import {
+  CacheRecoveryController,
+  type CacheStatus,
+} from "@/services/cacheRecovery";
 
 export interface GuildConfigData {
   guildId?: string;
@@ -31,41 +35,34 @@ export const DEFAULT_GUILD_CONFIG: Readonly<GuildConfigData> = {
 class GuildConfigService {
   // In-memory cache for O(1) sync lookups in messageCreate
   private cache: Map<string, GuildConfigData> = new Map();
-  private cacheLoaded: boolean = false;
-  private isReloadingCache: boolean = false;
-  private nextReloadAllowedAt: number = 0;
   private cacheEpoch: number = 0;
-  private static readonly RELOAD_COOLDOWN_MS = 10_000;
+  private cacheMutations = new Map<
+    string,
+    { epoch: number; value: GuildConfigData }
+  >();
+  private readonly recovery = new CacheRecoveryController(
+    "GuildConfig",
+    () => this.refreshCache(),
+  );
 
   /**
    * Triggers a non-blocking background attempt to reload guild configs cache if currently unloaded.
-   * Throttled by a cooldown period to prevent log and database connection storms.
+   * Coalesced and retried with capped exponential backoff.
    */
   triggerBackgroundReload(): void {
-    const now = Date.now();
-    if (
-      this.isReloadingCache ||
-      this.cacheLoaded ||
-      now < this.nextReloadAllowedAt
-    ) {
-      return;
-    }
-    this.isReloadingCache = true;
-    this.loadCache()
-      .then(() => {
-        this.nextReloadAllowedAt = 0;
-      })
-      .catch((err) => {
-        this.nextReloadAllowedAt =
-          Date.now() + GuildConfigService.RELOAD_COOLDOWN_MS;
-        logger.warn(
-          `Background retry loading guild configs cache failed (cooldown ${GuildConfigService.RELOAD_COOLDOWN_MS}ms):`,
-          err,
-        );
-      })
-      .finally(() => {
-        this.isReloadingCache = false;
-      });
+    this.recovery.ensureLoading();
+  }
+
+  startCacheRecovery(): Promise<void> {
+    return this.recovery.start();
+  }
+
+  stopCacheRecovery(): void {
+    this.recovery.stop();
+  }
+
+  getCacheStatus(): CacheStatus {
+    return this.recovery.getStatus();
   }
 
   /**
@@ -74,7 +71,7 @@ class GuildConfigService {
    * @param loaded - Cache loaded status flag.
    */
   setCacheLoadedForTest(loaded: boolean): void {
-    this.cacheLoaded = loaded;
+    this.recovery.setUsableForTest(loaded);
   }
 
   /**
@@ -83,7 +80,7 @@ class GuildConfigService {
    * @returns True if cache is loaded, false otherwise.
    */
   isCacheLoaded(): boolean {
-    return this.cacheLoaded;
+    return this.recovery.isUsable();
   }
 
   /**
@@ -91,40 +88,50 @@ class GuildConfigService {
    * Synchronizes with concurrent writes using cacheEpoch to avoid clobbering newer rows.
    */
   async loadCache(): Promise<void> {
+    return this.recovery.loadNow();
+  }
+
+  private async refreshCache(): Promise<void> {
     const startEpoch = this.cacheEpoch;
     try {
       const records = await db.select().from(guildConfigs);
-      if (this.cacheEpoch === startEpoch) {
-        this.cache.clear();
-        for (const record of records) {
-          this.cache.set(record.guildId, {
-            guildId: record.guildId,
-            autoShortenEnabled: record.autoShortenEnabled,
-            autoShortenMinUrlLength: record.autoShortenMinUrlLength ?? null,
-            ignoredDomains: record.ignoredDomains ?? [],
-          });
-        }
-      } else {
-        // A newer write occurred while query was in-flight; merge without clobbering newly written keys
-        for (const record of records) {
-          if (!this.cache.has(record.guildId)) {
-            this.cache.set(record.guildId, {
-              guildId: record.guildId,
-              autoShortenEnabled: record.autoShortenEnabled,
-              autoShortenMinUrlLength: record.autoShortenMinUrlLength ?? null,
-              ignoredDomains: record.ignoredDomains ?? [],
-            });
-          }
+      const nextCache = new Map<string, GuildConfigData>();
+      for (const record of records) {
+        nextCache.set(record.guildId, {
+          guildId: record.guildId,
+          autoShortenEnabled: record.autoShortenEnabled,
+          autoShortenMinUrlLength: record.autoShortenMinUrlLength ?? null,
+          ignoredDomains: record.ignoredDomains ?? [],
+        });
+      }
+
+      for (const [guildId, mutation] of this.cacheMutations) {
+        if (mutation.epoch > startEpoch) {
+          nextCache.set(guildId, mutation.value);
         }
       }
-      this.cacheLoaded = true;
+
+      this.cache = nextCache;
+      this.pruneCacheMutations();
       logger.info(
         `Loaded ${records.length} guild config(s) into memory cache.`,
       );
     } catch (error) {
-      this.cacheLoaded = false;
       logger.error("Failed to load guild configs cache from DB:", error);
       throw error;
+    }
+  }
+
+  private recordCacheMutation(guildId: string, value: GuildConfigData): void {
+    this.cacheEpoch += 1;
+    this.cacheMutations.set(guildId, { epoch: this.cacheEpoch, value });
+    this.cache.set(guildId, value);
+  }
+
+  private pruneCacheMutations(): void {
+    const appliedEpoch = this.cacheEpoch;
+    for (const [guildId, mutation] of this.cacheMutations) {
+      if (mutation.epoch <= appliedEpoch) this.cacheMutations.delete(guildId);
     }
   }
 
@@ -300,9 +307,8 @@ class GuildConfigService {
         }
 
         if (result.success) {
-          this.cacheEpoch++;
-          this.cache.set(guildId, result.config);
-          if (!this.cacheLoaded) {
+          this.recordCacheMutation(guildId, result.config);
+          if (!this.isCacheLoaded()) {
             this.triggerBackgroundReload();
           }
           logger.info(
@@ -444,9 +450,8 @@ class GuildConfigService {
         }
 
         if (result.success) {
-          this.cacheEpoch++;
-          this.cache.set(guildId, result.config);
-          if (!this.cacheLoaded) {
+          this.recordCacheMutation(guildId, result.config);
+          if (!this.isCacheLoaded()) {
             this.triggerBackgroundReload();
           }
           logger.info(
@@ -590,7 +595,7 @@ class GuildConfigService {
     const effective = new Set<string>(getAllSystemDefaultDomains());
 
     if (guildId) {
-      if (!this.cacheLoaded) {
+      if (!this.isCacheLoaded()) {
         this.triggerBackgroundReload();
       }
       const guildCfg = this.getGuildConfig(guildId);
@@ -634,7 +639,7 @@ class GuildConfigService {
     }
 
     if (guildId) {
-      if (!this.cacheLoaded) {
+      if (!this.isCacheLoaded()) {
         this.triggerBackgroundReload();
       }
       const guildCfg = this.getGuildConfig(guildId);

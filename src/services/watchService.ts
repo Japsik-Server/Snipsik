@@ -2,6 +2,10 @@ import { and, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { watchChannels, type WatchChannel } from "@/db/schema";
 import { logger } from "@/utils/logger";
+import {
+  CacheRecoveryController,
+  type CacheStatus,
+} from "@/services/cacheRecovery";
 
 export interface WatchableChannelLike {
   id: string;
@@ -11,9 +15,24 @@ export interface WatchableChannelLike {
   guild?: { channels?: { cache?: { get?: (id: string) => any } } } | null;
 }
 
-class WatchService {
+export class WatchService {
   // In-memory cache formatted as "guildId:channelId"
   private watchedChannelKeys: Set<string> = new Set();
+  private cacheEpoch = 0;
+  private cacheMutations = new Map<
+    string,
+    { epoch: number; present: boolean }
+  >();
+  private readonly recovery = new CacheRecoveryController(
+    "Watch",
+    () => this.refreshCache(),
+  );
+
+  constructor(
+    private readonly loadRecords: () => Promise<
+      Array<Pick<WatchChannel, "guildId" | "channelId">>
+    > = () => db.select().from(watchChannels),
+  ) {}
 
   private getKey(guildId: string, channelId: string): string {
     return `${guildId}:${channelId}`;
@@ -23,17 +42,67 @@ class WatchService {
    * Initializes and populates the in-memory cache from database.
    */
   async loadCache(): Promise<void> {
+    return this.recovery.loadNow();
+  }
+
+  startCacheRecovery(): Promise<void> {
+    return this.recovery.start();
+  }
+
+  stopCacheRecovery(): void {
+    this.recovery.stop();
+  }
+
+  ensureCacheRecovery(): void {
+    this.recovery.ensureLoading();
+  }
+
+  getCacheStatus(): CacheStatus {
+    return this.recovery.getStatus();
+  }
+
+  isCacheUsable(): boolean {
+    return this.recovery.isUsable();
+  }
+
+  setCacheLoadedForTest(loaded: boolean): void {
+    this.recovery.setUsableForTest(loaded);
+  }
+
+  private async refreshCache(): Promise<void> {
+    const startEpoch = this.cacheEpoch;
     try {
-      const records = await db.select().from(watchChannels);
-      this.watchedChannelKeys.clear();
-      for (const record of records) {
-        this.watchedChannelKeys.add(
-          this.getKey(record.guildId, record.channelId),
-        );
+      const records = await this.loadRecords();
+      const nextKeys = new Set(
+        records.map((record) => this.getKey(record.guildId, record.channelId)),
+      );
+
+      for (const [key, mutation] of this.cacheMutations) {
+        if (mutation.epoch <= startEpoch) continue;
+        if (mutation.present) nextKeys.add(key);
+        else nextKeys.delete(key);
       }
+
+      this.watchedChannelKeys = nextKeys;
+      this.pruneCacheMutations();
       logger.info(`Loaded ${records.length} watched channels into cache.`);
     } catch (error) {
       logger.error("Failed to load watched channels cache from DB:", error);
+      throw error;
+    }
+  }
+
+  private recordCacheMutation(key: string, present: boolean): void {
+    this.cacheEpoch += 1;
+    this.cacheMutations.set(key, { epoch: this.cacheEpoch, present });
+    if (present) this.watchedChannelKeys.add(key);
+    else this.watchedChannelKeys.delete(key);
+  }
+
+  private pruneCacheMutations(): void {
+    const appliedEpoch = this.cacheEpoch;
+    for (const [key, mutation] of this.cacheMutations) {
+      if (mutation.epoch <= appliedEpoch) this.cacheMutations.delete(key);
     }
   }
 
@@ -138,7 +207,7 @@ class WatchService {
         .returning();
 
       if (inserted) {
-        this.watchedChannelKeys.add(this.getKey(guildId, channelId));
+        this.recordCacheMutation(this.getKey(guildId, channelId), true);
         logger.info(`Added watched channel ${channelId} in guild ${guildId}`);
         return { success: true, channel: inserted };
       }
@@ -180,7 +249,7 @@ class WatchService {
           ),
         );
 
-      this.watchedChannelKeys.delete(this.getKey(guildId, channelId));
+      this.recordCacheMutation(this.getKey(guildId, channelId), false);
       logger.info(`Removed watched channel ${channelId} in guild ${guildId}`);
       return { success: true };
     } catch (error) {

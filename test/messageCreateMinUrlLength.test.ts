@@ -23,6 +23,9 @@ describe("MessageCreate URL Minimum Length Filtering", () => {
   const testChannelId = "channel-filter-test";
 
   beforeEach(() => {
+    watchService.setCacheLoadedForTest(true);
+    userConfigService.setCacheLoadedForTest(true);
+    guildConfigService.setCacheLoadedForTest(true);
     watchService.isWatched = () => true;
     userConfigService.shouldProcessUser = () => true;
     userConfigService.getUserConfig = () => ({
@@ -41,6 +44,9 @@ describe("MessageCreate URL Minimum Length Filtering", () => {
   });
 
   afterEach(() => {
+    watchService.setCacheLoadedForTest(false);
+    userConfigService.setCacheLoadedForTest(false);
+    guildConfigService.setCacheLoadedForTest(false);
     watchService.isWatched = originalIsWatched;
     userConfigService.getUserConfig = originalGetUserConfig;
     userConfigService.shouldProcessUser = originalShouldProcessUser;
