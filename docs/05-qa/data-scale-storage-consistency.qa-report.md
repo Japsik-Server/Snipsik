@@ -5,6 +5,7 @@
 - R10: bounded cursor pagination for dashboard, `/link list`, and `/link admin user`
 - R11: user-scoped existing-link reuse lookup
 - R12: composite Watch uniqueness and conflict-safe registration
+- PR #41 review follow-up: tag fallback filtering and explicit Sink contracts
 
 ## Verification
 
@@ -14,13 +15,22 @@
 | Missing/repeated cursor, page budget, and later-page failure | PASS |
 | Dashboard partial-range labeling and click aggregation basis | PASS |
 | Existing-link lookup sends exact URL and user hash together | PASS |
+| Existing-link search limit is validated before the Sink request | PASS |
+| Bare-list fallback reapplies case-insensitive tag matching | PASS |
+| First-page cursor uses an explicit `null` sentinel | PASS |
+| Empty page-fetch errors are preserved | PASS |
 | Existing Watch duplicates are removed before UNIQUE creation | PASS |
 | Concurrent LibSQL inserts leave one Watch row | PASS |
 | Concurrent service calls return one success and one duplicate | PASS |
-| Full Bun test suite | PASS — 204 tests |
+| Full Bun test suite | PASS — 206 tests |
 | TypeScript typecheck | PASS |
 | Production Bun build | PASS |
 | Git whitespace validation | PASS |
+
+## Pre-Release Scan
+
+- `dead-code`, `completeness`, `shell-escape`, `wiring`: PASS, 0 issues
+- `config-audit`: tooling-only exception — this repository has no `bkit.config.json`; no product-code finding was reported
 
 ## Operational Notes
 

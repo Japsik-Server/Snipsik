@@ -15,9 +15,12 @@ import { convertToFixupxUrl, isTwitterDomain } from "@/utils/twitter";
 import { ui } from "@/utils/ui";
 import { logger } from "@/utils/logger";
 import { timestampToMilliseconds } from "@/utils/time";
+import { z } from "zod";
 
 const URL_START_REGEX = /https?:\/\//gi;
 const URL_TERMINATORS = new Set(["<", ">", '"', "^", "`", "{", "}", "\\"]);
+const SearchLimitSchema = z.number().int().min(1).max(1_000);
+const EXISTING_LINK_SEARCH_LIMIT = SearchLimitSchema.parse(1_000);
 
 export interface ExtractedDiscordUrl {
   url: string;
@@ -209,7 +212,7 @@ async function resolveShortLink(
         q: getUserHash(userId),
         url: originalUrl,
         status: "active",
-        limit: 1000,
+        limit: EXISTING_LINK_SEARCH_LIMIT,
       });
 
       if (searchRes.success && searchRes.list && searchRes.list.length > 0) {

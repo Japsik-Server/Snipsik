@@ -38,7 +38,7 @@ describe("owned link catalog pagination", () => {
   );
 
   it("follows the cursor and returns 1,001 owned links", async () => {
-    const requestedCursors: Array<string | undefined> = [];
+    const requestedCursors: Array<string | null | undefined> = [];
     const fetchPage: OwnedLinkPageFetcher = async (options) => {
       requestedCursors.push(options.cursor);
       if (!options.cursor) {
@@ -61,7 +61,7 @@ describe("owned link catalog pagination", () => {
     expect(result.success).toBe(true);
     expect(result.links).toHaveLength(1_001);
     expect(result.complete).toBe(true);
-    expect(requestedCursors).toEqual([undefined, "page-2"]);
+    expect(requestedCursors).toEqual([null, "page-2"]);
   });
 
   it("caps a 2,001-link catalog at the newest 2,000 links", async () => {
@@ -137,6 +137,28 @@ describe("owned link catalog pagination", () => {
     ]);
   });
 
+  it("reapplies a case-insensitive tag filter to fallback page results", async () => {
+    const result = await collectOwnedLinks(USER_HASH, {
+      tag: "News",
+      fetchPage: async () => ({
+        success: true,
+        list: [
+          { ...links(1)[0]!, tags: ["breaking-news"] },
+          { ...links(1, 1)[0]!, tags: ["NEWS"] },
+          { ...links(1, 2)[0]!, tags: ["sports"] },
+          { ...links(1, 3)[0]!, tags: undefined },
+        ],
+        listComplete: true,
+      }),
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.links.map((link) => link.slug)).toEqual([
+      `link-0-${USER_HASH}`,
+      `link-1-${USER_HASH}`,
+    ]);
+  });
+
   it("rejects an incomplete page without a next cursor", async () => {
     const result = await collectOwnedLinks(USER_HASH, {
       fetchPage: async () => ({
@@ -185,5 +207,14 @@ describe("owned link catalog pagination", () => {
       scannedPages: 2,
       error: "page failed",
     });
+  });
+
+  it("preserves an empty error returned by the page fetcher", async () => {
+    const result = await collectOwnedLinks(USER_HASH, {
+      fetchPage: async () => ({ success: false, list: [], error: "" }),
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toBe("");
   });
 });

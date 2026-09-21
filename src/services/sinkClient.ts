@@ -6,6 +6,7 @@ import type {
   SinkStats,
   SinkQueryParams,
   SinkSearchParams,
+  SinkSearchResult,
   SinkCountParams,
   SinkListParams,
   UrlCheckResult,
@@ -645,15 +646,9 @@ export class SinkClient {
   /**
    * Searches links using /api/link/search.
    */
-  async searchLinks(params: SinkSearchParams = {}): Promise<{
-    success: boolean;
-    list: SinkLink[];
-    total: number;
-    cursor?: string | null;
-    listComplete?: boolean;
-    error?: string;
-    status: number;
-  }> {
+  async searchLinks(
+    params: SinkSearchParams = {},
+  ): Promise<SinkSearchResult> {
     const queryParams = new URLSearchParams();
     if (params.q) queryParams.append("q", params.q);
     if (params.url) queryParams.append("url", params.url);

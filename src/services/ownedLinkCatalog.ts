@@ -59,9 +59,10 @@ export async function collectOwnedLinks(
   const fetchPage =
     options.fetchPage ??
     ((params: SinkListParams) => sinkClient.listLinks(params));
+  const requestedTag = options.tag?.trim().toLowerCase();
   const linksBySlug = new Map<string, SinkLink>();
   const seenCursors = new Set<string>();
-  let cursor: string | undefined;
+  let cursor: string | null = null;
   let scannedPages = 0;
 
   while (linksBySlug.size < maxLinks) {
@@ -80,12 +81,20 @@ export async function collectOwnedLinks(
         links: [],
         complete: false,
         scannedPages,
-        error: page.error || "Sink 링크 페이지 조회에 실패했습니다.",
+        error: page.error ?? "Sink 링크 페이지 조회에 실패했습니다.",
       };
     }
 
     for (const link of page.list) {
       if (!isOwnedSlug(link.slug, userHash)) continue;
+      if (
+        requestedTag &&
+        !(link.tags ?? []).some((tag) =>
+          tag.toLowerCase().includes(requestedTag),
+        )
+      ) {
+        continue;
+      }
       const slugKey = link.slug.toLowerCase();
       if (!linksBySlug.has(slugKey)) linksBySlug.set(slugKey, link);
     }
@@ -124,7 +133,7 @@ export async function collectOwnedLinks(
       };
     }
 
-    const nextCursor = page.cursor ?? undefined;
+    const nextCursor = page.cursor;
     if (!nextCursor) {
       return {
         success: false,
