@@ -1,5 +1,9 @@
 import { describe, expect, it, mock, beforeEach, afterEach } from "bun:test";
-import { onMessageCreate, cleanExtractedUrl } from "@/events/messageCreate";
+import {
+  onMessageCreate,
+  cleanExtractedUrl,
+  extractUrlsFromDiscordMarkdown,
+} from "@/events/messageCreate";
 import { watchService } from "@/services/watchService";
 import { userConfigService } from "@/services/userConfigService";
 import { guildConfigService } from "@/services/guildConfigService";
@@ -98,6 +102,35 @@ describe("MessageCreate Pipe URL Extraction and Replacement", () => {
     it("preserves valid dots in query parameters", () => {
       const urlWithDots = "https://example.com/test?_gl=token..";
       expect(cleanExtractedUrl(urlWithDots)).toBe(urlWithDots);
+    });
+  });
+
+  describe("extractUrlsFromDiscordMarkdown", () => {
+    it("separates spoiler, bold, and adjacent markdown-link boundaries", () => {
+      expect(
+        extractUrlsFromDiscordMarkdown(
+          "||see https://example.com/path|| **https://example.com/bold** [a](https://example.com/a)[b](https://example.com/b)",
+        ).map((match) => match.url),
+      ).toEqual([
+        "https://example.com/path",
+        "https://example.com/bold",
+        "https://example.com/a",
+        "https://example.com/b",
+      ]);
+    });
+
+    it("removes closing markdown in the combined spoiler-parenthesis case", () => {
+      expect(
+        extractUrlsFromDiscordMarkdown(
+          "(||https://example.com/path||)",
+        ).map((match) => match.url),
+      ).toEqual(["https://example.com/path"]);
+    });
+
+    it("preserves balanced URL parentheses and legal query pipes", () => {
+      const url =
+        "https://example.com/wiki/Function_(math)?filter=one|two";
+      expect(extractUrlsFromDiscordMarkdown(url)[0]?.url).toBe(url);
     });
   });
 

@@ -6,6 +6,7 @@ import {
 } from "discord.js";
 import { CustomId } from "@/types/bot";
 import type { SinkLink } from "@/types/sink";
+import { formatTags } from "@/utils/tags";
 
 export function createLinkModal(): ModalBuilder {
   const modal = new ModalBuilder()
@@ -36,7 +37,7 @@ export function createLinkModal(): ModalBuilder {
 
   const tagInput = new TextInputBuilder()
     .setCustomId("tag")
-    .setLabel("태그 (선택)")
+    .setLabel("태그 (선택, 쉼표로 구분)")
     .setStyle(TextInputStyle.Short)
     .setPlaceholder("예: github, docs, event")
     .setRequired(false);
@@ -87,12 +88,12 @@ export function createEditLinkModal(link: SinkLink): ModalBuilder {
 
   const tagInput = new TextInputBuilder()
     .setCustomId("tag")
-    .setLabel("태그 (선택)")
+    .setLabel("태그 (선택, 쉼표로 구분)")
     .setStyle(TextInputStyle.Short)
     .setPlaceholder("예: github, docs, dev")
     .setRequired(false);
-  if (link.tag) {
-    tagInput.setValue(link.tag);
+  if (link.tags?.length) {
+    tagInput.setValue(formatTags(link.tags));
   }
 
   const descriptionInput = new TextInputBuilder()

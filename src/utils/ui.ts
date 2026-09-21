@@ -16,6 +16,7 @@ import type { SinkLink, SinkStats } from "@/types/sink";
 import type { UserConfigData } from "@/services/userConfigService";
 import { getUserHash } from "@/services/slugManager";
 import { sinkClient } from "@/services/sinkClient";
+import { expirationToUnixSeconds } from "@/utils/time";
 
 export const COLORS = {
   PRIMARY: 0x5865f2, // Discord Blurple
@@ -47,6 +48,57 @@ function truncateMiddle(str: string, maxLength = 50): string {
   const front = Math.ceil(keep / 2);
   const back = Math.floor(keep / 2);
   return `${str.substring(0, front)}...${str.substring(str.length - back)}`;
+}
+
+function formatExpiration(value: number | null | undefined): string {
+  const unixSeconds = expirationToUnixSeconds(value);
+  return unixSeconds ? `<t:${unixSeconds}:R>` : "♾️ 무제한";
+}
+
+function formatTagDisplay(tags?: readonly string[]): string {
+  return tags?.length ? tags.map((tag) => `\`#${tag}\``).join(", ") : "*없음*";
+}
+
+function formatTitleDisplay(title?: string | null): string {
+  return title?.trim() ? title : "*설정 안 됨*";
+}
+
+export function createIgnoredDomainsContent(
+  domains: readonly string[] = [],
+  maxLength = 3_500,
+): string {
+  const header = "🚫 **개인 제외 도메인 (`ignored_domains`)**\n";
+  const footer =
+    "\n*변경: `/link config key:ignored_domains value:도메인1, 도메인2`*";
+  if (domains.length === 0) {
+    return (
+      header +
+      "🌐 **기본값만 적용 (추가 제외 없음)** — Tenor, Giphy, Discord CDN, Imgur 등 시스템 기본 도메인만 제외됩니다." +
+      footer
+    );
+  }
+
+  const prefix = `🚫 **추가 제외 도메인 (전체 ${domains.length}개):** `;
+  const shown: string[] = [];
+  for (const domain of domains) {
+    const next = [...shown, `\`${domain}\``];
+    const omitted = domains.length - next.length;
+    const summary =
+      omitted > 0
+        ? `\n*${next.length}개 표시 · ${omitted}개 생략됨*`
+        : "";
+    if ((header + prefix + next.join(", ") + summary + footer).length > maxLength) {
+      break;
+    }
+    shown.push(`\`${domain}\``);
+  }
+
+  const omitted = domains.length - shown.length;
+  const summary =
+    omitted > 0
+      ? `\n*${shown.length}개 표시 · ${omitted}개 생략됨*`
+      : "";
+  return header + prefix + shown.join(", ") + summary + footer;
 }
 
 export const ui = {
@@ -194,9 +246,9 @@ export const ui = {
           `**단축 URL:** [🔗 /${selectedLink.slug}](${fullShortUrl}) • \`${fullShortUrl}\`\n` +
           `**원본 타겟:** [🌐 원본 웹사이트 열기 ↗](${selectedLink.url})\n` +
           `↳ \`${truncatedUrl}\`\n\n` +
-          `🏷️ **타이틀:** ${selectedLink.title || "*설정 안 됨*"}  •  🏷️ **태그:** ${selectedLink.tag ? `\`#${selectedLink.tag}\`` : "*없음*"}\n` +
+          `🏷️ **타이틀:** ${formatTitleDisplay(selectedLink.title)}  •  🏷️ **태그:** ${formatTagDisplay(selectedLink.tags)}\n` +
           `🖱️ **클릭 수:** \`${(selectedLink.clicks ?? 0).toLocaleString()}\`회  •  🔒 **비밀번호:** ${selectedLink.password ? "🔒 설정됨" : "🔓 공개"}\n` +
-          `⏳ **만료일:** ${selectedLink.expiration ? `<t:${Math.floor(new Date(selectedLink.expiration).getTime() / 1000)}:R>` : "♾️ 무제한"}`,
+          `⏳ **만료일:** ${formatExpiration(selectedLink.expiration)}`,
       );
 
       linkContainer.addTextDisplayComponents(linkDetailText);
@@ -259,8 +311,8 @@ export const ui = {
         `**단축 URL:** [🔗 /${link.slug}](${fullShortUrl}) • \`${fullShortUrl}\`\n` +
         `**원본 링크:** [🌐 원본 웹사이트 열기 ↗](${link.url})\n` +
         `↳ \`${truncatedUrl}\`\n\n` +
-        `🏷️ **태그:** ${link.tag ? `\`#${link.tag}\`` : "*없음*"}  •  🔒 **비밀번호:** ${link.password ? "설정됨" : "없음"}\n` +
-        `⏳ **만료일:** ${link.expiration ? `<t:${Math.floor(new Date(link.expiration).getTime() / 1000)}:R>` : "♾️ 무제한"}`,
+        `🏷️ **태그:** ${formatTagDisplay(link.tags)}  •  🔒 **비밀번호:** ${link.password ? "설정됨" : "없음"}\n` +
+        `⏳ **만료일:** ${formatExpiration(link.expiration)}`,
     );
 
     container.addTextDisplayComponents(linkText);
@@ -687,14 +739,8 @@ export const ui = {
     container.addSeparatorComponents(new SeparatorBuilder().setDivider(true));
 
     // 6. Ignored Domains Section
-    const domainsCount = userConfig.ignoredDomains?.length ?? 0;
-    const domainsDesc =
-      domainsCount === 0
-        ? "🌐 **기본값만 적용 (추가 제외 없음)** — Tenor, Giphy, Discord CDN, Imgur 등 시스템 기본 도메인만 제외됩니다."
-        : `🚫 **추가 제외 도메인 (${domainsCount}개):** \`${userConfig.ignoredDomains.join("`, `")}\``;
-
     const domainsText = new TextDisplayBuilder().setContent(
-      `🚫 **개인 제외 도메인 (\`ignored_domains\`)**\n${domainsDesc}\n*변경: \`/link config key:ignored_domains value:도메인1, 도메인2\`*`,
+      createIgnoredDomainsContent(userConfig.ignoredDomains),
     );
     container.addTextDisplayComponents(domainsText);
     container.addSeparatorComponents(new SeparatorBuilder().setDivider(true));

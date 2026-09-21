@@ -20,7 +20,7 @@ const mockStats: UserDashboardStats = {
       slug: "abc-1234",
       url: "https://example.com/very/long/url",
       title: "예시 타이틀",
-      tag: "test",
+      tags: ["test"],
       clicks: 10,
       createdAt: new Date().toISOString(),
     },
@@ -64,6 +64,17 @@ describe("Discord Components v2 UI Modules", () => {
       );
       expect(subTypes).toContain(9); // Section
       expect(subTypes).toContain(1); // ActionRow
+    });
+
+    it("renders an empty title as not configured", () => {
+      const stats: UserDashboardStats = {
+        ...mockStats,
+        links: [{ ...mockStats.links[0]!, title: "" }],
+      };
+      const view = ui.createDashboardView(mockUser, stats, "abc-1234");
+      const json = JSON.stringify(view.components[1].toJSON());
+
+      expect(json).toContain("설정 안 됨");
     });
   });
 
