@@ -6,6 +6,7 @@ import { userConfigService } from "@/services/userConfigService";
 import { guildConfigService } from "@/services/guildConfigService";
 import { testDbConnection } from "@/db";
 import { logger } from "@/utils/logger";
+import { getAutomaticProcessingReadiness } from "@/services/cacheReadiness";
 
 /**
  * Handles the Discord client ready event.
@@ -27,27 +28,20 @@ export async function onReady(client: Client<true>): Promise<void> {
     status: "online",
   });
 
-  // Initialize DB and load Watcher, UserConfig, and GuildConfig cache
-  const dbOk = await testDbConnection();
-  if (dbOk) {
-    await watchService.loadCache();
-    try {
-      await userConfigService.loadCache();
-    } catch (err) {
-      logger.error(
-        "Failed to load UserConfig cache on startup; failing closed for auto-DM until cache is loaded:",
-        err,
-      );
-    }
-    try {
-      await guildConfigService.loadCache();
-    } catch (err) {
-      logger.error(
-        "Failed to load GuildConfig cache on startup; failing back to ENV defaults:",
-        err,
-      );
-    }
-  }
+  // Initialize each cache independently so a transient DB failure starts recovery.
+  await testDbConnection();
+  await Promise.allSettled([
+    watchService.startCacheRecovery(),
+    userConfigService.startCacheRecovery(),
+    guildConfigService.startCacheRecovery(),
+  ]);
+  const readiness = getAutomaticProcessingReadiness();
+  logger.info(
+    `Automatic processing cache readiness: ${readiness.state} ` +
+      `(watch=${readiness.caches.watch.state}, ` +
+      `user=${readiness.caches.userConfig.state}, ` +
+      `guild=${readiness.caches.guildConfig.state})`,
+  );
 
   // Register Slash Commands
   try {

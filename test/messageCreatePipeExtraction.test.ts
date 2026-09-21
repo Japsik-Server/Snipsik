@@ -26,6 +26,9 @@ describe("MessageCreate Pipe URL Extraction and Replacement", () => {
   const testChannelId = "channel-pipe-test";
 
   beforeEach(() => {
+    watchService.setCacheLoadedForTest(true);
+    userConfigService.setCacheLoadedForTest(true);
+    guildConfigService.setCacheLoadedForTest(true);
     watchService.isWatched = () => true;
     userConfigService.shouldProcessUser = () => true;
     userConfigService.getUserConfig = () => ({
@@ -45,6 +48,9 @@ describe("MessageCreate Pipe URL Extraction and Replacement", () => {
   });
 
   afterEach(() => {
+    watchService.setCacheLoadedForTest(false);
+    userConfigService.setCacheLoadedForTest(false);
+    guildConfigService.setCacheLoadedForTest(false);
     watchService.isWatched = originalIsWatched;
     userConfigService.getUserConfig = originalGetUserConfig;
     userConfigService.shouldProcessUser = originalShouldProcessUser;

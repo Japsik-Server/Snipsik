@@ -4,6 +4,10 @@ import { userConfigs } from "@/db/schema";
 import { normalizeDomain, MAX_CUSTOM_IGNORED_DOMAINS } from "@/utils/domain";
 import { logger } from "@/utils/logger";
 import { keyedMutex } from "@/utils/mutex";
+import {
+  CacheRecoveryController,
+  type CacheStatus,
+} from "@/services/cacheRecovery";
 
 export type AutoDmMode = "inherit" | "on" | "off";
 export type DmFormat = "replace" | "list";
@@ -219,41 +223,34 @@ export function normalizeFixupxEnabled(value: unknown): boolean | null {
 class UserConfigService {
   // In-memory cache for O(1) sync lookups in messageCreate
   private cache: Map<string, UserConfigData> = new Map();
-  private cacheLoaded: boolean = false;
-  private isReloadingCache: boolean = false;
-  private nextReloadAllowedAt: number = 0;
   private cacheEpoch: number = 0;
-  private static readonly RELOAD_COOLDOWN_MS = 10_000;
+  private cacheMutations = new Map<
+    string,
+    { epoch: number; value: UserConfigData }
+  >();
+  private readonly recovery = new CacheRecoveryController(
+    "UserConfig",
+    () => this.refreshCache(),
+  );
 
   /**
    * Triggers a non-blocking background attempt to reload user configs cache if currently unloaded.
-   * Throttled by a cooldown period to prevent log and database connection storms.
+   * Coalesced and retried with capped exponential backoff.
    */
   triggerBackgroundReload(): void {
-    const now = Date.now();
-    if (
-      this.isReloadingCache ||
-      this.cacheLoaded ||
-      now < this.nextReloadAllowedAt
-    ) {
-      return;
-    }
-    this.isReloadingCache = true;
-    this.loadCache()
-      .then(() => {
-        this.nextReloadAllowedAt = 0;
-      })
-      .catch((err) => {
-        this.nextReloadAllowedAt =
-          Date.now() + UserConfigService.RELOAD_COOLDOWN_MS;
-        logger.warn(
-          `Background retry loading user configs cache failed (cooldown ${UserConfigService.RELOAD_COOLDOWN_MS}ms):`,
-          err,
-        );
-      })
-      .finally(() => {
-        this.isReloadingCache = false;
-      });
+    this.recovery.ensureLoading();
+  }
+
+  startCacheRecovery(): Promise<void> {
+    return this.recovery.start();
+  }
+
+  stopCacheRecovery(): void {
+    this.recovery.stop();
+  }
+
+  getCacheStatus(): CacheStatus {
+    return this.recovery.getStatus();
   }
 
   /**
@@ -262,7 +259,7 @@ class UserConfigService {
    * @param loaded - Cache loaded status flag.
    */
   setCacheLoadedForTest(loaded: boolean): void {
-    this.cacheLoaded = loaded;
+    this.recovery.setUsableForTest(loaded);
   }
 
   /**
@@ -271,7 +268,7 @@ class UserConfigService {
    * @returns True if cache is loaded, false otherwise.
    */
   isCacheLoaded(): boolean {
-    return this.cacheLoaded;
+    return this.recovery.isUsable();
   }
 
   /**
@@ -279,48 +276,50 @@ class UserConfigService {
    * Synchronizes with concurrent writes using cacheEpoch to avoid clobbering newer rows.
    */
   async loadCache(): Promise<void> {
+    return this.recovery.loadNow();
+  }
+
+  private async refreshCache(): Promise<void> {
     const startEpoch = this.cacheEpoch;
     try {
       const records = await db.select().from(userConfigs);
-      if (this.cacheEpoch === startEpoch) {
-        this.cache.clear();
-        for (const record of records) {
-          const autoDmMode =
-            normalizeAutoDmMode(record.autoDmMode) ?? "inherit";
-          const dmFormat = normalizeDmFormat(record.dmFormat) ?? "replace";
-          this.cache.set(record.userId, {
-            userId: record.userId,
-            autoDmMode,
-            dmFormat,
-            autoShortenMinUrlLength: record.autoShortenMinUrlLength ?? null,
-            ignoredDomains: record.ignoredDomains ?? [],
-            fixupxEnabled: record.fixupxEnabled ?? true,
-          });
-        }
-      } else {
-        // A newer write occurred while query was in-flight; merge without clobbering newly written keys
-        for (const record of records) {
-          if (!this.cache.has(record.userId)) {
-            const autoDmMode =
-              normalizeAutoDmMode(record.autoDmMode) ?? "inherit";
-            const dmFormat = normalizeDmFormat(record.dmFormat) ?? "replace";
-            this.cache.set(record.userId, {
-              userId: record.userId,
-              autoDmMode,
-              dmFormat,
-              autoShortenMinUrlLength: record.autoShortenMinUrlLength ?? null,
-              ignoredDomains: record.ignoredDomains ?? [],
-              fixupxEnabled: record.fixupxEnabled ?? true,
-            });
-          }
+      const nextCache = new Map<string, UserConfigData>();
+      for (const record of records) {
+        nextCache.set(record.userId, {
+          userId: record.userId,
+          autoDmMode: normalizeAutoDmMode(record.autoDmMode) ?? "inherit",
+          dmFormat: normalizeDmFormat(record.dmFormat) ?? "replace",
+          autoShortenMinUrlLength: record.autoShortenMinUrlLength ?? null,
+          ignoredDomains: record.ignoredDomains ?? [],
+          fixupxEnabled: record.fixupxEnabled ?? true,
+        });
+      }
+
+      this.cache = nextCache;
+      const appliedEpoch = this.cacheEpoch;
+      for (const [userId, mutation] of this.cacheMutations) {
+        if (mutation.epoch > startEpoch && mutation.epoch <= appliedEpoch) {
+          this.cache.set(userId, mutation.value);
         }
       }
-      this.cacheLoaded = true;
+
+      this.pruneCacheMutations(appliedEpoch);
       logger.info(`Loaded ${records.length} user config(s) into memory cache.`);
     } catch (error) {
-      this.cacheLoaded = false;
       logger.error("Failed to load user configs cache from DB:", error);
       throw error;
+    }
+  }
+
+  private recordCacheMutation(userId: string, value: UserConfigData): void {
+    this.cacheEpoch += 1;
+    this.cacheMutations.set(userId, { epoch: this.cacheEpoch, value });
+    this.cache.set(userId, value);
+  }
+
+  private pruneCacheMutations(appliedEpoch: number): void {
+    for (const [userId, mutation] of this.cacheMutations) {
+      if (mutation.epoch <= appliedEpoch) this.cacheMutations.delete(userId);
     }
   }
 
@@ -513,9 +512,8 @@ class UserConfigService {
         }
 
         if (result.success) {
-          this.cacheEpoch++;
-          this.cache.set(userId, result.config);
-          if (!this.cacheLoaded) {
+          this.recordCacheMutation(userId, result.config);
+          if (!this.isCacheLoaded()) {
             this.triggerBackgroundReload();
           }
           logger.info(
@@ -552,7 +550,7 @@ class UserConfigService {
    * Schedules a background cache reload if cache is currently not loaded.
    */
   shouldProcessUser(userId: string, isChannelWatched: boolean): boolean {
-    if (!this.cacheLoaded) {
+    if (!this.isCacheLoaded()) {
       this.triggerBackgroundReload();
       logger.warn(
         `UserConfig cache not loaded; failing closed for user ${userId} and scheduled background reload`,

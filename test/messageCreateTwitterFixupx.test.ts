@@ -55,6 +55,9 @@ describe("MessageCreate Twitter fixupx Conversion", () => {
     }) as unknown as Message;
 
   beforeEach(() => {
+    watchService.setCacheLoadedForTest(true);
+    userConfigService.setCacheLoadedForTest(true);
+    guildConfigService.setCacheLoadedForTest(true);
     sentDmCalls = [];
     suppressEmbedsCalls = [];
     watchService.isChannelWatched = () => true;
@@ -83,6 +86,9 @@ describe("MessageCreate Twitter fixupx Conversion", () => {
   });
 
   afterEach(() => {
+    watchService.setCacheLoadedForTest(false);
+    userConfigService.setCacheLoadedForTest(false);
+    guildConfigService.setCacheLoadedForTest(false);
     watchService.isChannelWatched = originalIsChannelWatched;
     userConfigService.getUserConfig = originalGetUserConfig;
     userConfigService.shouldProcessUser = originalShouldProcessUser;

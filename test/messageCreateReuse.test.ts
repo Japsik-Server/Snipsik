@@ -3,6 +3,7 @@ import { MessageFlags } from "discord.js";
 import { onMessageCreate } from "@/events/messageCreate";
 import { watchService } from "@/services/watchService";
 import { userConfigService } from "@/services/userConfigService";
+import { guildConfigService } from "@/services/guildConfigService";
 import { sinkClient } from "@/services/sinkClient";
 import { getUserHash } from "@/services/slugManager";
 
@@ -20,6 +21,9 @@ describe("Auto-Shortening Existing URL Reuse", () => {
   const otherUserHash = getUserHash(otherUserId);
 
   beforeEach(() => {
+    watchService.setCacheLoadedForTest(true);
+    userConfigService.setCacheLoadedForTest(true);
+    guildConfigService.setCacheLoadedForTest(true);
     watchService.isWatched = () => true;
     userConfigService.shouldProcessUser = () => true;
     userConfigService.getUserConfig = () => ({
@@ -32,6 +36,9 @@ describe("Auto-Shortening Existing URL Reuse", () => {
   });
 
   afterEach(() => {
+    watchService.setCacheLoadedForTest(false);
+    userConfigService.setCacheLoadedForTest(false);
+    guildConfigService.setCacheLoadedForTest(false);
     watchService.isWatched = originalIsWatched;
     userConfigService.getUserConfig = originalGetUserConfig;
     userConfigService.shouldProcessUser = originalShouldProcessUser;
