@@ -92,6 +92,8 @@ describe("Sink tag and edit contracts", () => {
       geo: { KR: "https://kr.example" },
       unsafe: false,
     });
+    expect(serialized).not.toHaveProperty("title");
+    expect(serialized).not.toHaveProperty("description");
     expect(serialized).not.toHaveProperty("password");
 
     const clearPassword = buildEditLinkPayload(
@@ -173,6 +175,62 @@ describe("dashboard snapshot and Discord ACK", () => {
     try {
       await onInteractionCreate(interaction as never);
       expect(shownModal).toBeDefined();
+      expect(getLinkMock).not.toHaveBeenCalled();
+    } finally {
+      sinkClient.getLink = originalGetLink;
+    }
+  });
+
+  it("rejects an invalid edit-button slug before reading the snapshot", async () => {
+    const userId = "723319776407191633";
+    const invalidSlug = `${"x".repeat(101)}-${getUserHash(userId)}`;
+    let replyPayload: unknown;
+    let shownModal: unknown;
+    const interaction = {
+      customId: `${CustomId.DASHBOARD_EDIT_BTN}:${invalidSlug}`,
+      user: { id: userId },
+      isAutocomplete: () => false,
+      isChatInputCommand: () => false,
+      isButton: () => true,
+      isStringSelectMenu: () => false,
+      isModalSubmit: () => false,
+      reply: async (payload: unknown) => {
+        replyPayload = payload;
+      },
+      showModal: async (modal: unknown) => {
+        shownModal = modal;
+      },
+    };
+
+    await onInteractionCreate(interaction as never);
+    expect(replyPayload).toBeDefined();
+    expect(shownModal).toBeUndefined();
+  });
+
+  it("rejects an invalid edit-modal slug before calling Sink", async () => {
+    const userId = "723319776407191633";
+    const invalidSlug = `${"x".repeat(101)}-${getUserHash(userId)}`;
+    const originalGetLink = sinkClient.getLink;
+    const getLinkMock = mock(async () => ({ success: false }));
+    sinkClient.getLink = getLinkMock;
+    let followUpPayload: unknown;
+    const interaction = {
+      customId: `${CustomId.MODAL_EDIT_LINK}:${invalidSlug}`,
+      user: { id: userId },
+      isAutocomplete: () => false,
+      isChatInputCommand: () => false,
+      isButton: () => false,
+      isStringSelectMenu: () => false,
+      isModalSubmit: () => true,
+      deferUpdate: async () => {},
+      followUp: async (payload: unknown) => {
+        followUpPayload = payload;
+      },
+    };
+
+    try {
+      await onInteractionCreate(interaction as never);
+      expect(followUpPayload).toBeDefined();
       expect(getLinkMock).not.toHaveBeenCalled();
     } finally {
       sinkClient.getLink = originalGetLink;

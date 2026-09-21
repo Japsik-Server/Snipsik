@@ -59,6 +59,10 @@ function formatTagDisplay(tags?: readonly string[]): string {
   return tags?.length ? tags.map((tag) => `\`#${tag}\``).join(", ") : "*없음*";
 }
 
+function formatTitleDisplay(title?: string | null): string {
+  return title?.trim() ? title : "*설정 안 됨*";
+}
+
 export function createIgnoredDomainsContent(
   domains: readonly string[] = [],
   maxLength = 3_500,
@@ -242,7 +246,7 @@ export const ui = {
           `**단축 URL:** [🔗 /${selectedLink.slug}](${fullShortUrl}) • \`${fullShortUrl}\`\n` +
           `**원본 타겟:** [🌐 원본 웹사이트 열기 ↗](${selectedLink.url})\n` +
           `↳ \`${truncatedUrl}\`\n\n` +
-          `🏷️ **타이틀:** ${selectedLink.title || "*설정 안 됨*"}  •  🏷️ **태그:** ${formatTagDisplay(selectedLink.tags)}\n` +
+          `🏷️ **타이틀:** ${formatTitleDisplay(selectedLink.title)}  •  🏷️ **태그:** ${formatTagDisplay(selectedLink.tags)}\n` +
           `🖱️ **클릭 수:** \`${(selectedLink.clicks ?? 0).toLocaleString()}\`회  •  🔒 **비밀번호:** ${selectedLink.password ? "🔒 설정됨" : "🔓 공개"}\n` +
           `⏳ **만료일:** ${formatExpiration(selectedLink.expiration)}`,
       );

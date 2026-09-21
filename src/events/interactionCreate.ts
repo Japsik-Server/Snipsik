@@ -1,4 +1,5 @@
 import { type Interaction } from "discord.js";
+import { z } from "zod";
 import { CustomId } from "@/types/bot";
 import {
   fetchUserDashboardStats,
@@ -24,6 +25,17 @@ import { getDashboardLinkSnapshot } from "@/services/dashboardLinkSnapshot";
 import { parseTagsInput } from "@/utils/tags";
 import type { SinkLink, UpdateLinkPayload } from "@/types/sink";
 
+const dashboardSlugSchema = z.string().trim().min(1).max(100);
+
+function parseCustomIdSlug(customId: string, prefix: string): string | null {
+  const marker = `${prefix}:`;
+  const candidate = customId.startsWith(marker)
+    ? customId.substring(marker.length)
+    : undefined;
+  const parsed = dashboardSlugSchema.safeParse(candidate);
+  return parsed.success ? parsed.data : null;
+}
+
 export function buildEditLinkPayload(
   existing: SinkLink,
   fields: {
@@ -39,6 +51,8 @@ export function buildEditLinkPayload(
     tags: fields.tags,
   };
 
+  // Sink deletes optional edit fields when they are omitted, so blank modal
+  // values intentionally clear title and description instead of storing "".
   if (fields.title.trim()) payload.title = fields.title.trim();
   if (fields.description.trim()) payload.description = fields.description.trim();
   if (fields.password !== undefined) payload.password = fields.password;
@@ -98,14 +112,15 @@ export async function onInteractionCreate(
 
       // Edit Button -> Show Edit Modal
       if (customId.startsWith(CustomId.DASHBOARD_EDIT_BTN)) {
-        const slug = customId.includes(":")
-          ? customId.substring(CustomId.DASHBOARD_EDIT_BTN.length + 1)
-          : undefined;
+        const slug = parseCustomIdSlug(
+          customId,
+          CustomId.DASHBOARD_EDIT_BTN,
+        );
         if (!slug) {
           await interaction.reply({
             ...ui.createErrorMessage(
               "오류",
-              "수정할 링크를 먼저 선택해주세요.",
+              "잘못된 링크 식별자입니다.",
             ),
             ephemeral: true,
           });
@@ -584,11 +599,23 @@ export async function onInteractionCreate(
       // Modal: Edit Link
       if (interaction.customId.startsWith(CustomId.MODAL_EDIT_LINK)) {
         await interaction.deferUpdate();
-        const slug = interaction.customId.includes(":")
-          ? interaction.customId.substring(CustomId.MODAL_EDIT_LINK.length + 1)
-          : undefined;
+        const slug = parseCustomIdSlug(
+          interaction.customId,
+          CustomId.MODAL_EDIT_LINK,
+        );
 
-        if (!slug || !verifyOwnership(slug, interaction.user.id)) {
+        if (!slug) {
+          await interaction.followUp({
+            ...ui.createErrorMessage(
+              "오류",
+              "잘못된 링크 식별자입니다.",
+            ),
+            ephemeral: true,
+          });
+          return;
+        }
+
+        if (!verifyOwnership(slug, interaction.user.id)) {
           await interaction.followUp({
             ...ui.createErrorMessage(
               "권한 없음",
