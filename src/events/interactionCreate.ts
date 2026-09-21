@@ -49,12 +49,10 @@ export function buildEditLinkPayload(
   const payload: UpdateLinkPayload = {
     url: fields.url,
     tags: fields.tags,
+    title: fields.title.trim(),
+    description: fields.description.trim(),
   };
 
-  // Sink deletes optional edit fields when they are omitted, so blank modal
-  // values intentionally clear title and description instead of storing "".
-  if (fields.title.trim()) payload.title = fields.title.trim();
-  if (fields.description.trim()) payload.description = fields.description.trim();
   if (fields.password !== undefined) payload.password = fields.password;
 
   if (existing.comment !== undefined) payload.comment = existing.comment;

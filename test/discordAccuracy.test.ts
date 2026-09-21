@@ -86,14 +86,14 @@ describe("Sink tag and edit contracts", () => {
     expect(serialized).toEqual({
       url: "https://new.example",
       tags: [],
+      title: "",
+      description: "",
       expiration: 2_000_000_000,
       cloaking: true,
       redirectWithQuery: false,
       geo: { KR: "https://kr.example" },
       unsafe: false,
     });
-    expect(serialized).not.toHaveProperty("title");
-    expect(serialized).not.toHaveProperty("description");
     expect(serialized).not.toHaveProperty("password");
 
     const clearPassword = buildEditLinkPayload(
