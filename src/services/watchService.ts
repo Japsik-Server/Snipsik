@@ -77,14 +77,17 @@ export class WatchService {
         records.map((record) => this.getKey(record.guildId, record.channelId)),
       );
 
+      this.watchedChannelKeys = nextKeys;
+      const appliedEpoch = this.cacheEpoch;
       for (const [key, mutation] of this.cacheMutations) {
-        if (mutation.epoch <= startEpoch) continue;
-        if (mutation.present) nextKeys.add(key);
-        else nextKeys.delete(key);
+        if (mutation.epoch <= startEpoch || mutation.epoch > appliedEpoch) {
+          continue;
+        }
+        if (mutation.present) this.watchedChannelKeys.add(key);
+        else this.watchedChannelKeys.delete(key);
       }
 
-      this.watchedChannelKeys = nextKeys;
-      this.pruneCacheMutations();
+      this.pruneCacheMutations(appliedEpoch);
       logger.info(`Loaded ${records.length} watched channels into cache.`);
     } catch (error) {
       logger.error("Failed to load watched channels cache from DB:", error);
@@ -99,8 +102,7 @@ export class WatchService {
     else this.watchedChannelKeys.delete(key);
   }
 
-  private pruneCacheMutations(): void {
-    const appliedEpoch = this.cacheEpoch;
+  private pruneCacheMutations(appliedEpoch: number): void {
     for (const [key, mutation] of this.cacheMutations) {
       if (mutation.epoch <= appliedEpoch) this.cacheMutations.delete(key);
     }

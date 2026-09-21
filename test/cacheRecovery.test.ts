@@ -144,11 +144,25 @@ describe("Watch cache snapshot reconciliation", () => {
     service.recordCacheMutation("guild:old", false);
     // @ts-expect-error exercising the service's reconciliation boundary
     service.recordCacheMutation("guild:new", true);
-    pending.resolve([{ guildId: "guild", channelId: "old" }]);
+    // Only the latest mutation for a key should survive reconciliation.
+    // @ts-expect-error exercising the service's reconciliation boundary
+    service.recordCacheMutation("guild:removed", true);
+    // @ts-expect-error exercising the service's reconciliation boundary
+    service.recordCacheMutation("guild:removed", false);
+    // @ts-expect-error exercising the service's reconciliation boundary
+    service.recordCacheMutation("guild:restored", false);
+    // @ts-expect-error exercising the service's reconciliation boundary
+    service.recordCacheMutation("guild:restored", true);
+    pending.resolve([
+      { guildId: "guild", channelId: "old" },
+      { guildId: "guild", channelId: "removed" },
+    ]);
     await loading;
 
     expect(service.isWatched("guild", "old")).toBe(false);
     expect(service.isWatched("guild", "new")).toBe(true);
+    expect(service.isWatched("guild", "removed")).toBe(false);
+    expect(service.isWatched("guild", "restored")).toBe(true);
     expect(service.getCacheStatus().state).toBe("ready");
     service.stopCacheRecovery();
   });

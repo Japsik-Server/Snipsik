@@ -105,14 +105,15 @@ class GuildConfigService {
         });
       }
 
+      this.cache = nextCache;
+      const appliedEpoch = this.cacheEpoch;
       for (const [guildId, mutation] of this.cacheMutations) {
-        if (mutation.epoch > startEpoch) {
-          nextCache.set(guildId, mutation.value);
+        if (mutation.epoch > startEpoch && mutation.epoch <= appliedEpoch) {
+          this.cache.set(guildId, mutation.value);
         }
       }
 
-      this.cache = nextCache;
-      this.pruneCacheMutations();
+      this.pruneCacheMutations(appliedEpoch);
       logger.info(
         `Loaded ${records.length} guild config(s) into memory cache.`,
       );
@@ -128,8 +129,7 @@ class GuildConfigService {
     this.cache.set(guildId, value);
   }
 
-  private pruneCacheMutations(): void {
-    const appliedEpoch = this.cacheEpoch;
+  private pruneCacheMutations(appliedEpoch: number): void {
     for (const [guildId, mutation] of this.cacheMutations) {
       if (mutation.epoch <= appliedEpoch) this.cacheMutations.delete(guildId);
     }

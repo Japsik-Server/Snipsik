@@ -295,14 +295,15 @@ class UserConfigService {
         });
       }
 
+      this.cache = nextCache;
+      const appliedEpoch = this.cacheEpoch;
       for (const [userId, mutation] of this.cacheMutations) {
-        if (mutation.epoch > startEpoch) {
-          nextCache.set(userId, mutation.value);
+        if (mutation.epoch > startEpoch && mutation.epoch <= appliedEpoch) {
+          this.cache.set(userId, mutation.value);
         }
       }
 
-      this.cache = nextCache;
-      this.pruneCacheMutations();
+      this.pruneCacheMutations(appliedEpoch);
       logger.info(`Loaded ${records.length} user config(s) into memory cache.`);
     } catch (error) {
       logger.error("Failed to load user configs cache from DB:", error);
@@ -316,8 +317,7 @@ class UserConfigService {
     this.cache.set(userId, value);
   }
 
-  private pruneCacheMutations(): void {
-    const appliedEpoch = this.cacheEpoch;
+  private pruneCacheMutations(appliedEpoch: number): void {
     for (const [userId, mutation] of this.cacheMutations) {
       if (mutation.epoch <= appliedEpoch) this.cacheMutations.delete(userId);
     }
