@@ -20,7 +20,7 @@ const mockStats: UserDashboardStats = {
       slug: "abc-1234",
       url: "https://example.com/very/long/url",
       title: "예시 타이틀",
-      tag: "test",
+      tags: ["test"],
       clicks: 10,
       createdAt: new Date().toISOString(),
     },

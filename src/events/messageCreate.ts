@@ -9,9 +9,81 @@ import { isDomainIgnored } from "@/utils/domain";
 import { convertToFixupxUrl, isTwitterDomain } from "@/utils/twitter";
 import { ui } from "@/utils/ui";
 import { logger } from "@/utils/logger";
+import { timestampToMilliseconds } from "@/utils/time";
 
-// URL extraction regex (permits query string pipes | while excluding whitespace, angle/curly brackets, backticks, quotes, and backslashes)
-const URL_REGEX = /https?:\/\/[^\s<>"^`{}\\]+/gi;
+const URL_START_REGEX = /https?:\/\//gi;
+const URL_TERMINATORS = new Set(["<", ">", '"', "^", "`", "{", "}", "\\"]);
+
+export interface ExtractedDiscordUrl {
+  url: string;
+  start: number;
+  end: number;
+}
+
+function isInsideSpoiler(content: string, position: number): boolean {
+  let delimiterCount = 0;
+  let cursor = 0;
+  while ((cursor = content.indexOf("||", cursor)) !== -1 && cursor < position) {
+    delimiterCount++;
+    cursor += 2;
+  }
+  return delimiterCount % 2 === 1;
+}
+
+/** Extracts exact URL spans without consuming surrounding Discord markdown. */
+export function extractUrlsFromDiscordMarkdown(
+  content: string,
+): ExtractedDiscordUrl[] {
+  const results: ExtractedDiscordUrl[] = [];
+  const regex = new RegExp(URL_START_REGEX.source, URL_START_REGEX.flags);
+  let match: RegExpExecArray | null;
+
+  while ((match = regex.exec(content)) !== null) {
+    const start = match.index;
+    const spoiler = isInsideSpoiler(content, start);
+    let cursor = regex.lastIndex;
+    let parenDepth = 0;
+    let bracketDepth = 0;
+
+    while (cursor < content.length) {
+      const char = content[cursor]!;
+      if (
+        /\s/.test(char) ||
+        URL_TERMINATORS.has(char) ||
+        (char === "*" && content[cursor + 1] === "*")
+      ) {
+        break;
+      }
+      if (spoiler && char === "|") {
+        let pipeCount = 1;
+        while (content[cursor + pipeCount] === "|") pipeCount++;
+        if (pipeCount >= 2) {
+          cursor += pipeCount - 2;
+          break;
+        }
+      }
+
+      if (char === "(") parenDepth++;
+      else if (char === ")") {
+        if (parenDepth === 0) break;
+        parenDepth--;
+      } else if (char === "[") bracketDepth++;
+      else if (char === "]") {
+        if (bracketDepth === 0) break;
+        bracketDepth--;
+      }
+      cursor++;
+    }
+
+    const url = content.slice(start, cursor);
+    if (url.length > match[0].length) {
+      results.push({ url, start, end: cursor });
+    }
+    regex.lastIndex = Math.max(cursor, regex.lastIndex);
+  }
+
+  return results;
+}
 
 /**
  * Trims trailing delimiters and formatting characters from extracted URLs.
@@ -29,23 +101,26 @@ export function cleanExtractedUrl(
 ): string {
   let url = rawUrl;
 
-  // 1. Strip trailing Discord spoiler delimiter (||) only when verified by enclosing spoiler context
-  if (isEnclosedInSpoiler && url.endsWith("||")) {
-    url = url.slice(0, -2);
-  }
-
-  // 2. Strip unbalanced closing parentheses or brackets (e.g. "(https://...)" or "[https://...]")
-  while (url.endsWith(")") || url.endsWith("]")) {
-    const lastChar = url.slice(-1);
-    const openChar = lastChar === ")" ? "(" : "[";
-    const openCount = (url.match(new RegExp(`\\${openChar}`, "g")) || [])
-      .length;
-    const closeCount = (url.match(new RegExp(`\\${lastChar}`, "g")) || [])
-      .length;
-    if (closeCount > openCount) {
-      url = url.slice(0, -1);
-    } else {
-      break;
+  let changed = true;
+  while (changed) {
+    changed = false;
+    while (url.endsWith(")") || url.endsWith("]")) {
+      const lastChar = url.slice(-1);
+      const openChar = lastChar === ")" ? "(" : "[";
+      const openCount = (url.match(new RegExp(`\\${openChar}`, "g")) || [])
+        .length;
+      const closeCount = (url.match(new RegExp(`\\${lastChar}`, "g")) || [])
+        .length;
+      if (closeCount > openCount) {
+        url = url.slice(0, -1);
+        changed = true;
+      } else {
+        break;
+      }
+    }
+    if (isEnclosedInSpoiler && url.endsWith("||")) {
+      url = url.slice(0, -2);
+      changed = true;
     }
   }
 
@@ -140,8 +215,8 @@ async function resolveShortLink(
 
         if (userLinks.length > 0) {
           userLinks.sort((a, b) => {
-            const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-            const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+            const timeA = timestampToMilliseconds(a.createdAt);
+            const timeB = timestampToMilliseconds(b.createdAt);
             return timeB - timeA;
           });
 
@@ -220,21 +295,7 @@ export async function onMessageCreate(message: Message): Promise<void> {
   const content = message.content;
   if (!content) return;
 
-  // Extract candidates along with spoiler enclosure context
-  const regex = new RegExp(URL_REGEX.source, URL_REGEX.flags);
-  const rawMatches: Array<{ rawMatch: string; isEnclosedInSpoiler: boolean }> =
-    [];
-  let match: RegExpExecArray | null;
-
-  while ((match = regex.exec(content)) !== null) {
-    const matchIndex = match.index;
-    const isEnclosedInSpoiler =
-      matchIndex >= 2 && content.substring(matchIndex - 2, matchIndex) === "||";
-    rawMatches.push({
-      rawMatch: match[0],
-      isEnclosedInSpoiler,
-    });
-  }
+  const rawMatches = extractUrlsFromDiscordMarkdown(content);
 
   if (rawMatches.length === 0) return;
 
@@ -257,8 +318,8 @@ export async function onMessageCreate(message: Message): Promise<void> {
     | { type: "shorten"; originalUrl: string }
   > = [];
 
-  for (const { rawMatch, isEnclosedInSpoiler } of rawMatches) {
-    const rawUrl = cleanExtractedUrl(rawMatch, isEnclosedInSpoiler);
+  for (const match of rawMatches) {
+    const rawUrl = match.url;
     try {
       const parsedUrl = new URL(rawUrl);
 

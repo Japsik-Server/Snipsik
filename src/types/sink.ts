@@ -1,11 +1,19 @@
 export interface SinkLink {
+  id?: string;
   slug: string;
   url: string;
-  expiration?: string | number | null;
+  comment?: string;
+  expiration?: number | null;
   password?: string | null;
-  tag?: string | null;
+  tags?: string[];
   title?: string | null;
   description?: string | null;
+  image?: string;
+  apple?: string;
+  google?: string;
+  cloaking?: boolean;
+  redirectWithQuery?: boolean;
+  geo?: Record<string, string>;
   unsafe?: boolean;
   createdAt?: string | number;
   updatedAt?: string | number;
@@ -15,21 +23,35 @@ export interface SinkLink {
 export interface CreateLinkPayload {
   url: string;
   slug?: string;
-  expiration?: string | number | null;
-  password?: string | null;
-  tag?: string | null;
-  title?: string | null;
-  description?: string | null;
+  comment?: string;
+  expiration?: number;
+  password?: string;
+  tags?: string[];
+  title?: string;
+  description?: string;
+  image?: string;
+  apple?: string;
+  google?: string;
+  cloaking?: boolean;
+  redirectWithQuery?: boolean;
+  geo?: Record<string, string>;
   unsafe?: boolean;
 }
 
 export interface UpdateLinkPayload {
   url?: string;
-  expiration?: string | number | null;
-  password?: string | null;
-  tag?: string | null;
-  title?: string | null;
-  description?: string | null;
+  comment?: string;
+  expiration?: number;
+  password?: string;
+  tags?: string[];
+  title?: string;
+  description?: string;
+  image?: string;
+  apple?: string;
+  google?: string;
+  cloaking?: boolean;
+  redirectWithQuery?: boolean;
+  geo?: Record<string, string>;
   unsafe?: boolean;
 }
 

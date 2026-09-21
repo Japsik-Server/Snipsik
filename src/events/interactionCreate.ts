@@ -20,6 +20,45 @@ import {
 } from "@/utils/modals";
 import { parseExpiration } from "@/utils/time";
 import { logger } from "@/utils/logger";
+import { getDashboardLinkSnapshot } from "@/services/dashboardLinkSnapshot";
+import { parseTagsInput } from "@/utils/tags";
+import type { SinkLink, UpdateLinkPayload } from "@/types/sink";
+
+export function buildEditLinkPayload(
+  existing: SinkLink,
+  fields: {
+    url: string;
+    title: string;
+    description: string;
+    tags: string[];
+    password?: string;
+  },
+): UpdateLinkPayload {
+  const payload: UpdateLinkPayload = {
+    url: fields.url,
+    tags: fields.tags,
+  };
+
+  if (fields.title.trim()) payload.title = fields.title.trim();
+  if (fields.description.trim()) payload.description = fields.description.trim();
+  if (fields.password !== undefined) payload.password = fields.password;
+
+  if (existing.comment !== undefined) payload.comment = existing.comment;
+  if (existing.expiration !== undefined && existing.expiration !== null) {
+    payload.expiration = existing.expiration;
+  }
+  if (existing.image !== undefined) payload.image = existing.image;
+  if (existing.apple !== undefined) payload.apple = existing.apple;
+  if (existing.google !== undefined) payload.google = existing.google;
+  if (existing.cloaking !== undefined) payload.cloaking = existing.cloaking;
+  if (existing.redirectWithQuery !== undefined) {
+    payload.redirectWithQuery = existing.redirectWithQuery;
+  }
+  if (existing.geo !== undefined) payload.geo = { ...existing.geo };
+  if (existing.unsafe !== undefined) payload.unsafe = existing.unsafe;
+
+  return payload;
+}
 
 /**
  * Handles incoming Discord interactions including slash commands, buttons, and modals.
@@ -84,19 +123,19 @@ export async function onInteractionCreate(
           return;
         }
 
-        const linkRes = await sinkClient.getLink(slug);
-        if (!linkRes.success || !linkRes.link) {
+        const link = getDashboardLinkSnapshot(interaction.user.id, slug);
+        if (!link) {
           await interaction.reply({
             ...ui.createErrorMessage(
-              "오류",
-              linkRes.error || "링크 정보를 가져올 수 없습니다.",
+              "대시보드 새로고침 필요",
+              "수정할 링크 정보가 만료되었습니다. 대시보드를 새로고침한 뒤 다시 시도해주세요.",
             ),
             ephemeral: true,
           });
           return;
         }
 
-        const modal = createEditLinkModal(linkRes.link);
+        const modal = createEditLinkModal(link);
         await interaction.showModal(modal);
         return;
       }
@@ -149,35 +188,37 @@ export async function onInteractionCreate(
           return;
         }
 
+        await interaction.deferUpdate();
         const delRes = await sinkClient.deleteLink(slug);
         if (!delRes.success) {
-          await interaction.reply({
-            ...ui.createErrorMessage(
+          await interaction.editReply(
+            ui.createErrorMessage(
               "삭제 실패",
               delRes.error || "오류가 발생했습니다.",
             ),
-            ephemeral: true,
-          });
+          );
           return;
         }
 
         // Refresh dashboard
         const stats = await fetchUserDashboardStats(interaction.user.id);
         const view = ui.createDashboardView(interaction.user, stats);
-        await interaction.update(view);
+        await interaction.editReply(view);
         return;
       }
 
       // Cancel Delete Button -> Return to Dashboard
       if (customId === CustomId.DASHBOARD_CANCEL_DELETE_BTN) {
+        await interaction.deferUpdate();
         const stats = await fetchUserDashboardStats(interaction.user.id);
         const view = ui.createDashboardView(interaction.user, stats);
-        await interaction.update(view);
+        await interaction.editReply(view);
         return;
       }
 
       // Refresh Button -> Update Dashboard
       if (customId.startsWith(CustomId.DASHBOARD_REFRESH_BTN)) {
+        await interaction.deferUpdate();
         const page = customId.includes(":")
           ? parseInt(
               customId.substring(CustomId.DASHBOARD_REFRESH_BTN.length + 1),
@@ -191,7 +232,7 @@ export async function onInteractionCreate(
           undefined,
           page,
         );
-        await interaction.update(view);
+        await interaction.editReply(view);
         return;
       }
 
@@ -219,6 +260,7 @@ export async function onInteractionCreate(
         customId === CustomId.CONFIG_DM_ON ||
         customId === CustomId.CONFIG_DM_OFF
       ) {
+        await interaction.deferUpdate();
         const targetMode =
           customId === CustomId.CONFIG_DM_INHERIT
             ? "inherit"
@@ -251,7 +293,7 @@ export async function onInteractionCreate(
           notice,
           effectiveMinLength,
         );
-        await interaction.update(view);
+        await interaction.editReply(view);
         return;
       }
 
@@ -260,6 +302,7 @@ export async function onInteractionCreate(
         customId === CustomId.CONFIG_FMT_REPLACE ||
         customId === CustomId.CONFIG_FMT_LIST
       ) {
+        await interaction.deferUpdate();
         const targetFormat =
           customId === CustomId.CONFIG_FMT_REPLACE ? "replace" : "list";
 
@@ -288,7 +331,7 @@ export async function onInteractionCreate(
           notice,
           effectiveMinLength,
         );
-        await interaction.update(view);
+        await interaction.editReply(view);
         return;
       }
 
@@ -412,9 +455,10 @@ export async function onInteractionCreate(
 
       // Config Navigation: Return to Dashboard
       if (customId === CustomId.CONFIG_NAV_DASHBOARD) {
+        await interaction.deferUpdate();
         const stats = await fetchUserDashboardStats(interaction.user.id);
         const view = ui.createDashboardView(interaction.user, stats);
-        await interaction.update(view);
+        await interaction.editReply(view);
         return;
       }
     }
@@ -422,6 +466,7 @@ export async function onInteractionCreate(
     // 3. String Select Menu Interactions
     if (interaction.isStringSelectMenu()) {
       if (interaction.customId === CustomId.DASHBOARD_SELECT_LINK) {
+        await interaction.deferUpdate();
         const val = interaction.values[0];
 
         // Case A: Page Navigation (nav:page:N)
@@ -435,7 +480,7 @@ export async function onInteractionCreate(
             undefined,
             targetPage,
           );
-          await interaction.update(view);
+          await interaction.editReply(view);
           return;
         }
 
@@ -456,7 +501,7 @@ export async function onInteractionCreate(
           selectedSlug,
           currentPage,
         );
-        await interaction.update(view);
+        await interaction.editReply(view);
         return;
       }
     }
@@ -484,15 +529,37 @@ export async function onInteractionCreate(
           return;
         }
 
+        const expirationResult = parseExpiration(expStr);
+        if (expirationResult.kind === "invalid") {
+          await interaction.followUp({
+            ...ui.createErrorMessage(
+              "잘못된 만료 기간",
+              expirationResult.error,
+            ),
+            ephemeral: true,
+          });
+          return;
+        }
+        const tagsResult = parseTagsInput(tag);
+        if (!tagsResult.valid) {
+          await interaction.followUp({
+            ...ui.createErrorMessage("잘못된 태그", tagsResult.error),
+            ephemeral: true,
+          });
+          return;
+        }
+
         const slug = generateSlug(interaction.user.id);
-        const expiration = parseExpiration(expStr);
 
         const res = await sinkClient.createLink({
           url,
           slug,
-          expiration,
+          expiration:
+            expirationResult.kind === "valid"
+              ? expirationResult.value
+              : undefined,
           password: password || undefined,
-          tag: tag || undefined,
+          tags: tagsResult.value.length ? tagsResult.value : undefined,
           title: title || undefined,
         });
 
@@ -551,7 +618,16 @@ export async function onInteractionCreate(
           return;
         }
 
-        let passwordPayload: string | null | undefined = undefined;
+        const tagsResult = parseTagsInput(tag);
+        if (!tagsResult.valid) {
+          await interaction.followUp({
+            ...ui.createErrorMessage("잘못된 태그", tagsResult.error),
+            ephemeral: true,
+          });
+          return;
+        }
+
+        let passwordPayload: string | undefined = undefined;
         if (
           rawPassword &&
           (rawPassword.toLowerCase() === "none" ||
@@ -559,18 +635,34 @@ export async function onInteractionCreate(
             rawPassword === "삭제" ||
             rawPassword === "해제")
         ) {
-          passwordPayload = null; // Clear password
+          passwordPayload = "";
         } else if (rawPassword && rawPassword.length > 0) {
           passwordPayload = rawPassword;
         }
 
-        const res = await sinkClient.updateLink(slug, {
+        // The snapshot is only for opening the modal within Discord's ACK window.
+        // Fetch the latest record after deferring so fields outside the modal are
+        // never overwritten with stale cached values.
+        const linkRes = await sinkClient.getLink(slug);
+        if (!linkRes.success || !linkRes.link) {
+          await interaction.followUp({
+            ...ui.createErrorMessage(
+              "링크 정보 조회 실패",
+              "현재 링크 정보를 불러올 수 없습니다. 대시보드를 새로고침한 뒤 다시 시도해주세요.",
+            ),
+            ephemeral: true,
+          });
+          return;
+        }
+
+        const payload = buildEditLinkPayload(linkRes.link, {
           url,
           password: passwordPayload,
-          tag: tag || undefined,
-          title: title || undefined,
-          description: description || undefined,
+          tags: tagsResult.value,
+          title,
+          description,
         });
+        const res = await sinkClient.updateLink(slug, payload);
 
         if (!res.success) {
           await interaction.followUp({

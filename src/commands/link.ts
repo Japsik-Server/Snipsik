@@ -28,8 +28,14 @@ import { guildConfigService } from "@/services/guildConfigService";
 import { config } from "@/config";
 import { getAllSystemDefaultDomains, normalizeDomain } from "@/utils/domain";
 import { ui } from "@/utils/ui";
-import { parseExpiration } from "@/utils/time";
+import {
+  expirationToUnixSeconds,
+  parseExpiration,
+  timestampToMilliseconds,
+} from "@/utils/time";
 import { logger } from "@/utils/logger";
+import { storeDashboardLinkSnapshots } from "@/services/dashboardLinkSnapshot";
+import { parseTagsInput } from "@/utils/tags";
 
 /**
  * Fetches link statistics and dashboard summary for a specific Discord user.
@@ -65,8 +71,8 @@ export async function fetchUserDashboardStats(
 
   // Sort by createdAt descending (most recent first)
   userLinks.sort((a, b) => {
-    const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-    const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+    const timeA = timestampToMilliseconds(a.createdAt);
+    const timeB = timestampToMilliseconds(b.createdAt);
     return timeB - timeA;
   });
 
@@ -93,8 +99,8 @@ export async function fetchUserDashboardStats(
     let localExpired = 0;
     for (const link of userLinks) {
       if (link.expiration) {
-        const expTime = new Date(link.expiration).getTime();
-        if (!isNaN(expTime) && expTime <= now) {
+        const expTime = expirationToUnixSeconds(link.expiration);
+        if (expTime !== undefined && expTime * 1000 <= now) {
           localExpired++;
           continue;
         }
@@ -128,6 +134,8 @@ export async function fetchUserDashboardStats(
       }
     }
   }
+
+  storeDashboardLinkSnapshots(userId, userLinks, now);
 
   return {
     totalLinks,
@@ -559,15 +567,32 @@ export const linkCommand: Command = {
           return;
         }
 
+        const expirationResult = parseExpiration(expStr);
+        if (expirationResult.kind === "invalid") {
+          await interaction.editReply(
+            ui.createErrorMessage("잘못된 만료 기간", expirationResult.error),
+          );
+          return;
+        }
+        const tagsResult = parseTagsInput(tag);
+        if (!tagsResult.valid) {
+          await interaction.editReply(
+            ui.createErrorMessage("잘못된 태그", tagsResult.error),
+          );
+          return;
+        }
+
         const slug = generateSlug(interaction.user.id);
-        const expiration = parseExpiration(expStr);
 
         const res = await sinkClient.createLink({
           url: targetUrl,
           slug,
-          expiration,
+          expiration:
+            expirationResult.kind === "valid"
+              ? expirationResult.value
+              : undefined,
           password: password || undefined,
-          tag: tag || undefined,
+          tags: tagsResult.value.length ? tagsResult.value : undefined,
           title: title || undefined,
           description: description || undefined,
           unsafe,
@@ -629,13 +654,29 @@ export const linkCommand: Command = {
           return;
         }
 
-        const expiration = parseExpiration(expStr);
+        const expirationResult = parseExpiration(expStr);
+        if (expirationResult.kind === "invalid") {
+          await interaction.editReply(
+            ui.createErrorMessage("잘못된 만료 기간", expirationResult.error),
+          );
+          return;
+        }
+        const tagsResult = parseTagsInput(tag);
+        if (!tagsResult.valid) {
+          await interaction.editReply(
+            ui.createErrorMessage("잘못된 태그", tagsResult.error),
+          );
+          return;
+        }
         const res = await sinkClient.createLink({
           url: targetUrl,
           slug: customSlug,
-          expiration,
+          expiration:
+            expirationResult.kind === "valid"
+              ? expirationResult.value
+              : undefined,
           password: password || undefined,
-          tag: tag || undefined,
+          tags: tagsResult.value.length ? tagsResult.value : undefined,
           title: title || undefined,
           description: description || undefined,
           unsafe,
@@ -698,12 +739,13 @@ export const linkCommand: Command = {
         // 2. Filter by Tag if specified (client-side guarantee)
         if (cleanTag) {
           const lowerTag = cleanTag.toLowerCase();
-          userLinks = userLinks.filter((l) => {
-            if (!l.tag) return false;
-            const linkTag = l.tag.toLowerCase().replace(/^#/, "");
-            const tagList = linkTag.split(/[\s,]+/).map((t) => t.trim());
-            return tagList.includes(lowerTag) || linkTag.includes(lowerTag);
-          });
+          userLinks = userLinks.filter((l) =>
+            (l.tags || []).some(
+              (tag) =>
+                tag.toLowerCase() === lowerTag ||
+                tag.toLowerCase().includes(lowerTag),
+            ),
+          );
         }
 
         if (userLinks.length === 0) {
@@ -1393,12 +1435,13 @@ async function handleAdminCommand(
     // Filter by tag (client-side guarantee)
     if (cleanTag) {
       const lowerTag = cleanTag.toLowerCase();
-      links = links.filter((l) => {
-        if (!l.tag) return false;
-        const linkTag = l.tag.toLowerCase().replace(/^#/, "");
-        const tagList = linkTag.split(/[\s,]+/).map((t) => t.trim());
-        return tagList.includes(lowerTag) || linkTag.includes(lowerTag);
-      });
+      links = links.filter((l) =>
+        (l.tags || []).some(
+          (tag) =>
+            tag.toLowerCase() === lowerTag ||
+            tag.toLowerCase().includes(lowerTag),
+        ),
+      );
     }
 
     // Filter by query (if any client-side extra match needed)
@@ -1489,12 +1532,13 @@ async function handleAdminCommand(
     // Filter by tag
     if (cleanTag) {
       const lowerTag = cleanTag.toLowerCase();
-      userLinks = userLinks.filter((l) => {
-        if (!l.tag) return false;
-        const linkTag = l.tag.toLowerCase().replace(/^#/, "");
-        const tagList = linkTag.split(/[\s,]+/).map((t) => t.trim());
-        return tagList.includes(lowerTag) || linkTag.includes(lowerTag);
-      });
+      userLinks = userLinks.filter((l) =>
+        (l.tags || []).some(
+          (tag) =>
+            tag.toLowerCase() === lowerTag ||
+            tag.toLowerCase().includes(lowerTag),
+        ),
+      );
     }
 
     if (userLinks.length === 0) {

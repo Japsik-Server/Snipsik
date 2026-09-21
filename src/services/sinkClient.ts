@@ -12,6 +12,7 @@ import type {
 } from "@/types/sink";
 import { logger } from "@/utils/logger";
 import { safeHttpGet } from "@/utils/safeHttp";
+import { expirationToUnixSeconds } from "@/utils/time";
 import { z } from "zod";
 
 function normalizeSinkLink(
@@ -52,6 +53,16 @@ function normalizeSinkLink(
       }
     }
     return "";
+  };
+  const extractOptionalString = (...keys: unknown[]): string | undefined => {
+    const value = extractString(...keys);
+    return value || undefined;
+  };
+  const extractBoolean = (...values: unknown[]): boolean | undefined => {
+    for (const value of values) {
+      if (typeof value === "boolean") return value;
+    }
+    return undefined;
   };
 
   const rawSlugCandidate = extractString(
@@ -102,25 +113,23 @@ function normalizeSinkLink(
           ? obj.desc.trim()
           : null;
 
-  const rawTag =
+  const rawTags =
+    obj.tags ??
+    meta.tags ??
     obj.tag ??
     meta.tag ??
     obj.category ??
     meta.category ??
-    obj.tags ??
-    meta.tags ??
     obj.label ??
     meta.label;
-
-  let tag: string | null = null;
-  if (typeof rawTag === "string" && rawTag.trim().length > 0) {
-    tag = rawTag.trim();
-  } else if (Array.isArray(rawTag) && rawTag.length > 0) {
-    tag = rawTag
-      .map((t) => String(t).trim())
-      .filter(Boolean)
-      .join(", ");
-  }
+  const tags = Array.isArray(rawTags)
+    ? rawTags
+        .filter((tag): tag is string => typeof tag === "string")
+        .map((tag) => tag.trim())
+        .filter(Boolean)
+    : typeof rawTags === "string" && rawTags.trim()
+      ? [rawTags.trim()]
+      : [];
 
   const rawPassword =
     typeof obj.password === "string"
@@ -144,21 +153,13 @@ function normalizeSinkLink(
         ? parseInt(rawClicks, 10) || 0
         : 0;
 
-  const expiration =
-    typeof obj.expiration === "string" || typeof obj.expiration === "number"
-      ? obj.expiration
-      : typeof meta.expiration === "string" ||
-          typeof meta.expiration === "number"
-        ? meta.expiration
-        : typeof obj.expires_at === "string" ||
-            typeof obj.expires_at === "number"
-          ? obj.expires_at
-          : typeof meta.expires_at === "string" ||
-              typeof meta.expires_at === "number"
-            ? meta.expires_at
-            : typeof obj.expire === "string" || typeof obj.expire === "number"
-              ? obj.expire
-              : null;
+  const expiration = expirationToUnixSeconds(
+    (obj.expiration ??
+      meta.expiration ??
+      obj.expires_at ??
+      meta.expires_at ??
+      obj.expire) as string | number | null | undefined,
+  );
 
   const createdAt =
     typeof obj.createdAt === "string" || typeof obj.createdAt === "number"
@@ -190,16 +191,41 @@ function normalizeSinkLink(
             ? meta.updated_at
             : undefined;
 
-  const unsafe = Boolean(
-    obj.unsafe || meta.unsafe || obj.is_unsafe || meta.is_unsafe,
+  const unsafe = extractBoolean(
+    obj.unsafe,
+    meta.unsafe,
+    obj.is_unsafe,
+    meta.is_unsafe,
   );
 
+  const rawGeo = obj.geo ?? meta.geo;
+  const geo =
+    rawGeo && typeof rawGeo === "object" && !Array.isArray(rawGeo)
+      ? Object.fromEntries(
+          Object.entries(rawGeo).filter(
+            (entry): entry is [string, string] =>
+              typeof entry[1] === "string" && entry[1].trim().length > 0,
+          ),
+        )
+      : undefined;
+
   return {
+    id: extractOptionalString(obj.id, meta.id),
     slug,
     url,
+    comment: extractOptionalString(obj.comment, meta.comment),
     title,
     description,
-    tag,
+    image: extractOptionalString(obj.image, meta.image),
+    apple: extractOptionalString(obj.apple, meta.apple),
+    google: extractOptionalString(obj.google, meta.google),
+    cloaking: extractBoolean(obj.cloaking, meta.cloaking),
+    redirectWithQuery: extractBoolean(
+      obj.redirectWithQuery,
+      meta.redirectWithQuery,
+    ),
+    geo,
+    tags,
     password: rawPassword,
     clicks,
     expiration,
