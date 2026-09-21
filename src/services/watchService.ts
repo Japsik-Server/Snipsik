@@ -32,6 +32,18 @@ export class WatchService {
     private readonly loadRecords: () => Promise<
       Array<Pick<WatchChannel, "guildId" | "channelId">>
     > = () => db.select().from(watchChannels),
+    private readonly insertRecord: (
+      values: Pick<WatchChannel, "guildId" | "channelId" | "createdBy">,
+    ) => Promise<WatchChannel | undefined> = async (values) => {
+      const [inserted] = await db
+        .insert(watchChannels)
+        .values(values)
+        .onConflictDoNothing({
+          target: [watchChannels.guildId, watchChannels.channelId],
+        })
+        .returning();
+      return inserted;
+    },
   ) {}
 
   private getKey(guildId: string, channelId: string): string {
@@ -199,14 +211,11 @@ export class WatchService {
     }
 
     try {
-      const [inserted] = await db
-        .insert(watchChannels)
-        .values({
-          guildId,
-          channelId,
-          createdBy,
-        })
-        .returning();
+      const inserted = await this.insertRecord({
+        guildId,
+        channelId,
+        createdBy,
+      });
 
       if (inserted) {
         this.recordCacheMutation(this.getKey(guildId, channelId), true);
@@ -214,9 +223,10 @@ export class WatchService {
         return { success: true, channel: inserted };
       }
 
+      this.recordCacheMutation(this.getKey(guildId, channelId), true);
       return {
         success: false,
-        error: "Failed to insert record into database.",
+        error: "This channel is already being watched.",
       };
     } catch (error) {
       logger.error("Database error while adding watch channel:", error);

@@ -4,7 +4,11 @@ import { watchService } from "@/services/watchService";
 import { userConfigService } from "@/services/userConfigService";
 import { guildConfigService } from "@/services/guildConfigService";
 import { ensureAutomaticProcessingReadiness } from "@/services/cacheReadiness";
-import { generateSlug, verifyOwnership } from "@/services/slugManager";
+import {
+  generateSlug,
+  getUserHash,
+  verifyOwnership,
+} from "@/services/slugManager";
 import { sinkClient } from "@/services/sinkClient";
 import { isDomainIgnored } from "@/utils/domain";
 import { convertToFixupxUrl, isTwitterDomain } from "@/utils/twitter";
@@ -202,9 +206,10 @@ async function resolveShortLink(
     // 1. Check if an active short link already exists for this user and URL
     try {
       const searchRes = await sinkClient.searchLinks({
+        q: getUserHash(userId),
         url: originalUrl,
         status: "active",
-        limit: 20,
+        limit: 1000,
       });
 
       if (searchRes.success && searchRes.list && searchRes.list.length > 0) {

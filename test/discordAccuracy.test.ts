@@ -275,14 +275,14 @@ describe("dashboard snapshot and Discord ACK", () => {
   it("acknowledges dashboard refresh before external reads", async () => {
     const events: string[] = [];
     const originalCount = sinkClient.countLinks;
-    const originalSearch = sinkClient.searchLinks;
+    const originalList = sinkClient.listLinks;
     sinkClient.countLinks = mock(async () => {
       events.push("external");
       return { success: true, count: 0 };
     });
-    sinkClient.searchLinks = mock(async () => {
+    sinkClient.listLinks = mock(async () => {
       events.push("external");
-      return { success: true, list: [], total: 0 };
+      return { success: true, list: [], total: 0, listComplete: true };
     });
     const interaction = {
       customId: `${CustomId.DASHBOARD_REFRESH_BTN}:1`,
@@ -307,7 +307,7 @@ describe("dashboard snapshot and Discord ACK", () => {
       expect(events.at(-1)).toBe("edit");
     } finally {
       sinkClient.countLinks = originalCount;
-      sinkClient.searchLinks = originalSearch;
+      sinkClient.listLinks = originalList;
     }
   });
 

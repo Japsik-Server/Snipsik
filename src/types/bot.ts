@@ -20,6 +20,8 @@ export interface UserDashboardStats {
   activeLinks: number;
   expiredLinks: number;
   totalClicks: number;
+  displayedLinks: number;
+  linksComplete: boolean;
   links: SinkLink[];
 }
 

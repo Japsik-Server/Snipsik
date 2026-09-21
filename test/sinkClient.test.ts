@@ -441,12 +441,12 @@ describe("SinkClient New API Tests", () => {
 });
 
 describe("Dashboard Stats Optimization Tests", () => {
-  it("should calculate user dashboard statistics using count and search endpoints", async () => {
+  it("uses complete cursor records as the dashboard aggregation basis", async () => {
     const userId = "381920391829381920";
     const userHash = getUserHash(userId);
 
     const originalCount = sinkClient.countLinks;
-    const originalSearch = sinkClient.searchLinks;
+    const originalList = sinkClient.listLinks;
 
     sinkClient.countLinks = mock(async (params) => {
       if (params.status === "all")
@@ -458,7 +458,7 @@ describe("Dashboard Stats Optimization Tests", () => {
       return { success: true, count: 0, status: 200 };
     });
 
-    sinkClient.searchLinks = mock(async () => {
+    sinkClient.listLinks = mock(async () => {
       return {
         success: true,
         list: [
@@ -480,116 +480,72 @@ describe("Dashboard Stats Optimization Tests", () => {
             clicks: 999,
           },
         ],
-        total: 2,
-        status: 200,
-      };
-    });
-
-    try {
-      const stats = await fetchUserDashboardStats(userId);
-      expect(stats.totalLinks).toBe(5);
-      expect(stats.activeLinks).toBe(4);
-      expect(stats.expiredLinks).toBe(1);
-      expect(stats.totalClicks).toBe(35); // 10 + 25
-      expect(stats.links.length).toBe(2);
-      expect(stats.links.every((l) => l.slug.endsWith(`-${userHash}`))).toBe(
-        true,
-      );
-    } finally {
-      sinkClient.countLinks = originalCount;
-      sinkClient.searchLinks = originalSearch;
-    }
-  });
-
-  it("should handle partial count endpoint failures with safe local fallback", async () => {
-    const userId = "481920391829381920";
-    const userHash = getUserHash(userId);
-
-    const originalCount = sinkClient.countLinks;
-    const originalSearch = sinkClient.searchLinks;
-
-    // totalCount succeeds, but active and expired fail
-    sinkClient.countLinks = mock(async (params) => {
-      if (params.status === "all")
-        return { success: true, count: 2, status: 200 };
-      return { success: false, count: 0, status: 500, error: "Service Error" };
-    });
-
-    sinkClient.searchLinks = mock(async () => {
-      return {
-        success: true,
-        list: [
-          {
-            slug: `active-${userHash}`,
-            url: "https://active.com",
-            clicks: 5,
-            expiration: null, // active
-          },
-          {
-            slug: `expired-${userHash}`,
-            url: "https://expired.com",
-            clicks: 10,
-            expiration: new Date(Date.now() - 10000).toISOString(), // expired
-          },
-        ],
-        total: 2,
-        status: 200,
+        total: 3,
+        listComplete: true,
       };
     });
 
     try {
       const stats = await fetchUserDashboardStats(userId);
       expect(stats.totalLinks).toBe(2);
-      expect(stats.activeLinks).toBe(1);
-      expect(stats.expiredLinks).toBe(1);
-      expect(stats.totalClicks).toBe(15);
+      expect(stats.activeLinks).toBe(2);
+      expect(stats.expiredLinks).toBe(0);
+      expect(stats.totalClicks).toBe(35);
+      expect(stats.displayedLinks).toBe(2);
+      expect(stats.linksComplete).toBe(true);
+      expect(stats.links.length).toBe(2);
+      expect(stats.links.every((l) => l.slug.endsWith(`-${userHash}`))).toBe(
+        true,
+      );
     } finally {
       sinkClient.countLinks = originalCount;
-      sinkClient.searchLinks = originalSearch;
+      sinkClient.listLinks = originalList;
     }
   });
 
-  it("should derive proportional active/expired counts when total exceeds bounded sample page and counts fail", async () => {
-    const userId = "581920391829381920";
+  it("uses count endpoints and labels statistics when the catalog is capped", async () => {
+    const userId = "481920391829381920";
     const userHash = getUserHash(userId);
 
     const originalCount = sinkClient.countLinks;
-    const originalSearch = sinkClient.searchLinks;
+    const originalList = sinkClient.listLinks;
 
-    // totalCount succeeds with 300, but active and expired endpoints fail
     sinkClient.countLinks = mock(async (params) => {
       if (params.status === "all")
-        return { success: true, count: 300, status: 200 };
-      return { success: false, count: 0, status: 500, error: "Count Failed" };
+        return { success: true, count: 2_500, status: 200 };
+      if (params.status === "active")
+        return { success: true, count: 2_000, status: 200 };
+      return { success: true, count: 500, status: 200 };
     });
 
-    // Sample list has 3 active, 1 expired (75% active)
-    sinkClient.searchLinks = mock(async () => {
+    sinkClient.listLinks = mock(async (options) => {
+      const offset = options && typeof options === "object" && options.cursor
+        ? 1_000
+        : 0;
       return {
         success: true,
-        list: [
-          { slug: `a1-${userHash}`, url: "https://a1.com", expiration: null },
-          { slug: `a2-${userHash}`, url: "https://a2.com", expiration: null },
-          { slug: `a3-${userHash}`, url: "https://a3.com", expiration: null },
-          {
-            slug: `e1-${userHash}`,
-            url: "https://e1.com",
-            expiration: new Date(Date.now() - 5000).toISOString(),
-          },
-        ],
-        total: 300,
-        status: 200,
+        list: Array.from({ length: 1_000 }, (_, index) => ({
+          slug: `link-${offset + index}-${userHash}`,
+          url: `https://example.com/${offset + index}`,
+          clicks: 1,
+        })),
+        total: 2_500,
+        cursor: offset === 0 ? "page-2" : "page-3",
+        listComplete: false,
       };
     });
 
     try {
       const stats = await fetchUserDashboardStats(userId);
-      expect(stats.totalLinks).toBe(300);
-      expect(stats.activeLinks).toBe(225); // 300 * 75%
-      expect(stats.expiredLinks).toBe(75); // 300 * 25%
+      expect(stats.totalLinks).toBe(2_500);
+      expect(stats.activeLinks).toBe(2_000);
+      expect(stats.expiredLinks).toBe(500);
+      expect(stats.totalClicks).toBe(2_000);
+      expect(stats.displayedLinks).toBe(2_000);
+      expect(stats.linksComplete).toBe(false);
     } finally {
       sinkClient.countLinks = originalCount;
-      sinkClient.searchLinks = originalSearch;
+      sinkClient.listLinks = originalList;
     }
   });
 
@@ -598,7 +554,7 @@ describe("Dashboard Stats Optimization Tests", () => {
     const userHash = getUserHash(userId);
 
     const originalCount = sinkClient.countLinks;
-    const originalSearch = sinkClient.searchLinks;
+    const originalList = sinkClient.listLinks;
 
     sinkClient.countLinks = mock(async () => ({
       success: true,
@@ -606,7 +562,7 @@ describe("Dashboard Stats Optimization Tests", () => {
       status: 200,
     }));
 
-    sinkClient.searchLinks = mock(async () => ({
+    sinkClient.listLinks = mock(async () => ({
       success: true,
       list: [
         {
@@ -621,7 +577,7 @@ describe("Dashboard Stats Optimization Tests", () => {
         },
       ],
       total: 2,
-      status: 200,
+      listComplete: true,
     }));
 
     try {
@@ -630,7 +586,7 @@ describe("Dashboard Stats Optimization Tests", () => {
       expect(stats.totalClicks).toBe(15);
     } finally {
       sinkClient.countLinks = originalCount;
-      sinkClient.searchLinks = originalSearch;
+      sinkClient.listLinks = originalList;
     }
   });
 });

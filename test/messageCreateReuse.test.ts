@@ -49,16 +49,22 @@ describe("Auto-Shortening Existing URL Reuse", () => {
 
   it("reuses existing active link belonging to the user and skips createLink", async () => {
     const existingSlug = `reused-${testUserHash}`;
-    const searchLinksMock = mock(async () => ({
+    const searchLinksMock = mock(async (params) => ({
       success: true,
-      list: [
-        {
-          slug: existingSlug,
-          url: "https://example.com/target/reused/path",
-          createdAt: "2026-01-01T00:00:00.000Z",
-        },
-      ],
-      total: 1,
+      list:
+        params.q === testUserHash
+          ? [
+              {
+                slug: existingSlug,
+                url: "https://example.com/target/reused/path",
+                createdAt: "2026-01-01T00:00:00.000Z",
+              },
+            ]
+          : Array.from({ length: 20 }, (_, index) => ({
+              slug: `other-${index}-${otherUserHash}`,
+              url: "https://example.com/target/reused/path",
+            })),
+      total: params.q === testUserHash ? 1 : 20,
       status: 200,
     }));
     const createLinkMock = mock(async () => ({
@@ -105,9 +111,10 @@ describe("Auto-Shortening Existing URL Reuse", () => {
     // searchLinks must have been called with target URL and active status
     expect(searchLinksMock).toHaveBeenCalledTimes(1);
     expect(searchLinksMock.mock.calls[0][0]).toEqual({
+      q: testUserHash,
       url: "https://example.com/target/reused/path",
       status: "active",
-      limit: 20,
+      limit: 1000,
     });
 
     // createLink must NOT be called since active link was reused

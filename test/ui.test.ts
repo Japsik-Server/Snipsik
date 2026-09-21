@@ -15,6 +15,8 @@ const mockStats: UserDashboardStats = {
   activeLinks: 2,
   expiredLinks: 0,
   totalClicks: 42,
+  displayedLinks: 2,
+  linksComplete: true,
   links: [
     {
       slug: "abc-1234",
@@ -75,6 +77,21 @@ describe("Discord Components v2 UI Modules", () => {
       const json = JSON.stringify(view.components[1].toJSON());
 
       expect(json).toContain("설정 안 됨");
+    });
+
+    it("labels capped dashboard statistics as partial", () => {
+      const stats: UserDashboardStats = {
+        ...mockStats,
+        totalLinks: 2_500,
+        displayedLinks: 2_000,
+        linksComplete: false,
+      };
+      const view = ui.createDashboardView(mockUser, stats);
+      const json = JSON.stringify(view.components[0].toJSON());
+
+      expect(json).toContain("검색 기준 총 링크");
+      expect(json).toContain("표시 링크 클릭 합계");
+      expect(json).toContain("2,000");
     });
   });
 

@@ -129,10 +129,12 @@ export const ui = {
       `### 📊 ${user.username}'s Link Dashboard\n> **개인 전용 링크 대시보드**에 오신 것을 환영합니다.\n> 고유 유저 해시: \`${userHash}\` ${totalPages > 1 ? `• 페이지: \`${page} / ${totalPages}\`` : ""}`,
     );
 
-    const statsText = new TextDisplayBuilder().setContent(
-      `📊 **총 링크:** \`${dashboardStats.totalLinks}\`개  •  ⚡ **활성:** \`${dashboardStats.activeLinks}\`개\n` +
-        `⏳ **만료:** \`${dashboardStats.expiredLinks}\`개  •  🖱️ **누적 클릭:** \`${dashboardStats.totalClicks.toLocaleString()}\`회`,
-    );
+    const statsContent = dashboardStats.linksComplete
+      ? `📊 **총 링크:** \`${dashboardStats.totalLinks}\`개  •  ⚡ **활성:** \`${dashboardStats.activeLinks}\`개\n` +
+        `⏳ **만료:** \`${dashboardStats.expiredLinks}\`개  •  🖱️ **누적 클릭:** \`${dashboardStats.totalClicks.toLocaleString()}\`회`
+      : `📊 **검색 기준 총 링크:** \`${dashboardStats.totalLinks.toLocaleString()}\`개  •  🗂️ **관리 목록:** 최신 \`${dashboardStats.displayedLinks.toLocaleString()}\`개\n` +
+        `⚡ **활성:** \`${dashboardStats.activeLinks}\`개  •  ⏳ **만료:** \`${dashboardStats.expiredLinks}\`개  •  🖱️ **표시 링크 클릭 합계:** \`${dashboardStats.totalClicks.toLocaleString()}\`회`;
+    const statsText = new TextDisplayBuilder().setContent(statsContent);
 
     topContainer.addTextDisplayComponents(headerText);
     topContainer.addSeparatorComponents(

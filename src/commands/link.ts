@@ -36,6 +36,7 @@ import {
 import { logger } from "@/utils/logger";
 import { storeDashboardLinkSnapshots } from "@/services/dashboardLinkSnapshot";
 import { parseTagsInput } from "@/utils/tags";
+import { collectOwnedLinks } from "@/services/ownedLinkCatalog";
 
 /**
  * Fetches link statistics and dashboard summary for a specific Discord user.
@@ -48,26 +49,16 @@ export async function fetchUserDashboardStats(
 ): Promise<UserDashboardStats> {
   const userHash = getUserHash(userId);
 
-  // Fetch count stats and user links in parallel without downloading entire database
-  const [totalCountRes, activeCountRes, expiredCountRes, searchRes] =
+  const [totalCountRes, activeCountRes, expiredCountRes, catalog] =
     await Promise.all([
       sinkClient.countLinks({ q: userHash, status: "all" }),
       sinkClient.countLinks({ q: userHash, status: "active" }),
       sinkClient.countLinks({ q: userHash, status: "expired" }),
-      sinkClient.searchLinks({ q: userHash, status: "all", limit: 100 }),
+      collectOwnedLinks(userHash),
     ]);
 
-  const rawUserLinks = searchRes.success ? searchRes.list : [];
-
-  // Strictly verify user ownership (case-insensitive for slug/hash consistency)
-  const userHashLower = userHash.toLowerCase();
-  const userLinks = rawUserLinks.filter((link) => {
-    if (!link.slug) return false;
-    const slugLower = link.slug.toLowerCase();
-    return (
-      slugLower.endsWith(`-${userHashLower}`) || slugLower === userHashLower
-    );
-  });
+  if (!catalog.success) throw new Error(catalog.error);
+  const userLinks = catalog.links;
 
   // Sort by createdAt descending (most recent first)
   userLinks.sort((a, b) => {
@@ -77,63 +68,38 @@ export async function fetchUserDashboardStats(
   });
 
   const now = Date.now();
-  let activeLinks = activeCountRes.success ? activeCountRes.count : 0;
-  let expiredLinks = expiredCountRes.success ? expiredCountRes.count : 0;
-  let totalLinks = totalCountRes.success
-    ? totalCountRes.count
-    : userLinks.length;
   let totalClicks = 0;
+  let loadedActive = 0;
+  let loadedExpired = 0;
 
   for (const link of userLinks) {
     totalClicks += link.clicks ?? 0;
-  }
-
-  const countsUnavailable =
-    !totalCountRes.success ||
-    !activeCountRes.success ||
-    !expiredCountRes.success;
-
-  // Fallback calculation if any count endpoint was unavailable
-  if (countsUnavailable && userLinks.length > 0) {
-    let localActive = 0;
-    let localExpired = 0;
-    for (const link of userLinks) {
-      if (link.expiration) {
-        const expTime = expirationToUnixSeconds(link.expiration);
-        if (expTime !== undefined && expTime * 1000 <= now) {
-          localExpired++;
-          continue;
-        }
-      }
-      localActive++;
-    }
-
-    if (totalCountRes.success) {
-      if (activeCountRes.success && !expiredCountRes.success) {
-        expiredLinks = Math.max(0, totalLinks - activeLinks);
-      } else if (!activeCountRes.success && expiredCountRes.success) {
-        activeLinks = Math.max(0, totalLinks - expiredLinks);
-      } else if (!activeCountRes.success && !expiredCountRes.success) {
-        if (totalLinks <= userLinks.length) {
-          activeLinks = localActive;
-          expiredLinks = localExpired;
-        } else {
-          // Bounded sample: derive proportional estimate across totalLinks
-          const activeRatio = localActive / userLinks.length;
-          activeLinks = Math.round(totalLinks * activeRatio);
-          expiredLinks = Math.max(0, totalLinks - activeLinks);
-        }
-      }
-    } else {
-      if (activeCountRes.success && expiredCountRes.success) {
-        totalLinks = activeLinks + expiredLinks;
-      } else {
-        if (!activeCountRes.success) activeLinks = localActive;
-        if (!expiredCountRes.success) expiredLinks = localExpired;
-        totalLinks = Math.max(userLinks.length, activeLinks + expiredLinks);
+    if (link.expiration !== undefined && link.expiration !== null) {
+      const expTime = expirationToUnixSeconds(link.expiration);
+      if (expTime !== undefined && expTime * 1000 <= now) {
+        loadedExpired += 1;
+        continue;
       }
     }
+    loadedActive += 1;
   }
+
+  const totalLinks = catalog.complete
+    ? userLinks.length
+    : Math.max(
+        totalCountRes.success ? totalCountRes.count : 0,
+        userLinks.length + 1,
+      );
+  const activeLinks = catalog.complete
+    ? loadedActive
+    : activeCountRes.success
+      ? activeCountRes.count
+      : loadedActive;
+  const expiredLinks = catalog.complete
+    ? loadedExpired
+    : expiredCountRes.success
+      ? expiredCountRes.count
+      : loadedExpired;
 
   storeDashboardLinkSnapshots(userId, userLinks, now);
 
@@ -142,6 +108,8 @@ export async function fetchUserDashboardStats(
     activeLinks,
     expiredLinks,
     totalClicks,
+    displayedLinks: userLinks.length,
+    linksComplete: catalog.complete,
     links: userLinks,
   };
 }
@@ -708,45 +676,25 @@ export const linkCommand: Command = {
           ? inputTag.replace(/^#/, "").trim()
           : undefined;
 
-        // Fetch user links directly using search endpoint
-        const res = await sinkClient.searchLinks({
-          q: userHash,
-          tag: cleanTag || undefined,
-          status: "all",
-          limit: 1000,
-        });
+        const [catalog, countRes] = await Promise.all([
+          collectOwnedLinks(userHash, { tag: cleanTag || undefined }),
+          sinkClient.countLinks({
+            q: userHash,
+            tag: cleanTag || undefined,
+            status: "all",
+          }),
+        ]);
 
-        if (!res.success) {
+        if (!catalog.success) {
           const errEmbed = ui.createErrorMessage(
             "목록 조회 실패",
-            res.error || "오류가 발생했습니다.",
+            catalog.error,
           );
           await interaction.editReply(errEmbed);
           return;
         }
 
-        // 1. Strictly filter only this user's links (case-insensitive)
-        const userHashLower = userHash.toLowerCase();
-        let userLinks = res.list.filter((l) => {
-          if (!l.slug) return false;
-          const slugLower = l.slug.toLowerCase();
-          return (
-            slugLower.endsWith(`-${userHashLower}`) ||
-            slugLower === userHashLower
-          );
-        });
-
-        // 2. Filter by Tag if specified (client-side guarantee)
-        if (cleanTag) {
-          const lowerTag = cleanTag.toLowerCase();
-          userLinks = userLinks.filter((l) =>
-            (l.tags || []).some(
-              (tag) =>
-                tag.toLowerCase() === lowerTag ||
-                tag.toLowerCase().includes(lowerTag),
-            ),
-          );
-        }
+        const userLinks = catalog.links;
 
         if (userLinks.length === 0) {
           const infoEmbed = ui.createInfoMessage(
@@ -773,8 +721,11 @@ export const linkCommand: Command = {
           return `**${startIndex + idx + 1}.** [/${l.slug}](${full}) ${clickPart}\n   ↳ [🌐 원본 열기 ↗](${l.url}) • \`${truncated}\``;
         });
 
+        const totalLabel = catalog.complete
+          ? `총 ${userLinks.length.toLocaleString()}개`
+          : `검색 기준 ${Math.max(countRes.success ? countRes.count : 0, userLinks.length + 1).toLocaleString()}개 중 최신 ${userLinks.length.toLocaleString()}개`;
         const listEmbed = ui.createSuccessMessage(
-          `내 링크 목록 (페이지 ${currentPage}/${totalPages})`,
+          `내 링크 목록 (${totalLabel} / 페이지 ${currentPage}/${totalPages})`,
           lines.join("\n\n"),
         );
 
@@ -1504,42 +1455,25 @@ async function handleAdminCommand(
     const userHash = getUserHash(targetUser.id);
     const cleanTag = inputTag ? inputTag.replace(/^#/, "").trim() : undefined;
 
-    const res = await sinkClient.searchLinks({
-      q: userHash,
-      tag: cleanTag || undefined,
-      status: "all",
-      limit: 1000,
-    });
+    const [catalog, countRes] = await Promise.all([
+      collectOwnedLinks(userHash, { tag: cleanTag || undefined }),
+      sinkClient.countLinks({
+        q: userHash,
+        tag: cleanTag || undefined,
+        status: "all",
+      }),
+    ]);
 
-    if (!res.success) {
+    if (!catalog.success) {
       const errEmbed = ui.createErrorMessage(
         "유저 링크 조회 실패",
-        res.error || "오류가 발생했습니다.",
+        catalog.error,
       );
       await interaction.editReply(errEmbed);
       return;
     }
 
-    const userHashLower = userHash.toLowerCase();
-    let userLinks = res.list.filter((l) => {
-      if (!l.slug) return false;
-      const slugLower = l.slug.toLowerCase();
-      return (
-        slugLower.endsWith(`-${userHashLower}`) || slugLower === userHashLower
-      );
-    });
-
-    // Filter by tag
-    if (cleanTag) {
-      const lowerTag = cleanTag.toLowerCase();
-      userLinks = userLinks.filter((l) =>
-        (l.tags || []).some(
-          (tag) =>
-            tag.toLowerCase() === lowerTag ||
-            tag.toLowerCase().includes(lowerTag),
-        ),
-      );
-    }
+    const userLinks = catalog.links;
 
     if (userLinks.length === 0) {
       const infoEmbed = ui.createInfoMessage(
@@ -1570,8 +1504,11 @@ async function handleAdminCommand(
     const userDisplayName = targetUser.displayName || targetUser.username;
     const headerInfo = `> 👤 **대상 유저:** <@${targetUser.id}> (\`userHash: ${userHash}\`)\n\n`;
 
+    const totalLabel = catalog.complete
+      ? `총 ${userLinks.length.toLocaleString()}개`
+      : `검색 기준 ${Math.max(countRes.success ? countRes.count : 0, userLinks.length + 1).toLocaleString()}개 중 최신 ${userLinks.length.toLocaleString()}개`;
     const listEmbed = ui.createSuccessMessage(
-      `${userDisplayName} 님의 링크 목록 (총 ${userLinks.length}개 / 페이지 ${currentPage}/${totalPages})`,
+      `${userDisplayName} 님의 링크 목록 (${totalLabel} / 페이지 ${currentPage}/${totalPages})`,
       headerInfo + lines.join("\n\n"),
     );
     await interaction.editReply(listEmbed);
