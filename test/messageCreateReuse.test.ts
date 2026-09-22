@@ -210,6 +210,52 @@ describe("Auto-Shortening Existing URL Reuse", () => {
     expect(sentPayloads[1].content).toContain(existingSlug);
   });
 
+  it("does not scan link pages when an empty search result is complete", async () => {
+    const targetUrl = "https://example.com/new-link";
+    sinkClient.searchLinks = mock(async () => ({
+      success: true,
+      list: [],
+      total: 0,
+      status: 200,
+    }));
+    const listLinksMock = mock(async () => ({
+      success: true,
+      list: [],
+      total: 0,
+      listComplete: true,
+    }));
+    sinkClient.listLinks = listLinksMock;
+    sinkClient.createLink = mock(async (payload) => ({
+      success: true,
+      link: { slug: `new-${testUserHash}`, url: payload.url },
+    }));
+
+    const mockMessage = {
+      author: {
+        id: testUserId,
+        bot: false,
+        tag: "Tester#0001",
+        createDM: async () => ({
+          send: mock(async () => ({
+            flags: { has: () => true },
+            suppressEmbeds: mock(async () => {}),
+          })),
+        }),
+      },
+      guildId: "guild-1",
+      guild: {},
+      channelId: "channel-1",
+      channel: { name: "general" },
+      content: `Create this: ${targetUrl}`,
+      url: "https://discord.com/channels/guild-1/channel-1/msg-new",
+    };
+
+    await onMessageCreate(mockMessage as any);
+
+    expect(listLinksMock).not.toHaveBeenCalled();
+    expect(sinkClient.createLink).toHaveBeenCalledTimes(1);
+  });
+
   it("selects the most recent active link when user has multiple existing links for the URL", async () => {
     const olderSlug = `old-${testUserHash}`;
     const newerSlug = `recent-${testUserHash}`;

@@ -231,7 +231,13 @@ async function resolveShortLink(
       });
 
       let existingLink = userLinks[0];
-      if (!existingLink && searchRes.success) {
+      const searchMayBeTruncated =
+        searchRes.success &&
+        (searchRes.listComplete === false ||
+          (searchRes.listComplete !== true &&
+            (searchRes.total > searchRes.list.length ||
+              searchRes.list.length >= EXISTING_LINK_SEARCH_LIMIT)));
+      if (!existingLink && searchMayBeTruncated) {
         const lookup = await findOwnedLink(
           userHash,
           (link) => isSameTargetUrl(link.url, originalUrl),

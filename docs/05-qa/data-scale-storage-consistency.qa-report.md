@@ -16,6 +16,7 @@
 | Dashboard partial-range labeling and click aggregation basis | PASS |
 | Existing-link lookup sends exact URL and user hash together | PASS |
 | Existing-link lookup falls back to bounded cursor traversal when capped search results omit the owner | PASS |
+| Complete empty existing-link searches skip the bounded list traversal | PASS |
 | Existing-link search limit is validated before the Sink request | PASS |
 | Bare-list fallback reapplies case-insensitive tag matching | PASS |
 | Cursor/filter page failures do not retry against the unfiltered bare list | PASS |
@@ -26,7 +27,7 @@
 | Existing Watch duplicates are removed before UNIQUE creation | PASS |
 | Concurrent LibSQL inserts leave one Watch row | PASS |
 | Concurrent service calls return one success and one duplicate | PASS |
-| Full Bun test suite | PASS — 212 tests |
+| Full Bun test suite | PASS — 213 tests |
 | TypeScript typecheck | PASS |
 | Production Bun build | PASS |
 | Git whitespace validation | PASS |
