@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import {
   collectOwnedLinks,
+  findOwnedLink,
   OWNED_LINK_PAGE_SIZE,
   type OwnedLinkPageFetcher,
 } from "@/services/ownedLinkCatalog";
@@ -112,6 +113,28 @@ describe("owned link catalog pagination", () => {
     expect(result.scannedPages).toBe(2);
   });
 
+  it("reports the scanned range when the bounded catalog is incomplete and empty", async () => {
+    const result = await collectOwnedLinks(USER_HASH, {
+      maxPages: 2,
+      fetchPage: async (options) => ({
+        success: true,
+        list: links(
+          OWNED_LINK_PAGE_SIZE,
+          options.cursor ? OWNED_LINK_PAGE_SIZE : 0,
+          false,
+        ),
+        cursor: options.cursor ? "page-3" : "page-2",
+        listComplete: false,
+      }),
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.links).toEqual([]);
+    expect(result.complete).toBe(false);
+    expect(result.scannedPages).toBe(2);
+    expect(result.scannedRecords).toBe(2_000);
+  });
+
   it("filters non-owned links and deduplicates slugs across pages", async () => {
     const duplicate = links(1)[0]!;
     const fetchPage: OwnedLinkPageFetcher = async (options) =>
@@ -205,6 +228,7 @@ describe("owned link catalog pagination", () => {
       links: [],
       complete: false,
       scannedPages: 2,
+      scannedRecords: 10,
       error: "page failed",
     });
   });
@@ -216,5 +240,45 @@ describe("owned link catalog pagination", () => {
 
     expect(result.success).toBe(false);
     expect(result.error).toBe("");
+  });
+});
+
+describe("owned link lookup pagination", () => {
+  it("finds an owned link after the capped search result range", async () => {
+    const requestedCursors: Array<string | null | undefined> = [];
+    const targetUrl = "https://example.com/owned-target";
+    const result = await findOwnedLink(
+      USER_HASH,
+      (link) => link.url === targetUrl,
+      {
+        fetchPage: async (options) => {
+          requestedCursors.push(options.cursor);
+          if (!options.cursor) {
+            return {
+              success: true,
+              list: links(OWNED_LINK_PAGE_SIZE, 0, false),
+              cursor: "page-2",
+              listComplete: false,
+            };
+          }
+          return {
+            success: true,
+            list: [
+              {
+                slug: `target-${USER_HASH}`,
+                url: targetUrl,
+              },
+            ],
+            listComplete: true,
+          };
+        },
+      },
+    );
+
+    expect(result.success).toBe(true);
+    expect(result.link?.slug).toBe(`target-${USER_HASH}`);
+    expect(result.scannedPages).toBe(2);
+    expect(result.scannedRecords).toBe(1_001);
+    expect(requestedCursors).toEqual([null, "page-2"]);
   });
 });

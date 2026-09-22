@@ -12,6 +12,7 @@ describe("Auto-Shortening Existing URL Reuse", () => {
   const originalGetUserConfig = userConfigService.getUserConfig;
   const originalShouldProcessUser = userConfigService.shouldProcessUser;
   const originalSearchLinks = sinkClient.searchLinks;
+  const originalListLinks = sinkClient.listLinks;
   const originalCreateLink = sinkClient.createLink;
   const originalGetFullShortUrl = sinkClient.getFullShortUrl;
 
@@ -31,6 +32,12 @@ describe("Auto-Shortening Existing URL Reuse", () => {
       dmFormat: "replace",
       autoShortenMinUrlLength: 0,
     });
+    sinkClient.listLinks = mock(async () => ({
+      success: true,
+      list: [],
+      total: 0,
+      listComplete: true,
+    }));
     sinkClient.getFullShortUrl = (slug: string) =>
       `https://s.japsik.com/${slug}`;
   });
@@ -43,6 +50,7 @@ describe("Auto-Shortening Existing URL Reuse", () => {
     userConfigService.getUserConfig = originalGetUserConfig;
     userConfigService.shouldProcessUser = originalShouldProcessUser;
     sinkClient.searchLinks = originalSearchLinks;
+    sinkClient.listLinks = originalListLinks;
     sinkClient.createLink = originalCreateLink;
     sinkClient.getFullShortUrl = originalGetFullShortUrl;
   });
@@ -130,6 +138,76 @@ describe("Auto-Shortening Existing URL Reuse", () => {
     expect(sentPayloads[1].content).toBe(
       `Check this: https://s.japsik.com/${existingSlug}`,
     );
+  });
+
+  it("falls back to cursor pagination when capped search results omit the owned link", async () => {
+    const targetUrl = "https://example.com/target/outside-search-cap";
+    const existingSlug = `outside-cap-${testUserHash}`;
+    sinkClient.searchLinks = mock(async () => ({
+      success: true,
+      list: Array.from({ length: 1_000 }, (_, index) => ({
+        slug: `other-${index}-${otherUserHash}`,
+        url: targetUrl,
+      })),
+      total: 1_001,
+      status: 200,
+    }));
+
+    const requestedCursors: Array<string | null | undefined> = [];
+    sinkClient.listLinks = mock(async (options) => {
+      const cursor =
+        options && typeof options === "object" ? options.cursor : undefined;
+      requestedCursors.push(cursor);
+      return cursor
+        ? {
+            success: true,
+            list: [{ slug: existingSlug, url: targetUrl }],
+            total: 1_001,
+            listComplete: true,
+          }
+        : {
+            success: true,
+            list: Array.from({ length: 1_000 }, (_, index) => ({
+              slug: `listed-other-${index}-${otherUserHash}`,
+              url: `https://example.com/other/${index}`,
+            })),
+            total: 1_001,
+            cursor: "page-2",
+            listComplete: false,
+          };
+    });
+    const createLinkMock = mock(async () => ({ success: false }));
+    sinkClient.createLink = createLinkMock;
+
+    const sentPayloads: any[] = [];
+    const mockMessage = {
+      author: {
+        id: testUserId,
+        bot: false,
+        tag: "Tester#0001",
+        createDM: async () => ({
+          send: mock(async (payload: any) => {
+            sentPayloads.push(payload);
+            return {
+              flags: { has: () => true },
+              suppressEmbeds: mock(async () => {}),
+            };
+          }),
+        }),
+      },
+      guildId: "guild-1",
+      guild: {},
+      channelId: "channel-1",
+      channel: { name: "general" },
+      content: `Check this: ${targetUrl}`,
+      url: "https://discord.com/channels/guild-1/channel-1/msg-cap",
+    };
+
+    await onMessageCreate(mockMessage as any);
+
+    expect(requestedCursors).toEqual([null, "page-2"]);
+    expect(createLinkMock).not.toHaveBeenCalled();
+    expect(sentPayloads[1].content).toContain(existingSlug);
   });
 
   it("selects the most recent active link when user has multiple existing links for the URL", async () => {

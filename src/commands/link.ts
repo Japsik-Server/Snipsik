@@ -697,6 +697,17 @@ export const linkCommand: Command = {
         const userLinks = catalog.links;
 
         if (userLinks.length === 0) {
+          if (!catalog.complete) {
+            const infoEmbed = ui.createInfoMessage(
+              "링크 조회 범위 제한",
+              ui.formatPartialOwnedLinksNotice(
+                catalog.scannedRecords,
+                countRes.success ? countRes.count : undefined,
+              ),
+            );
+            await interaction.editReply(infoEmbed);
+            return;
+          }
           const infoEmbed = ui.createInfoMessage(
             "생성된 링크 없음",
             inputTag
@@ -1476,6 +1487,17 @@ async function handleAdminCommand(
     const userLinks = catalog.links;
 
     if (userLinks.length === 0) {
+      if (!catalog.complete) {
+        const infoEmbed = ui.createInfoMessage(
+          "유저 링크 조회 범위 제한",
+          `<@${targetUser.id}> 님의 ${ui.formatPartialOwnedLinksNotice(
+            catalog.scannedRecords,
+            countRes.success ? countRes.count : undefined,
+          )}`,
+        );
+        await interaction.editReply(infoEmbed);
+        return;
+      }
       const infoEmbed = ui.createInfoMessage(
         "유저 링크 없음",
         inputTag

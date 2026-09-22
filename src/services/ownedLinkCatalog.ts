@@ -23,12 +23,31 @@ export type OwnedLinkCatalogResult =
       links: SinkLink[];
       complete: boolean;
       scannedPages: number;
+      scannedRecords: number;
     }
   | {
       success: false;
       links: [];
       complete: false;
       scannedPages: number;
+      scannedRecords: number;
+      error: string;
+    };
+
+export type OwnedLinkLookupResult =
+  | {
+      success: true;
+      link: SinkLink | null;
+      complete: boolean;
+      scannedPages: number;
+      scannedRecords: number;
+    }
+  | {
+      success: false;
+      link: null;
+      complete: false;
+      scannedPages: number;
+      scannedRecords: number;
       error: string;
     };
 
@@ -64,6 +83,7 @@ export async function collectOwnedLinks(
   const seenCursors = new Set<string>();
   let cursor: string | null = null;
   let scannedPages = 0;
+  let scannedRecords = 0;
 
   while (linksBySlug.size < maxLinks) {
     const page = await fetchPage({
@@ -74,6 +94,7 @@ export async function collectOwnedLinks(
       limit: OWNED_LINK_PAGE_SIZE,
     });
     scannedPages += 1;
+    scannedRecords += page.list.length;
 
     if (!page.success) {
       return {
@@ -81,6 +102,7 @@ export async function collectOwnedLinks(
         links: [],
         complete: false,
         scannedPages,
+        scannedRecords,
         error: page.error ?? "Sink 링크 페이지 조회에 실패했습니다.",
       };
     }
@@ -112,6 +134,7 @@ export async function collectOwnedLinks(
         links: [...linksBySlug.values()].slice(0, maxLinks),
         complete: linksBySlug.size <= maxLinks,
         scannedPages,
+        scannedRecords,
       };
     }
 
@@ -121,6 +144,7 @@ export async function collectOwnedLinks(
         links: [...linksBySlug.values()].slice(0, maxLinks),
         complete: false,
         scannedPages,
+        scannedRecords,
       };
     }
 
@@ -130,6 +154,7 @@ export async function collectOwnedLinks(
         links: [...linksBySlug.values()],
         complete: false,
         scannedPages,
+        scannedRecords,
       };
     }
 
@@ -140,6 +165,7 @@ export async function collectOwnedLinks(
         links: [],
         complete: false,
         scannedPages,
+        scannedRecords,
         error: "Sink가 미완료 페이지에 다음 커서를 제공하지 않았습니다.",
       };
     }
@@ -149,6 +175,7 @@ export async function collectOwnedLinks(
         links: [],
         complete: false,
         scannedPages,
+        scannedRecords,
         error: "Sink가 동일한 페이지 커서를 반복했습니다.",
       };
     }
@@ -162,5 +189,122 @@ export async function collectOwnedLinks(
     links: [...linksBySlug.values()].slice(0, maxLinks),
     complete: false,
     scannedPages,
+    scannedRecords,
+  };
+}
+
+/**
+ * Finds the newest owned link matching a predicate with bounded cursor pagination.
+ * This is used as a correctness fallback when Sink search results are capped.
+ */
+export async function findOwnedLink(
+  userHash: string,
+  matches: (link: SinkLink) => boolean,
+  options: {
+    status?: "active" | "expired" | "all";
+    maxPages?: number;
+    fetchPage?: OwnedLinkPageFetcher;
+  } = {},
+): Promise<OwnedLinkLookupResult> {
+  const maxPages = options.maxPages ?? OWNED_LINK_MAX_PAGES;
+  const fetchPage =
+    options.fetchPage ??
+    ((params: SinkListParams) => sinkClient.listLinks(params));
+  const seenCursors = new Set<string>();
+  let cursor: string | null = null;
+  let scannedPages = 0;
+  let scannedRecords = 0;
+
+  while (scannedPages < maxPages) {
+    const page = await fetchPage({
+      cursor,
+      status: options.status ?? "active",
+      sort: "newest",
+      limit: OWNED_LINK_PAGE_SIZE,
+    });
+    scannedPages += 1;
+    scannedRecords += page.list.length;
+
+    if (!page.success) {
+      return {
+        success: false,
+        link: null,
+        complete: false,
+        scannedPages,
+        scannedRecords,
+        error: page.error ?? "Sink 링크 페이지 조회에 실패했습니다.",
+      };
+    }
+
+    const link = page.list.find(
+      (candidate) => isOwnedSlug(candidate.slug, userHash) && matches(candidate),
+    );
+    if (link) {
+      return {
+        success: true,
+        link,
+        complete: false,
+        scannedPages,
+        scannedRecords,
+      };
+    }
+
+    const pageComplete =
+      page.listComplete === true ||
+      (page.listComplete === undefined &&
+        !page.cursor &&
+        page.list.length < OWNED_LINK_PAGE_SIZE);
+    if (pageComplete) {
+      return {
+        success: true,
+        link: null,
+        complete: true,
+        scannedPages,
+        scannedRecords,
+      };
+    }
+
+    if (scannedPages >= maxPages) {
+      return {
+        success: true,
+        link: null,
+        complete: false,
+        scannedPages,
+        scannedRecords,
+      };
+    }
+
+    const nextCursor = page.cursor;
+    if (!nextCursor) {
+      return {
+        success: false,
+        link: null,
+        complete: false,
+        scannedPages,
+        scannedRecords,
+        error: "Sink가 미완료 페이지에 다음 커서를 제공하지 않았습니다.",
+      };
+    }
+    if (seenCursors.has(nextCursor)) {
+      return {
+        success: false,
+        link: null,
+        complete: false,
+        scannedPages,
+        scannedRecords,
+        error: "Sink가 동일한 페이지 커서를 반복했습니다.",
+      };
+    }
+
+    seenCursors.add(nextCursor);
+    cursor = nextCursor;
+  }
+
+  return {
+    success: true,
+    link: null,
+    complete: false,
+    scannedPages,
+    scannedRecords,
   };
 }

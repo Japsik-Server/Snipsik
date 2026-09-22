@@ -15,16 +15,18 @@
 | Missing/repeated cursor, page budget, and later-page failure | PASS |
 | Dashboard partial-range labeling and click aggregation basis | PASS |
 | Existing-link lookup sends exact URL and user hash together | PASS |
+| Existing-link lookup falls back to bounded cursor traversal when capped search results omit the owner | PASS |
 | Existing-link search limit is validated before the Sink request | PASS |
 | Bare-list fallback reapplies case-insensitive tag matching | PASS |
 | Cursor/filter page failures do not retry against the unfiltered bare list | PASS |
 | Unfiltered first-page requests retain legacy bare-list compatibility | PASS |
 | First-page cursor uses an explicit `null` sentinel | PASS |
+| Incomplete empty catalogs report the scanned range instead of claiming no links exist | PASS |
 | Empty page-fetch errors are preserved | PASS |
 | Existing Watch duplicates are removed before UNIQUE creation | PASS |
 | Concurrent LibSQL inserts leave one Watch row | PASS |
 | Concurrent service calls return one success and one duplicate | PASS |
-| Full Bun test suite | PASS — 208 tests |
+| Full Bun test suite | PASS — 212 tests |
 | TypeScript typecheck | PASS |
 | Production Bun build | PASS |
 | Git whitespace validation | PASS |

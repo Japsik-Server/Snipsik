@@ -102,6 +102,20 @@ export function createIgnoredDomainsContent(
 }
 
 export const ui = {
+  formatPartialOwnedLinksNotice(
+    scannedRecords: number,
+    searchCount?: number,
+  ): string {
+    const searchSummary =
+      searchCount !== undefined && searchCount > 0
+        ? `\nSink 검색 기준 결과: \`${searchCount.toLocaleString()}\`개`
+        : "";
+    return (
+      `최신 \`${scannedRecords.toLocaleString()}\`개의 Sink 링크를 확인했지만 조건에 맞는 소유 링크를 찾지 못했습니다. ` +
+      `전체 조회가 완료되지 않아 더 오래된 링크가 존재할 수 있습니다.${searchSummary}`
+    );
+  },
+
   /**
    * Builds the Ephemeral Personal Dashboard view using Components v2 ContainerBuilder.
    * Split into Top Overview Container and optional Bottom Selected Link Container.

@@ -36,6 +36,16 @@ const mockStats: UserDashboardStats = {
 };
 
 describe("Discord Components v2 UI Modules", () => {
+  describe("formatPartialOwnedLinksNotice", () => {
+    it("labels an incomplete empty result with its scanned range", () => {
+      const notice = ui.formatPartialOwnedLinksNotice(20_000, 3);
+
+      expect(notice).toContain("최신 `20,000`개");
+      expect(notice).toContain("전체 조회가 완료되지 않아");
+      expect(notice).toContain("Sink 검색 기준 결과: `3`개");
+    });
+  });
+
   describe("createDashboardView", () => {
     it("renders single top overview container when no link is selected", () => {
       const view = ui.createDashboardView(mockUser, mockStats);

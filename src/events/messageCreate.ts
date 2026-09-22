@@ -10,6 +10,7 @@ import {
   verifyOwnership,
 } from "@/services/slugManager";
 import { sinkClient } from "@/services/sinkClient";
+import { findOwnedLink } from "@/services/ownedLinkCatalog";
 import { isDomainIgnored } from "@/utils/domain";
 import { convertToFixupxUrl, isTwitterDomain } from "@/utils/twitter";
 import { ui } from "@/utils/ui";
@@ -208,36 +209,54 @@ async function resolveShortLink(
 
     // 1. Check if an active short link already exists for this user and URL
     try {
+      const userHash = getUserHash(userId);
       const searchRes = await sinkClient.searchLinks({
-        q: getUserHash(userId),
+        q: userHash,
         url: originalUrl,
         status: "active",
         limit: EXISTING_LINK_SEARCH_LIMIT,
       });
 
-      if (searchRes.success && searchRes.list && searchRes.list.length > 0) {
-        const userLinks = searchRes.list.filter(
-          (l) =>
-            verifyOwnership(l.slug, userId) &&
-            isSameTargetUrl(l.url, originalUrl),
+      const userLinks = searchRes.success
+        ? searchRes.list.filter(
+            (l) =>
+              verifyOwnership(l.slug, userId) &&
+              isSameTargetUrl(l.url, originalUrl),
+          )
+        : [];
+      userLinks.sort((a, b) => {
+        const timeA = timestampToMilliseconds(a.createdAt);
+        const timeB = timestampToMilliseconds(b.createdAt);
+        return timeB - timeA;
+      });
+
+      let existingLink = userLinks[0];
+      if (!existingLink && searchRes.success) {
+        const lookup = await findOwnedLink(
+          userHash,
+          (link) => isSameTargetUrl(link.url, originalUrl),
+          { status: "active" },
         );
-
-        if (userLinks.length > 0) {
-          userLinks.sort((a, b) => {
-            const timeA = timestampToMilliseconds(a.createdAt);
-            const timeB = timestampToMilliseconds(b.createdAt);
-            return timeB - timeA;
-          });
-
-          const existingLink = userLinks[0];
-          if (existingLink && existingLink.slug) {
-            resolvedSlug = existingLink.slug;
-            isReused = true;
-            logger.info(
-              `Reusing existing short link /${resolvedSlug} for ${userTag} (${sanitizeUrlForLog(originalUrl)})`,
+        if (lookup.success) {
+          existingLink = lookup.link ?? undefined;
+          if (!lookup.link && !lookup.complete) {
+            logger.warn(
+              `Owned-link lookup reached its scan limit after ${lookup.scannedRecords} records for ${userTag} (${sanitizeUrlForLog(originalUrl)})`,
             );
           }
+        } else {
+          logger.warn(
+            `Failed to scan owned links for ${userTag} (${sanitizeUrlForLog(originalUrl)}): ${lookup.error}`,
+          );
         }
+      }
+
+      if (existingLink?.slug) {
+        resolvedSlug = existingLink.slug;
+        isReused = true;
+        logger.info(
+          `Reusing existing short link /${resolvedSlug} for ${userTag} (${sanitizeUrlForLog(originalUrl)})`,
+        );
       }
     } catch (searchErr) {
       logger.warn(
