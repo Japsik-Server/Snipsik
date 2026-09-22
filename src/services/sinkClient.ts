@@ -960,13 +960,21 @@ export class SinkClient {
 
     const queryString = params.toString();
     const endpoint = `/api/link/list${queryString ? `?${queryString}` : ""}`;
+    const canFallbackToBareList =
+      page === 1 &&
+      (typeof tagOrOptions === "string"
+        ? !tagOrOptions
+        : !tagOrOptions?.cursor &&
+          !tagOrOptions?.tag &&
+          !tagOrOptions?.sort &&
+          !tagOrOptions?.status);
 
     let res = await this.request<unknown>(endpoint, {
       method: "GET",
     });
 
-    // If query string request failed, fallback to bare /api/link/list
-    if (!res.success && queryString) {
+    // Preserve compatibility only when removing the query cannot change semantics.
+    if (!res.success && queryString && canFallbackToBareList) {
       logger.debug(
         `Failed to fetch with queryString (${endpoint}), falling back to bare /api/link/list`,
       );
@@ -980,7 +988,7 @@ export class SinkClient {
         success: false,
         list: [],
         total: 0,
-        error: res.error || "Failed to list links",
+        error: res.error ?? "Failed to list links",
       };
     }
 

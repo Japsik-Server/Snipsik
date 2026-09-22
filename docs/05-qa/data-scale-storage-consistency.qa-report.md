@@ -17,12 +17,14 @@
 | Existing-link lookup sends exact URL and user hash together | PASS |
 | Existing-link search limit is validated before the Sink request | PASS |
 | Bare-list fallback reapplies case-insensitive tag matching | PASS |
+| Cursor/filter page failures do not retry against the unfiltered bare list | PASS |
+| Unfiltered first-page requests retain legacy bare-list compatibility | PASS |
 | First-page cursor uses an explicit `null` sentinel | PASS |
 | Empty page-fetch errors are preserved | PASS |
 | Existing Watch duplicates are removed before UNIQUE creation | PASS |
 | Concurrent LibSQL inserts leave one Watch row | PASS |
 | Concurrent service calls return one success and one duplicate | PASS |
-| Full Bun test suite | PASS — 206 tests |
+| Full Bun test suite | PASS — 208 tests |
 | TypeScript typecheck | PASS |
 | Production Bun build | PASS |
 | Git whitespace validation | PASS |

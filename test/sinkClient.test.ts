@@ -260,6 +260,65 @@ describe("SinkClient New API Tests", () => {
     expect(requestedUrls[1]).toContain("cursor=page-2");
   });
 
+  it("does not discard cursor and filters through a bare-list fallback", async () => {
+    const requestedUrls: string[] = [];
+    const client = new SinkClient({
+      baseUrl: "https://sink.example",
+      token: "test-token",
+      fetchImpl: async (url) => {
+        requestedUrls.push(String(url));
+        return new Response(JSON.stringify({ error: "page failed" }), {
+          status: 502,
+        });
+      },
+    });
+
+    const result = await client.listLinks({
+      cursor: "page-2",
+      tag: "news",
+      status: "all",
+      sort: "newest",
+      limit: 1_000,
+    });
+
+    expect(result.success).toBe(false);
+    expect(result.error).toBe("page failed");
+    expect(requestedUrls).toHaveLength(1);
+    expect(requestedUrls[0]).toContain("cursor=page-2");
+    expect(requestedUrls[0]).toContain("tag=news");
+  });
+
+  it("retains the bare-list fallback for an unfiltered first page", async () => {
+    const requestedUrls: string[] = [];
+    const client = new SinkClient({
+      baseUrl: "https://sink.example",
+      token: "test-token",
+      fetchImpl: async (url) => {
+        requestedUrls.push(String(url));
+        if (String(url).includes("?limit=")) {
+          return new Response(JSON.stringify({ error: "unsupported query" }), {
+            status: 400,
+          });
+        }
+        return new Response(
+          JSON.stringify({
+            links: [{ slug: "fallback", url: "https://example.com/fallback" }],
+          }),
+          { status: 200 },
+        );
+      },
+    });
+
+    const result = await client.listLinks(undefined, 1, 1_000);
+
+    expect(result.success).toBe(true);
+    expect(result.list.map((link) => link.slug)).toEqual(["fallback"]);
+    expect(requestedUrls).toEqual([
+      "https://sink.example/api/link/list?limit=1000",
+      "https://sink.example/api/link/list",
+    ]);
+  });
+
   it("rejects incomplete successful link responses", async () => {
     const client = new SinkClient({
       baseUrl: "https://sink.example",
