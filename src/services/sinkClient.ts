@@ -6,6 +6,7 @@ import type {
   SinkStats,
   SinkQueryParams,
   SinkSearchParams,
+  SinkSearchResult,
   SinkCountParams,
   SinkListParams,
   UrlCheckResult,
@@ -645,15 +646,9 @@ export class SinkClient {
   /**
    * Searches links using /api/link/search.
    */
-  async searchLinks(params: SinkSearchParams = {}): Promise<{
-    success: boolean;
-    list: SinkLink[];
-    total: number;
-    cursor?: string | null;
-    listComplete?: boolean;
-    error?: string;
-    status: number;
-  }> {
+  async searchLinks(
+    params: SinkSearchParams = {},
+  ): Promise<SinkSearchResult> {
     const queryParams = new URLSearchParams();
     if (params.q) queryParams.append("q", params.q);
     if (params.url) queryParams.append("url", params.url);
@@ -965,13 +960,21 @@ export class SinkClient {
 
     const queryString = params.toString();
     const endpoint = `/api/link/list${queryString ? `?${queryString}` : ""}`;
+    const canFallbackToBareList =
+      page === 1 &&
+      (typeof tagOrOptions === "string"
+        ? !tagOrOptions
+        : !tagOrOptions?.cursor &&
+          !tagOrOptions?.tag &&
+          !tagOrOptions?.sort &&
+          !tagOrOptions?.status);
 
     let res = await this.request<unknown>(endpoint, {
       method: "GET",
     });
 
-    // If query string request failed, fallback to bare /api/link/list
-    if (!res.success && queryString) {
+    // Preserve compatibility only when removing the query cannot change semantics.
+    if (!res.success && queryString && canFallbackToBareList) {
       logger.debug(
         `Failed to fetch with queryString (${endpoint}), falling back to bare /api/link/list`,
       );
@@ -985,7 +988,7 @@ export class SinkClient {
         success: false,
         list: [],
         total: 0,
-        error: res.error || "Failed to list links",
+        error: res.error ?? "Failed to list links",
       };
     }
 

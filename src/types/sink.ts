@@ -88,6 +88,16 @@ export interface SinkSearchParams {
   limit?: number;
 }
 
+export interface SinkSearchResult {
+  success: boolean;
+  list: SinkLink[];
+  total: number;
+  cursor?: string | null;
+  listComplete?: boolean;
+  error?: string;
+  status: number;
+}
+
 export interface SinkCountParams {
   q?: string;
   url?: string;
@@ -97,7 +107,7 @@ export interface SinkCountParams {
 
 export interface SinkListParams {
   limit?: number;
-  cursor?: string;
+  cursor?: string | null;
   sort?: "newest" | "oldest" | "az" | "za";
   tag?: string;
   status?: "active" | "expired" | "all";

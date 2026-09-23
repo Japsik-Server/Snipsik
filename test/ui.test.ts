@@ -15,6 +15,8 @@ const mockStats: UserDashboardStats = {
   activeLinks: 2,
   expiredLinks: 0,
   totalClicks: 42,
+  displayedLinks: 2,
+  linksComplete: true,
   links: [
     {
       slug: "abc-1234",
@@ -34,6 +36,16 @@ const mockStats: UserDashboardStats = {
 };
 
 describe("Discord Components v2 UI Modules", () => {
+  describe("formatPartialOwnedLinksNotice", () => {
+    it("labels an incomplete empty result with its scanned range", () => {
+      const notice = ui.formatPartialOwnedLinksNotice(20_000, 3);
+
+      expect(notice).toContain("최신 `20,000`개");
+      expect(notice).toContain("전체 조회가 완료되지 않아");
+      expect(notice).toContain("Sink 검색 기준 결과: `3`개");
+    });
+  });
+
   describe("createDashboardView", () => {
     it("renders single top overview container when no link is selected", () => {
       const view = ui.createDashboardView(mockUser, mockStats);
@@ -75,6 +87,21 @@ describe("Discord Components v2 UI Modules", () => {
       const json = JSON.stringify(view.components[1].toJSON());
 
       expect(json).toContain("설정 안 됨");
+    });
+
+    it("labels capped dashboard statistics as partial", () => {
+      const stats: UserDashboardStats = {
+        ...mockStats,
+        totalLinks: 2_500,
+        displayedLinks: 2_000,
+        linksComplete: false,
+      };
+      const view = ui.createDashboardView(mockUser, stats);
+      const json = JSON.stringify(view.components[0].toJSON());
+
+      expect(json).toContain("검색 기준 총 링크");
+      expect(json).toContain("표시 링크 클릭 합계");
+      expect(json).toContain("2,000");
     });
   });
 
