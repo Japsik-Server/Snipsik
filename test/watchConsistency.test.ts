@@ -18,7 +18,10 @@ describe("watch storage consistency", () => {
       VALUES ('guild', 'channel', 'first', 1), ('guild', 'channel', 'second', 2);
     `);
     const migration = await Bun.file(
-      new URL("../drizzle/0001_tan_sir_ram.sql", import.meta.url),
+      new URL(
+        "../drizzle/0001_deduplicate_watch_channels_and_add_unique_index.sql",
+        import.meta.url,
+      ),
     ).text();
     for (const statement of migration.split("--> statement-breakpoint")) {
       if (statement.trim()) await client.execute(statement);
