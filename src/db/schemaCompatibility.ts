@@ -19,7 +19,7 @@ const REQUIRED_COLUMNS: Record<string, readonly string[]> = {
 
 export async function assertSchemaCompatible(client: Pick<Client, "execute">): Promise<void> {
   for (const [table, columns] of Object.entries(REQUIRED_COLUMNS)) {
-    const result = await client.execute(`PRAGMA table_info(${table})`);
+    const result = await client.execute({ sql: "SELECT name FROM pragma_table_info(?)", args: [table] });
     const actual = new Set(result.rows.map((row) => String(row.name)));
     const missing = columns.filter((column) => !actual.has(column));
     if (missing.length > 0) {

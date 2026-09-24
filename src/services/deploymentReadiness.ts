@@ -35,10 +35,25 @@ export async function probeDatabase(execute: () => Promise<unknown>, timeoutMs =
   }
 }
 
+export function createDatabaseProbe(execute: () => Promise<unknown>, timeoutMs = DB_PROBE_TIMEOUT_MS): () => Promise<void> {
+  let pending: Promise<unknown> | undefined;
+  return async () => {
+    if (pending) throw new Error("Previous database readiness probe is still running");
+    const execution = Promise.resolve().then(execute);
+    pending = execution;
+    void execution.then(
+      () => { if (pending === execution) pending = undefined; },
+      () => { if (pending === execution) pending = undefined; },
+    );
+    await probeDatabase(() => execution, timeoutMs);
+  };
+}
+
 export function startDeploymentReadiness(client: Client): () => void {
   let stopped = false;
   let inFlight = false;
   let lastReady = false;
+  const probe = createDatabaseProbe(() => dbClient.execute("SELECT 1"));
 
   const refresh = async (): Promise<void> => {
     if (stopped || inFlight) return;
@@ -46,7 +61,7 @@ export function startDeploymentReadiness(client: Client): () => void {
     try {
       let dbAvailable = false;
       try {
-        await probeDatabase(() => dbClient.execute("SELECT 1"));
+        await probe();
         dbAvailable = true;
       } catch (error) {
         logger.warn("Deployment readiness DB probe failed:", error);

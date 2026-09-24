@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { createClient } from "@libsql/client";
 import { assertSchemaCompatible, REQUIRED_SCHEMA_VERSION } from "@/db/schemaCompatibility";
 import { isDeploymentReady } from "@/services/readinessPolicy";
-import { probeDatabase, writeReadinessTimestamp } from "@/services/deploymentReadiness";
+import { createDatabaseProbe, probeDatabase, writeReadinessTimestamp } from "@/services/deploymentReadiness";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -21,6 +21,23 @@ describe("deployment readiness", () => {
     let attempts = 0;
     await probeDatabase(async () => { attempts++; });
     expect(attempts).toBe(1);
+  });
+
+  it("does not start another DB request while a timed-out request is pending", async () => {
+    let finish!: () => void;
+    let attempts = 0;
+    const probe = createDatabaseProbe(() => {
+      attempts++;
+      return attempts === 1 ? new Promise<void>((resolve) => { finish = resolve; }) : Promise.resolve();
+    }, 10);
+
+    await expect(probe()).rejects.toThrow("timed out");
+    await expect(probe()).rejects.toThrow("still running");
+    expect(attempts).toBe(1);
+    finish();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await expect(probe()).resolves.toBeUndefined();
+    expect(attempts).toBe(2);
   });
 
   it("replaces the readiness timestamp without exposing an empty file", async () => {
