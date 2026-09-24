@@ -2,6 +2,10 @@ import { describe, expect, it } from "bun:test";
 import { createClient } from "@libsql/client";
 import { assertSchemaCompatible, REQUIRED_SCHEMA_VERSION } from "@/db/schemaCompatibility";
 import { isDeploymentReady } from "@/services/readinessPolicy";
+import { probeDatabase, writeReadinessTimestamp } from "@/services/deploymentReadiness";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 describe("deployment readiness", () => {
   it("requires Discord, DB, and every policy cache ready", () => {
@@ -10,6 +14,29 @@ describe("deployment readiness", () => {
     expect(isDeploymentReady(true, false, ["ready", "ready", "ready"])).toBe(false);
     expect(isDeploymentReady(true, true, ["ready", "degraded", "ready"])).toBe(false);
     expect(isDeploymentReady(true, true, ["ready", "uninitialized", "ready"])).toBe(false);
+  });
+
+  it("times out a stalled DB probe so the next probe can run", async () => {
+    await expect(probeDatabase(() => new Promise(() => {}), 10)).rejects.toThrow("timed out");
+    let attempts = 0;
+    await probeDatabase(async () => { attempts++; });
+    expect(attempts).toBe(1);
+  });
+
+  it("replaces the readiness timestamp without exposing an empty file", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "snipsik-readiness-"));
+    const file = join(dir, "ready");
+    try {
+      await writeReadinessTimestamp(file, 1);
+      const writes = (async () => {
+        for (let index = 0; index < 30; index++) await writeReadinessTimestamp(file, index + 2);
+      })();
+      const reads = Promise.all(Array.from({ length: 100 }, () => readFile(file, "utf8")));
+      await writes;
+      expect((await reads).every((value) => /^\d+$/.test(value))).toBe(true);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });
 

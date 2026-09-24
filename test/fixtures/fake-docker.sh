@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+printf '%s\n' "$*" >> "$MOCK_DOCKER_STATE/commands"
 
 state() { echo "$MOCK_DOCKER_STATE/$1"; }
 read_state() { IFS='|' read -r image running health < "$(state "$1")"; }
@@ -29,6 +30,7 @@ case "${1:-}" in
     esac
     ;;
   run)
+    [ "${!#}" = dist/db/checkSchema.js ] || exit 2
     [ "${MOCK_SCHEMA_FAIL:-0}" = 0 ]
     ;;
   create)
@@ -46,6 +48,7 @@ case "${1:-}" in
     interrupt_at stop
     ;;
   rename)
+    if [ "${MOCK_FAIL_RESTORE_RENAME:-0}" = 1 ] && [ "$2" = snipsik-bot-backup ]; then exit 1; fi
     mv "$(state "$2")" "$(state "$3")"
     if [ "$3" = snipsik-bot-backup ]; then interrupt_at rename-backup; fi
     if [ "$3" = snipsik-bot ]; then interrupt_at rename-primary; fi
@@ -67,5 +70,11 @@ case "${1:-}" in
     rm -f "$(state "$name")"
     ;;
   logs) exit 0 ;;
+  image)
+    case "${2:-}" in
+      rm|prune) exit 0 ;;
+    esac
+    exit 2
+    ;;
   *) echo "Unexpected fake docker command: $*" >&2; exit 2 ;;
 esac

@@ -5,7 +5,7 @@ import { join } from "node:path";
 
 const root = join(import.meta.dir, "..");
 
-async function scenario(options: { schemaFail?: boolean; newHealth?: string; killAt?: string } = {}) {
+async function scenario(options: { schemaFail?: boolean; newHealth?: string; killAt?: string; failRestoreRename?: boolean } = {}) {
   const dir = await mkdtemp(join(tmpdir(), "snipsik-deploy-test-"));
   const bin = join(dir, "bin");
   const state = join(dir, "state");
@@ -24,6 +24,7 @@ async function scenario(options: { schemaFail?: boolean; newHealth?: string; kil
     MOCK_SCHEMA_FAIL: options.schemaFail ? "1" : "0",
     MOCK_NEW_HEALTH: options.newHealth ?? "healthy",
     MOCK_KILL_AT: options.killAt ?? "",
+    MOCK_FAIL_RESTORE_RENAME: options.failRestoreRename ? "1" : "0",
   };
   const run = async () => {
     const process = Bun.spawn(["bash", "scripts/deploy.sh", "new-image", "snipsik-bot", "us-central1", join(dir, "env")], {
@@ -44,7 +45,8 @@ async function scenario(options: { schemaFail?: boolean; newHealth?: string; kil
     }
     return found;
   };
-  return { run, containers, cleanup: () => rm(dir, { recursive: true, force: true }) };
+  const commands = () => readFile(join(state, "commands"), "utf8");
+  return { run, containers, commands, cleanup: () => rm(dir, { recursive: true, force: true }) };
 }
 
 describe("deploy switch and recovery", () => {
@@ -61,6 +63,8 @@ describe("deploy switch and recovery", () => {
     try {
       expect((await test.run()).code).toBe(0);
       expect(await test.containers()).toEqual({ "snipsik-bot": "new-image|true|healthy" });
+      expect(await test.commands()).toContain("image rm old-image");
+      expect(await test.commands()).toContain("image prune -f");
     } finally { await test.cleanup(); }
   });
 
@@ -69,6 +73,17 @@ describe("deploy switch and recovery", () => {
     try {
       expect((await test.run()).code).not.toBe(0);
       expect(await test.containers()).toEqual({ "snipsik-bot": "old-image|true|healthy" });
+    } finally { await test.cleanup(); }
+  });
+
+  it("does not start the candidate if restoring the backup fails", async () => {
+    const test = await scenario({ newHealth: "unhealthy", failRestoreRename: true });
+    try {
+      expect((await test.run()).code).not.toBe(0);
+      expect(await test.containers()).toEqual({ "snipsik-bot-backup": "old-image|false|healthy" });
+      const commands = await test.commands();
+      expect(commands).toContain("rename snipsik-bot-backup snipsik-bot");
+      expect(commands.split("\n").filter((command) => command === "start snipsik-bot")).toHaveLength(1);
     } finally { await test.cleanup(); }
   });
 

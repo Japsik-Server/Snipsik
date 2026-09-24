@@ -20,15 +20,15 @@ healthy() { [ "$(dcmd inspect -f '{{.State.Health.Status}}' "$1" 2>/dev/null || 
 restore_backup() {
   echo "==> Restoring previous container..." >&2
   if exists "$BACKUP"; then
-    if exists "$CONTAINER_NAME"; then dcmd rm -f "$CONTAINER_NAME"; fi
-    dcmd rename "$BACKUP" "$CONTAINER_NAME"
-    dcmd start "$CONTAINER_NAME"
+    if exists "$CONTAINER_NAME"; then dcmd rm -f "$CONTAINER_NAME" || return 1; fi
+    dcmd rename "$BACKUP" "$CONTAINER_NAME" || return 1
+    dcmd start "$CONTAINER_NAME" || return 1
     echo "Recovery complete: previous container is running." >&2
   elif exists "$CONTAINER_NAME" && ! running "$CONTAINER_NAME"; then
-    dcmd start "$CONTAINER_NAME"
+    dcmd start "$CONTAINER_NAME" || return 1
     echo "Recovery complete: stopped primary restarted." >&2
   fi
-  if exists "$CANDIDATE"; then dcmd rm -f "$CANDIDATE"; fi
+  if exists "$CANDIDATE"; then dcmd rm -f "$CANDIDATE" || return 1; fi
 }
 
 on_exit() {
@@ -77,7 +77,7 @@ dcmd pull "$IMAGE_URI"
 
 # Run the preflight in the target image before stopping the active bot.
 echo "==> Checking required database schema..."
-dcmd run --rm --env-file "$ENV_FILE" --entrypoint bun "$IMAGE_URI" run dist/checkSchema.js
+dcmd run --rm --env-file "$ENV_FILE" --entrypoint bun "$IMAGE_URI" run dist/db/checkSchema.js
 
 echo "==> Creating candidate container..."
 dcmd create --name "$CANDIDATE" --restart unless-stopped --env-file "$ENV_FILE" "$IMAGE_URI" >/dev/null
@@ -95,8 +95,19 @@ echo "==> Waiting for Discord, database, and cache readiness..."
 for ((attempt=1; attempt<=30; attempt++)); do
   if healthy "$CONTAINER_NAME"; then
     echo "New container is healthy."
+    previous_image=""
+    if exists "$BACKUP"; then
+      previous_image="$(dcmd inspect -f '{{.Config.Image}}' "$BACKUP")"
+    fi
     COMPLETE=1
-    if exists "$BACKUP"; then dcmd rm -f "$BACKUP"; fi
+    if exists "$BACKUP" && ! dcmd rm -f "$BACKUP"; then
+      echo "Could not remove backup container; it will be cleaned up on the next deployment." >&2
+      previous_image=""
+    fi
+    if [ -n "$previous_image" ] && [ "$previous_image" != "$IMAGE_URI" ]; then
+      dcmd image rm "$previous_image" || echo "Could not remove previous image: $previous_image" >&2
+    fi
+    dcmd image prune -f || echo "Could not prune dangling images." >&2
     echo "Deployment succeeded with one running bot."
     exit 0
   fi
