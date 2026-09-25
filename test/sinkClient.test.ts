@@ -99,26 +99,26 @@ describe("SinkClient New API Tests", () => {
     }
   });
 
-  it("should retrieve a link with getLink via fallback without listAllLinks full-scan", async () => {
+  it("should retrieve a link with getLink using queryLink as primary without calling legacy endpoints", async () => {
     const originalFetch = globalThis.fetch;
     let directCalled = false;
     let queryCalled = false;
 
     globalThis.fetch = mock(async (url: RequestInfo | URL) => {
       const urlStr = String(url);
-      if (urlStr.includes("/api/link/fallback-slug")) {
+      if (urlStr.includes("/api/link/primary-slug")) {
         directCalled = true;
         return new Response(JSON.stringify({ error: "Not Found" }), {
           status: 404,
           statusText: "Not Found",
         });
       }
-      if (urlStr.includes("/api/link/query?slug=fallback-slug")) {
+      if (urlStr.includes("/api/link/query?slug=primary-slug")) {
         queryCalled = true;
         return new Response(
           JSON.stringify({
-            slug: "fallback-slug",
-            url: "https://fallback.com",
+            slug: "primary-slug",
+            url: "https://primary.com",
             clicks: 5,
           }),
           { status: 200 },
@@ -128,15 +128,203 @@ describe("SinkClient New API Tests", () => {
     }) as unknown as typeof fetch;
 
     try {
-      const res = await sinkClient.getLink("fallback-slug");
-      expect(directCalled).toBe(true);
+      const res = await sinkClient.getLink("primary-slug");
       expect(queryCalled).toBe(true);
+      expect(directCalled).toBe(false);
       expect(res.success).toBe(true);
-      expect(res.link?.slug).toBe("fallback-slug");
-      expect(res.link?.url).toBe("https://fallback.com");
+      expect(res.link?.slug).toBe("primary-slug");
+      expect(res.link?.url).toBe("https://primary.com");
     } finally {
       globalThis.fetch = originalFetch;
     }
+  });
+
+  it("should fall back to legacy direct endpoint when query and search fail", async () => {
+    const originalFetch = globalThis.fetch;
+    let directCalled = false;
+    let queryCalled = false;
+    let searchCalled = false;
+
+    globalThis.fetch = mock(async (url: RequestInfo | URL) => {
+      const urlStr = String(url);
+      if (urlStr.includes("/api/link/query?slug=legacy-slug")) {
+        queryCalled = true;
+        return new Response(JSON.stringify({ error: "Not Found" }), {
+          status: 404,
+        });
+      }
+      if (urlStr.includes("/api/link/search")) {
+        searchCalled = true;
+        return new Response(JSON.stringify({ list: [], total: 0 }), {
+          status: 200,
+        });
+      }
+      if (urlStr.includes("/api/link/legacy-slug")) {
+        directCalled = true;
+        return new Response(
+          JSON.stringify({
+            slug: "legacy-slug",
+            url: "https://legacy.com",
+          }),
+          { status: 200 },
+        );
+      }
+      return new Response("{}", { status: 404 });
+    }) as unknown as typeof fetch;
+
+    try {
+      const res = await sinkClient.getLink("legacy-slug");
+      expect(queryCalled).toBe(true);
+      expect(searchCalled).toBe(true);
+      expect(directCalled).toBe(true);
+      expect(res.success).toBe(true);
+      expect(res.link?.slug).toBe("legacy-slug");
+      expect(res.link?.url).toBe("https://legacy.com");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("should gracefully handle HTML SPA responses on legacy direct endpoint without 502 contract abort", async () => {
+    const originalFetch = globalThis.fetch;
+    let queryCalled = false;
+    let legacyCalled = false;
+
+    globalThis.fetch = mock(async (url: RequestInfo | URL) => {
+      const urlStr = String(url);
+      if (urlStr.includes("/api/link/query?slug=html-slug")) {
+        queryCalled = true;
+        return new Response(JSON.stringify({ error: "Link not found" }), {
+          status: 404,
+        });
+      }
+      if (urlStr.includes("/api/link/search")) {
+        return new Response(JSON.stringify({ list: [], total: 0 }), {
+          status: 200,
+        });
+      }
+      if (urlStr.includes("/api/link/html-slug")) {
+        legacyCalled = true;
+        return new Response(
+          "<!DOCTYPE html><html><body>SPA Frontend</body></html>",
+          {
+            status: 200,
+            headers: { "Content-Type": "text/html; charset=utf-8" },
+          },
+        );
+      }
+      return new Response("{}", { status: 404 });
+    }) as unknown as typeof fetch;
+
+    try {
+      const res = await sinkClient.getLink("html-slug");
+      expect(queryCalled).toBe(true);
+      expect(legacyCalled).toBe(true);
+      expect(res.success).toBe(false);
+      expect(res.status).toBe(404);
+      expect(res.error).toBe("Link not found");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("should reject 200 OK responses containing HTML content in request()", async () => {
+    const client = new SinkClient({
+      baseUrl: "https://sink.example",
+      token: "test-token",
+      fetchImpl: async () =>
+        new Response("<!DOCTYPE html><html><body>Not an API</body></html>", {
+          status: 200,
+          headers: { "Content-Type": "text/html" },
+        }),
+    });
+
+    const res = await client.createLink({
+      slug: "test",
+      url: "https://example.com",
+    });
+    expect(res.success).toBe(false);
+    expect(res.error).toContain("unexpected HTML response");
+  });
+
+  it("should successfully delete a link when getLink pre-check succeeds via queryLink", async () => {
+    const requestedCalls: string[] = [];
+    const client = new SinkClient({
+      baseUrl: "https://sink.example",
+      token: "test-token",
+      fetchImpl: async (url, init) => {
+        const method = init?.method || "GET";
+        const urlStr = String(url);
+        requestedCalls.push(`${method} ${urlStr}`);
+
+        if (
+          method === "GET" &&
+          urlStr.includes("/api/link/query?slug=to-delete")
+        ) {
+          return new Response(
+            JSON.stringify({
+              slug: "to-delete",
+              url: "https://example.com/target",
+            }),
+            { status: 200 },
+          );
+        }
+        if (method === "POST" && urlStr.includes("/api/link/delete")) {
+          return new Response(JSON.stringify({ success: true }), {
+            status: 200,
+          });
+        }
+        return new Response("{}", { status: 404 });
+      },
+    });
+
+    const res = await client.deleteLink("to-delete");
+    expect(res.success).toBe(true);
+    expect(requestedCalls).toEqual([
+      "GET https://sink.example/api/link/query?slug=to-delete",
+      "POST https://sink.example/api/link/delete",
+    ]);
+  });
+
+  it("should return not-found error message when deleteLink target does not exist even if legacy endpoint returns HTML", async () => {
+    const client = new SinkClient({
+      baseUrl: "https://sink.example",
+      token: "test-token",
+      fetchImpl: async (url, init) => {
+        const method = init?.method || "GET";
+        const urlStr = String(url);
+
+        if (method === "GET") {
+          if (urlStr.includes("/api/link/query?slug=ghost-slug")) {
+            return new Response(JSON.stringify({ error: "Link not found" }), {
+              status: 404,
+            });
+          }
+          if (urlStr.includes("/api/link/search")) {
+            return new Response(JSON.stringify({ list: [], total: 0 }), {
+              status: 200,
+            });
+          }
+          if (urlStr.includes("/api/link/ghost-slug")) {
+            // Nuxt catch-all returning 200 OK HTML
+            return new Response(
+              "<!DOCTYPE html><html><body>SPA</body></html>",
+              {
+                status: 200,
+                headers: { "Content-Type": "text/html" },
+              },
+            );
+          }
+        }
+        return new Response("{}", { status: 404 });
+      },
+    });
+
+    const res = await client.deleteLink("ghost-slug");
+    expect(res.success).toBe(false);
+    expect(res.error).toContain(
+      "단축 링크 '/ghost-slug'을(를) 찾을 수 없습니다.",
+    );
   });
 
   it("should find exact match in search fallback when other search results exist", async () => {
@@ -578,9 +766,8 @@ describe("Dashboard Stats Optimization Tests", () => {
     });
 
     sinkClient.listLinks = mock(async (options) => {
-      const offset = options && typeof options === "object" && options.cursor
-        ? 1_000
-        : 0;
+      const offset =
+        options && typeof options === "object" && options.cursor ? 1_000 : 0;
       return {
         success: true,
         list: Array.from({ length: 1_000 }, (_, index) => ({
