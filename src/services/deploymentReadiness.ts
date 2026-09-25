@@ -2,6 +2,8 @@ import { writeFile, unlink, rename } from "node:fs/promises";
 import { rmSync } from "node:fs";
 import type { Client } from "discord.js";
 import { createClient, type Client as DatabaseClient } from "@libsql/client";
+import { drizzle } from "drizzle-orm/libsql";
+import { sql } from "drizzle-orm";
 import { config } from "@/config";
 import { getAutomaticProcessingReadiness } from "@/services/cacheReadiness";
 import { logger } from "@/utils/logger";
@@ -67,7 +69,7 @@ function createReadinessDatabaseProbe(): () => Promise<void> {
     activeClient = client;
     controller = requestController;
     try {
-      await client.execute("SELECT 1");
+      await drizzle(client).run(sql`SELECT 1`);
     } finally {
       client.close();
       if (activeClient === client) {

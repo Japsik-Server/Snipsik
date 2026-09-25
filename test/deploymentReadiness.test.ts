@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { createClient } from "@libsql/client";
 import { assertSchemaCompatible, REQUIRED_SCHEMA_VERSION } from "@/db/schemaCompatibility";
+import { firstConfiguredValue } from "@/db/connectionConfig";
 import { isDeploymentReady } from "@/services/readinessPolicy";
 import { createDatabaseProbe, probeDatabase, writeReadinessTimestamp } from "@/services/deploymentReadiness";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
@@ -77,21 +78,33 @@ describe("deployment readiness", () => {
 });
 
 describe("schema deployment gate", () => {
+  it("selects the first nonempty runtime and preflight connection value", () => {
+    expect(firstConfiguredValue("", "fallback")).toBe("fallback");
+    expect(firstConfiguredValue("primary", "fallback")).toBe("primary");
+    expect(firstConfiguredValue("  ", undefined)).toBeUndefined();
+  });
+
   it("uses the runtime database URL fallback when DATABASE_URL is empty", async () => {
-    const process = Bun.spawn(["bun", "src/db/checkSchema.ts"], {
-      cwd: join(import.meta.dir, ".."),
-      env: { ...globalThis.process.env, DATABASE_URL: "", TURSO_DATABASE_URL: "file::memory:" },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    expect(await process.exited).not.toBe(0);
-    const output = await new Response(process.stderr).text();
-    expect(output).toContain("Schema v1 missing");
-    expect(output).not.toContain("DATABASE_URL or TURSO_DATABASE_URL is required");
+    const dir = await mkdtemp(join(tmpdir(), "snipsik-schema-fallback-"));
+    try {
+      const process = Bun.spawn(["bun", "src/db/checkSchema.ts"], {
+        cwd: join(import.meta.dir, ".."),
+        env: { ...globalThis.process.env, DATABASE_URL: "", TURSO_DATABASE_URL: `file:${join(dir, "fallback.db")}` },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      expect(await process.exited).not.toBe(0);
+      const output = await new Response(process.stderr).text();
+      expect(output).toContain("Schema v1 missing");
+      expect(output).not.toContain("DATABASE_URL or TURSO_DATABASE_URL is required");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 
   it("accepts an applied baseline and rejects a missing required column", async () => {
-    const db = createClient({ url: "file::memory:" });
+    const dir = await mkdtemp(join(tmpdir(), "snipsik-schema-baseline-"));
+    const db = createClient({ url: `file:${join(dir, "baseline.db")}` });
     try {
       await db.execute("CREATE TABLE watch_channels (id INTEGER, guild_id TEXT, channel_id TEXT, created_by TEXT, created_at INTEGER)");
       await db.execute("CREATE TABLE guild_configs (guild_id TEXT, auto_shorten_enabled INTEGER, auto_shorten_min_url_length INTEGER, ignored_domains TEXT, version INTEGER, created_at INTEGER, updated_at INTEGER)");
@@ -102,6 +115,7 @@ describe("schema deployment gate", () => {
       await expect(assertSchemaCompatible(db)).rejects.toThrow("Schema v1 missing user_configs: fixupx_enabled");
     } finally {
       db.close();
+      await rm(dir, { recursive: true, force: true });
     }
   });
 });

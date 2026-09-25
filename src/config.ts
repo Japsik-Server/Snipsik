@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { firstConfiguredValue } from "@/db/connectionConfig";
 
 export const envSchema = z.object({
   DISCORD_TOKEN: z.string().min(1, "DISCORD_TOKEN is required"),
@@ -14,7 +15,7 @@ export const envSchema = z.object({
       ) {
         return "file::memory:";
       }
-      return val || process.env.TURSO_DATABASE_URL || "";
+      return firstConfiguredValue(val, process.env.TURSO_DATABASE_URL) ?? "";
     })
     .pipe(
       z
@@ -59,7 +60,7 @@ export const envSchema = z.object({
   DATABASE_AUTH_TOKEN: z
     .string()
     .optional()
-    .transform((val) => val || process.env.TURSO_AUTH_TOKEN || undefined),
+    .transform((val) => firstConfiguredValue(val, process.env.TURSO_AUTH_TOKEN)),
   SINK_BASE_URL: z
     .string()
     .url("SINK_BASE_URL must be a valid URL")
