@@ -327,6 +327,92 @@ describe("SinkClient New API Tests", () => {
     );
   });
 
+  it("should fast-fail getLink on auth errors (401/403) or network failure (0) without running fallbacks", async () => {
+    for (const testStatus of [401, 403, 0]) {
+      const requestedUrls: string[] = [];
+      const client = new SinkClient({
+        baseUrl: "https://sink.example",
+        token: "test-token",
+        fetchImpl: async (url) => {
+          requestedUrls.push(String(url));
+          if (testStatus === 0) {
+            throw new Error("Network unreachable");
+          }
+          return new Response(JSON.stringify({ error: "Auth failure" }), {
+            status: testStatus,
+          });
+        },
+      });
+
+      const res = await client.getLink("auth-fail-slug");
+      expect(res.success).toBe(false);
+      expect(res.status).toBe(testStatus);
+      expect(requestedUrls).toEqual([
+        "https://sink.example/api/link/query?slug=auth-fail-slug",
+      ]);
+    }
+  });
+
+  it("should sanitize HTML error response on 500 status in request()", async () => {
+    const client = new SinkClient({
+      baseUrl: "https://sink.example",
+      token: "test-token",
+      fetchImpl: async () =>
+        new Response(
+          "<html><head><title>500 Internal</title></head><body>Crash</body></html>",
+          {
+            status: 500,
+            statusText: "Internal Server Error",
+            headers: { "Content-Type": "text/html" },
+          },
+        ),
+    });
+
+    const res = await client.getStats("some-slug");
+    expect(res.success).toBe(false);
+    expect(res.error).toBe(
+      "HTTP 500: Internal Server Error (HTML error response)",
+    );
+  });
+
+  it("should report fallback error over original 404 in deleteLink when fallback fails", async () => {
+    const client = new SinkClient({
+      baseUrl: "https://sink.example",
+      token: "test-token",
+      fetchImpl: async (url, init) => {
+        const method = init?.method || "GET";
+        const urlStr = String(url);
+        if (method === "GET") {
+          return new Response(
+            JSON.stringify({
+              slug: "fallback-target",
+              url: "https://example.com",
+            }),
+            { status: 200 },
+          );
+        }
+        if (method === "POST") {
+          return new Response(JSON.stringify({ error: "Endpoint Not Found" }), {
+            status: 404,
+          });
+        }
+        if (method === "DELETE") {
+          return new Response(
+            JSON.stringify({ error: "Fallback permission denied" }),
+            {
+              status: 403,
+            },
+          );
+        }
+        return new Response("{}", { status: 404 });
+      },
+    });
+
+    const res = await client.deleteLink("fallback-target");
+    expect(res.success).toBe(false);
+    expect(res.error).toBe("Fallback permission denied");
+  });
+
   it("should find exact match in search fallback when other search results exist", async () => {
     const originalFetch = globalThis.fetch;
     let searchUrl = "";

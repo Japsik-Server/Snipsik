@@ -521,9 +521,7 @@ export class SinkClient {
         /^\s*<!doctype|^\s*<html/i.test(text);
 
       let json: unknown;
-      if (isHtml) {
-        json = { message: text };
-      } else {
+      if (!isHtml) {
         try {
           json = text ? JSON.parse(text) : undefined;
         } catch {
@@ -799,7 +797,11 @@ export class SinkClient {
     if (queryRes.success && queryRes.link && queryRes.link.url) {
       return { success: true, link: queryRes.link, status: queryRes.status };
     }
-    if (queryRes.status === 401 || queryRes.status === 403) {
+    if (
+      queryRes.status === 401 ||
+      queryRes.status === 403 ||
+      queryRes.status === 0
+    ) {
       return queryRes;
     }
 
@@ -918,7 +920,7 @@ export class SinkClient {
 
       if (!fallbackRes.success) {
         const errorMsg =
-          res.error || fallbackRes.error || "Failed to delete link";
+          fallbackRes.error || res.error || "Failed to delete link";
         logger.warn(`Failed to delete link '/${cleanSlug}': ${errorMsg}`);
         return {
           success: false,
