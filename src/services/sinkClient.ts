@@ -790,7 +790,21 @@ export class SinkClient {
     error?: string;
     status?: number;
   }> {
-    const cleanSlug = slug.startsWith("/") ? slug.substring(1) : slug;
+    const rawClean = slug.startsWith("/") ? slug.substring(1) : slug;
+    const slugValidation = z
+      .string()
+      .trim()
+      .min(1)
+      .max(100)
+      .safeParse(rawClean);
+    if (!slugValidation.success) {
+      return {
+        success: false,
+        error: "잘못된 슬러그입니다.",
+        status: 400,
+      };
+    }
+    const cleanSlug = slugValidation.data;
 
     // 1. Primary: Query /api/link/query?slug=... (Official Sink endpoint)
     const queryRes = await this.queryLink({ slug: cleanSlug });
@@ -879,7 +893,20 @@ export class SinkClient {
   async deleteLink(
     slug: string,
   ): Promise<{ success: boolean; error?: string }> {
-    const cleanSlug = slug.startsWith("/") ? slug.substring(1) : slug;
+    const rawClean = slug.startsWith("/") ? slug.substring(1) : slug;
+    const slugValidation = z
+      .string()
+      .trim()
+      .min(1)
+      .max(100)
+      .safeParse(rawClean);
+    if (!slugValidation.success) {
+      return {
+        success: false,
+        error: "잘못된 슬러그입니다.",
+      };
+    }
+    const cleanSlug = slugValidation.data;
 
     // Check if the link exists before attempting deletion
     const existing = await this.getLink(cleanSlug);
