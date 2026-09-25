@@ -40,6 +40,25 @@ describe("deployment readiness", () => {
     expect(attempts).toBe(2);
   });
 
+  it("retries after the previous database transport is cancelled", async () => {
+    let attempts = 0;
+    let cancelCount = 0;
+    let rejectRequest!: (error: Error) => void;
+    const probe = createDatabaseProbe(() => {
+      attempts++;
+      return new Promise<void>((_, reject) => { rejectRequest = reject; });
+    }, 10, () => {
+      cancelCount++;
+      rejectRequest(new Error("aborted"));
+    });
+
+    await expect(probe()).rejects.toThrow("timed out");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await expect(probe()).rejects.toThrow("timed out");
+    expect(attempts).toBe(2);
+    expect(cancelCount).toBe(2);
+  });
+
   it("replaces the readiness timestamp without exposing an empty file", async () => {
     const dir = await mkdtemp(join(tmpdir(), "snipsik-readiness-"));
     const file = join(dir, "ready");
@@ -58,6 +77,19 @@ describe("deployment readiness", () => {
 });
 
 describe("schema deployment gate", () => {
+  it("uses the runtime database URL fallback when DATABASE_URL is empty", async () => {
+    const process = Bun.spawn(["bun", "src/db/checkSchema.ts"], {
+      cwd: join(import.meta.dir, ".."),
+      env: { ...globalThis.process.env, DATABASE_URL: "", TURSO_DATABASE_URL: "file::memory:" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(await process.exited).not.toBe(0);
+    const output = await new Response(process.stderr).text();
+    expect(output).toContain("Schema v1 missing");
+    expect(output).not.toContain("DATABASE_URL or TURSO_DATABASE_URL is required");
+  });
+
   it("accepts an applied baseline and rejects a missing required column", async () => {
     const db = createClient({ url: "file::memory:" });
     try {

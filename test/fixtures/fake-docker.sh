@@ -13,7 +13,11 @@ interrupt_at() {
 }
 
 case "${1:-}" in
-  info|pull) exit 0 ;;
+  info)
+    if [ "${MOCK_REQUIRE_SUDO:-0}" = 1 ] && [ "${MOCK_AS_SUDO:-0}" != 1 ]; then exit 1; fi
+    exit 0
+    ;;
+  pull) exit 0 ;;
   container)
     [ "$2" = inspect ] && [ -e "$(state "$3")" ]
     ;;
@@ -24,7 +28,7 @@ case "${1:-}" in
     read_state "$name"
     case "$format" in
       *State.Running*) echo "$running" ;;
-      *State.Health.Status*) echo "$health" ;;
+      *State.Health*) if [ "$health" = none ]; then echo missing; else echo "$health"; fi ;;
       *State.Status*) if [ "$running" = true ]; then echo running; else echo exited; fi ;;
       *Config.Image*) echo "$image" ;;
     esac
@@ -67,6 +71,7 @@ case "${1:-}" in
     ;;
   rm)
     if [ "$2" = -f ]; then name="$3"; else name="$2"; fi
+    if [ "${MOCK_FAIL_BACKUP_REMOVE:-0}" = 1 ] && [ "$name" = snipsik-bot-backup ]; then exit 1; fi
     rm -f "$(state "$name")"
     ;;
   logs) exit 0 ;;

@@ -15,7 +15,12 @@ COMPLETE=0
 dcmd() { "${DOCKER[@]}" "$@"; }
 exists() { dcmd container inspect "$1" >/dev/null 2>&1; }
 running() { [ "$(dcmd inspect -f '{{.State.Running}}' "$1" 2>/dev/null || :)" = true ]; }
-healthy() { [ "$(dcmd inspect -f '{{.State.Health.Status}}' "$1" 2>/dev/null || :)" = healthy ]; }
+healthy() {
+  local status
+  running "$1" || return 1
+  status="$(dcmd inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}missing{{end}}' "$1" 2>/dev/null || :)"
+  [ "$status" = healthy ] || { [ "${2:-}" = allow-missing ] && [ "$status" = missing ]; }
+}
 
 restore_backup() {
   echo "==> Restoring previous container..." >&2
@@ -55,9 +60,12 @@ fi
 # A prior SIGKILL or VM interruption can leave a stopped primary, backup, or
 # unstarted candidate. Restore the old instance before doing any new work.
 if exists "$BACKUP"; then
-  if exists "$CONTAINER_NAME" && healthy "$CONTAINER_NAME"; then
+  if exists "$CONTAINER_NAME" && healthy "$CONTAINER_NAME" allow-missing; then
     echo "==> Previous switch finished; healthy primary retained."
-    dcmd rm -f "$BACKUP"
+    if ! dcmd rm -f "$BACKUP"; then
+      echo "Could not remove stale backup; active container remains running. Retry after Docker can remove it." >&2
+      exit 1
+    fi
   else
     echo "==> Recovering interrupted switch from backup."
     restore_backup
@@ -71,7 +79,8 @@ if exists "$CANDIDATE"; then dcmd rm -f "$CANDIDATE"; fi
 echo "==> Configuring registry and pulling $IMAGE_URI..."
 gcloud auth configure-docker "${GAR_LOCATION}-docker.pkg.dev" --quiet
 if [ "${DOCKER[0]}" = sudo ]; then
-  sudo gcloud auth configure-docker "${GAR_LOCATION}-docker.pkg.dev" --quiet
+  sudo gcloud auth configure-docker "${GAR_LOCATION}-docker.pkg.dev" --quiet 2>/dev/null ||
+    echo "Root registry configuration failed; trying the existing Docker credentials." >&2
 fi
 dcmd pull "$IMAGE_URI"
 

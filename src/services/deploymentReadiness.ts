@@ -1,7 +1,8 @@
 import { writeFile, unlink, rename } from "node:fs/promises";
 import { rmSync } from "node:fs";
 import type { Client } from "discord.js";
-import { client as dbClient } from "@/db";
+import { createClient, type Client as DatabaseClient } from "@libsql/client";
+import { config } from "@/config";
 import { getAutomaticProcessingReadiness } from "@/services/cacheReadiness";
 import { logger } from "@/utils/logger";
 import { isDeploymentReady } from "@/services/readinessPolicy";
@@ -21,13 +22,16 @@ export async function writeReadinessTimestamp(filePath: string, timestamp: numbe
   }
 }
 
-export async function probeDatabase(execute: () => Promise<unknown>, timeoutMs = DB_PROBE_TIMEOUT_MS): Promise<void> {
+export async function probeDatabase(execute: () => Promise<unknown>, timeoutMs = DB_PROBE_TIMEOUT_MS, cancel?: () => void): Promise<void> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     await Promise.race([
       execute(),
       new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error("Database readiness probe timed out")), timeoutMs);
+        timer = setTimeout(() => {
+          try { cancel?.(); } catch (error) { logger.warn("Could not cancel database readiness probe:", error); }
+          reject(new Error("Database readiness probe timed out"));
+        }, timeoutMs);
       }),
     ]);
   } finally {
@@ -35,7 +39,7 @@ export async function probeDatabase(execute: () => Promise<unknown>, timeoutMs =
   }
 }
 
-export function createDatabaseProbe(execute: () => Promise<unknown>, timeoutMs = DB_PROBE_TIMEOUT_MS): () => Promise<void> {
+export function createDatabaseProbe(execute: () => Promise<unknown>, timeoutMs = DB_PROBE_TIMEOUT_MS, cancel?: () => void): () => Promise<void> {
   let pending: Promise<unknown> | undefined;
   return async () => {
     if (pending) throw new Error("Previous database readiness probe is still running");
@@ -45,15 +49,44 @@ export function createDatabaseProbe(execute: () => Promise<unknown>, timeoutMs =
       () => { if (pending === execution) pending = undefined; },
       () => { if (pending === execution) pending = undefined; },
     );
-    await probeDatabase(() => execution, timeoutMs);
+    await probeDatabase(() => execution, timeoutMs, cancel);
   };
+}
+
+function createReadinessDatabaseProbe(): () => Promise<void> {
+  let activeClient: DatabaseClient | undefined;
+  let controller: AbortController | undefined;
+  const remoteUrl = config.DATABASE_URL.replace(/^libsql:/, "https:").replace(/^wss:/, "https:").replace(/^ws:/, "http:");
+  const execute = async () => {
+    const requestController = new AbortController();
+    const client = createClient({
+      url: remoteUrl,
+      authToken: config.DATABASE_AUTH_TOKEN,
+      fetch: (request: Request) => fetch(request, { signal: requestController.signal }),
+    });
+    activeClient = client;
+    controller = requestController;
+    try {
+      await client.execute("SELECT 1");
+    } finally {
+      client.close();
+      if (activeClient === client) {
+        activeClient = undefined;
+        controller = undefined;
+      }
+    }
+  };
+  return createDatabaseProbe(execute, DB_PROBE_TIMEOUT_MS, () => {
+    controller?.abort();
+    activeClient?.close();
+  });
 }
 
 export function startDeploymentReadiness(client: Client): () => void {
   let stopped = false;
   let inFlight = false;
   let lastReady = false;
-  const probe = createDatabaseProbe(() => dbClient.execute("SELECT 1"));
+  const probe = createReadinessDatabaseProbe();
 
   const refresh = async (): Promise<void> => {
     if (stopped || inFlight) return;
