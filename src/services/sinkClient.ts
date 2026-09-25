@@ -16,9 +16,7 @@ import { safeHttpGet } from "@/utils/safeHttp";
 import { expirationToUnixSeconds } from "@/utils/time";
 import { z } from "zod";
 
-function normalizeSinkLink(
-  raw: unknown,
-): SinkLink {
+function normalizeSinkLink(raw: unknown): SinkLink {
   if (!raw || typeof raw !== "object") {
     return {
       slug: "",
@@ -165,8 +163,7 @@ function normalizeSinkLink(
   const createdAt =
     typeof obj.createdAt === "string" || typeof obj.createdAt === "number"
       ? obj.createdAt
-      : typeof meta.createdAt === "string" ||
-          typeof meta.createdAt === "number"
+      : typeof meta.createdAt === "string" || typeof meta.createdAt === "number"
         ? meta.createdAt
         : typeof obj.created_at === "string" ||
             typeof obj.created_at === "number"
@@ -181,8 +178,7 @@ function normalizeSinkLink(
   const updatedAt =
     typeof obj.updatedAt === "string" || typeof obj.updatedAt === "number"
       ? obj.updatedAt
-      : typeof meta.updatedAt === "string" ||
-          typeof meta.updatedAt === "number"
+      : typeof meta.updatedAt === "string" || typeof meta.updatedAt === "number"
         ? meta.updatedAt
         : typeof obj.updated_at === "string" ||
             typeof obj.updated_at === "number"
@@ -278,6 +274,9 @@ function parseRequiredLink(
   const link = normalizeSinkLink(candidate);
   const parsed = requiredLinkSchema.safeParse(link);
   if (!parsed.success) {
+    logger.warn(
+      `Sink contract validation failed for ${endpoint}: a non-empty slug and valid url are required`,
+    );
     return {
       success: false,
       error: `Invalid Sink response contract for ${endpoint}: a non-empty slug and valid url are required`,
@@ -385,8 +384,7 @@ function parseSinkListPayload(data: unknown): {
         rawList: inner,
         total: outerMetadata.total ?? innerMetadata.total,
         cursor: outerMetadata.cursor ?? innerMetadata.cursor,
-        listComplete:
-          outerMetadata.listComplete ?? innerMetadata.listComplete,
+        listComplete: outerMetadata.listComplete ?? innerMetadata.listComplete,
       };
     }
   }
@@ -408,6 +406,9 @@ function parseLinkList(
   | { success: false; error: string } {
   const parsed = parseSinkListPayload(value);
   if (!parsed.valid) {
+    logger.warn(
+      `Sink contract validation failed for ${endpoint}: a link array is required`,
+    );
     return {
       success: false,
       error: `Invalid Sink response contract for ${endpoint}: a link array is required`,
@@ -441,6 +442,9 @@ function validateDeleteAcknowledgement(
     return { success: true };
   }
 
+  logger.warn(
+    `Sink contract validation failed for ${endpoint}: expected an empty acknowledgment or success object`,
+  );
   return {
     success: false,
     error: `Invalid Sink response contract for ${endpoint}: expected an empty acknowledgment or success object`,
@@ -497,9 +501,10 @@ export class SinkClient {
     const externalSignal = options.signal;
     const abortFromExternal = () => controller.abort(externalSignal?.reason);
     if (externalSignal?.aborted) abortFromExternal();
-    else externalSignal?.addEventListener("abort", abortFromExternal, {
-      once: true,
-    });
+    else
+      externalSignal?.addEventListener("abort", abortFromExternal, {
+        once: true,
+      });
 
     try {
       logger.debug(`Sink API Request: ${options.method || "GET"} ${url}`);
@@ -509,17 +514,26 @@ export class SinkClient {
         signal: controller.signal,
       });
 
+      const contentType = response.headers.get("content-type") || "";
       const text = await response.text();
+      const isHtml =
+        contentType.includes("text/html") ||
+        /^\s*<!doctype|^\s*<html/i.test(text);
+
       let json: unknown;
-      try {
-        json = text ? JSON.parse(text) : undefined;
-      } catch {
-        json = { message: text };
+      if (!isHtml) {
+        try {
+          json = text ? JSON.parse(text) : undefined;
+        } catch {
+          json = { message: text };
+        }
       }
 
       if (!response.ok) {
         let errorMsg = `HTTP ${response.status}: ${response.statusText}`;
-        if (typeof json === "object" && json !== null) {
+        if (isHtml) {
+          errorMsg = `HTTP ${response.status}: ${response.statusText} (HTML error response)`;
+        } else if (typeof json === "object" && json !== null) {
           const record = json as Record<string, unknown>;
           if (
             typeof record.message === "string" &&
@@ -552,6 +566,17 @@ export class SinkClient {
         }
         logger.warn(`Sink API Error (${response.status}): ${errorMsg}`);
         return { success: false, error: errorMsg, status: response.status };
+      }
+
+      if (isHtml) {
+        logger.warn(
+          `Sink API returned ${response.status} with HTML content for ${url} (expected JSON)`,
+        );
+        return {
+          success: false,
+          error: `Invalid Sink response contract for ${path}: unexpected HTML response`,
+          status: 502,
+        };
       }
 
       return { success: true, body: json as T, status: response.status };
@@ -646,9 +671,7 @@ export class SinkClient {
   /**
    * Searches links using /api/link/search.
    */
-  async searchLinks(
-    params: SinkSearchParams = {},
-  ): Promise<SinkSearchResult> {
+  async searchLinks(params: SinkSearchParams = {}): Promise<SinkSearchResult> {
     const queryParams = new URLSearchParams();
     if (params.q) queryParams.append("q", params.q);
     if (params.url) queryParams.append("url", params.url);
@@ -739,6 +762,9 @@ export class SinkClient {
       }
     }
     if (count === undefined || !Number.isFinite(count) || count < 0) {
+      logger.warn(
+        "Sink contract validation failed for /api/link/count: a non-negative count is required",
+      );
       return {
         success: false,
         count: 0,
@@ -764,31 +790,36 @@ export class SinkClient {
     error?: string;
     status?: number;
   }> {
-    const cleanSlug = slug.startsWith("/") ? slug.substring(1) : slug;
-
-    // 1. Try GET /api/link/:slug
-    const res = await this.request<unknown>(
-      `/api/link/${encodeURIComponent(cleanSlug)}`,
-      {
-        method: "GET",
-      },
-    );
-
-    if (res.success) {
-      const parsed = parseRequiredLink(res.body, `/api/link/${cleanSlug}`);
-      if (!parsed.success) {
-        return { success: false, error: parsed.error, status: 502 };
-      }
-      return { success: true, link: parsed.link, status: res.status };
+    const rawClean = slug.startsWith("/") ? slug.substring(1) : slug;
+    const slugValidation = z
+      .string()
+      .trim()
+      .min(1)
+      .max(100)
+      .safeParse(rawClean);
+    if (!slugValidation.success) {
+      return {
+        success: false,
+        error: "잘못된 슬러그입니다.",
+        status: 400,
+      };
     }
+    const cleanSlug = slugValidation.data;
 
-    // 2. Fallback: Query /api/link/query?slug=...
+    // 1. Primary: Query /api/link/query?slug=... (Official Sink endpoint)
     const queryRes = await this.queryLink({ slug: cleanSlug });
     if (queryRes.success && queryRes.link && queryRes.link.url) {
       return { success: true, link: queryRes.link, status: queryRes.status };
     }
+    if (
+      queryRes.status === 401 ||
+      queryRes.status === 403 ||
+      queryRes.status === 0
+    ) {
+      return queryRes;
+    }
 
-    // 3. Fallback: Search /api/link/search?q=... (limit 10)
+    // 2. Fallback: Search /api/link/search?q=... (limit 10)
     const searchRes = await this.searchLinks({ q: cleanSlug, limit: 10 });
     if (searchRes.success && searchRes.list.length > 0) {
       const exactMatch = searchRes.list.find(
@@ -799,10 +830,31 @@ export class SinkClient {
       }
     }
 
+    // 3. Fallback: Try legacy direct endpoint GET /api/link/:slug
+    const directRes = await this.request<unknown>(
+      `/api/link/${encodeURIComponent(cleanSlug)}`,
+      {
+        method: "GET",
+      },
+    );
+
+    if (directRes.success) {
+      const parsed = parseRequiredLink(
+        directRes.body,
+        `/api/link/${cleanSlug}`,
+      );
+      if (parsed.success) {
+        return { success: true, link: parsed.link, status: directRes.status };
+      }
+      logger.warn(
+        `Legacy GET /api/link/${cleanSlug} returned invalid contract, ignoring: ${parsed.error}`,
+      );
+    }
+
     return {
       success: false,
-      error: res.error || "Link not found",
-      status: res.status ?? 404,
+      error: queryRes.error || "Link not found",
+      status: queryRes.status ?? 404,
     };
   }
 
@@ -841,7 +893,20 @@ export class SinkClient {
   async deleteLink(
     slug: string,
   ): Promise<{ success: boolean; error?: string }> {
-    const cleanSlug = slug.startsWith("/") ? slug.substring(1) : slug;
+    const rawClean = slug.startsWith("/") ? slug.substring(1) : slug;
+    const slugValidation = z
+      .string()
+      .trim()
+      .min(1)
+      .max(100)
+      .safeParse(rawClean);
+    if (!slugValidation.success) {
+      return {
+        success: false,
+        error: "잘못된 슬러그입니다.",
+      };
+    }
+    const cleanSlug = slugValidation.data;
 
     // Check if the link exists before attempting deletion
     const existing = await this.getLink(cleanSlug);
@@ -851,11 +916,15 @@ export class SinkClient {
         existing.error === "Link not found" ||
         existing.error?.includes("404")
       ) {
+        logger.info(`Cannot delete link '/${cleanSlug}': link not found (404)`);
         return {
           success: false,
           error: `단축 링크 '/${cleanSlug}'을(를) 찾을 수 없습니다. (존재하지 않는 링크)`,
         };
       }
+      logger.warn(
+        `Failed to inspect link '/${cleanSlug}' before deletion: ${existing.error}`,
+      );
       return {
         success: false,
         error: existing.error || "링크 정보를 조회하는 중 오류가 발생했습니다.",
@@ -877,21 +946,34 @@ export class SinkClient {
       );
 
       if (!fallbackRes.success) {
+        const errorMsg =
+          fallbackRes.error || res.error || "Failed to delete link";
+        logger.warn(`Failed to delete link '/${cleanSlug}': ${errorMsg}`);
         return {
           success: false,
-          error: res.error || fallbackRes.error || "Failed to delete link",
+          error: errorMsg,
         };
       }
-      return validateDeleteAcknowledgement(
+      const ack = validateDeleteAcknowledgement(
         fallbackRes.body,
         `/api/link/${encodeURIComponent(cleanSlug)}`,
       );
+      if (!ack.success) {
+        logger.warn(`Failed to delete link '/${cleanSlug}': ${ack.error}`);
+      }
+      return ack;
     }
 
     if (!res.success) {
-      return { success: false, error: res.error || "Failed to delete link" };
+      const errorMsg = res.error || "Failed to delete link";
+      logger.warn(`Failed to delete link '/${cleanSlug}': ${errorMsg}`);
+      return { success: false, error: errorMsg };
     }
-    return validateDeleteAcknowledgement(res.body, "/api/link/delete");
+    const ack = validateDeleteAcknowledgement(res.body, "/api/link/delete");
+    if (!ack.success) {
+      logger.warn(`Failed to delete link '/${cleanSlug}': ${ack.error}`);
+    }
+    return ack;
   }
 
   /**
@@ -914,6 +996,9 @@ export class SinkClient {
     const candidate = unwrapObject(res.body, ["data", "stats"]);
     const parsed = statsSchema.safeParse(candidate);
     if (!parsed.success) {
+      logger.warn(
+        "Sink contract validation failed for link stats: slug, url, and non-negative clicks are required",
+      );
       return {
         success: false,
         error:
@@ -1002,9 +1087,7 @@ export class SinkClient {
       };
     }
 
-    logger.debug(
-      `Parsed ${parsed.list.length} links from Sink API`,
-    );
+    logger.debug(`Parsed ${parsed.list.length} links from Sink API`);
 
     return {
       success: true,
@@ -1029,11 +1112,7 @@ export class SinkClient {
     truncated?: boolean;
     error?: string;
   }> {
-    const firstPage = await this.listLinks(
-      { tag, limit: 1000 },
-      1,
-      1000,
-    );
+    const firstPage = await this.listLinks({ tag, limit: 1000 }, 1, 1000);
     if (!firstPage.success) {
       return firstPage;
     }
@@ -1049,7 +1128,11 @@ export class SinkClient {
       if (!needsCursorPage && !needsLegacyPage) break;
 
       const pageRes = needsCursorPage
-        ? await this.listLinks({ tag, cursor: cursor ?? undefined, limit: 1000 })
+        ? await this.listLinks({
+            tag,
+            cursor: cursor ?? undefined,
+            limit: 1000,
+          })
         : await this.listLinks(tag, page, 1000);
       if (!pageRes.success || pageRes.list.length === 0) break;
       allLinks.push(...pageRes.list);
@@ -1058,9 +1141,7 @@ export class SinkClient {
       listComplete = pageRes.listComplete;
     }
 
-    const truncated =
-      expectedTotal > allLinks.length ||
-      listComplete === false;
+    const truncated = expectedTotal > allLinks.length || listComplete === false;
     if (truncated) {
       logger.warn(
         `listAllLinks capped results at ${allLinks.length}/${expectedTotal} links (maxPages: ${maxPages})`,

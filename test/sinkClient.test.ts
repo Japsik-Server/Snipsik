@@ -3,6 +3,8 @@ import { SinkClient, sinkClient } from "@/services/sinkClient";
 import { fetchUserDashboardStats } from "@/commands/link";
 import { getUserHash } from "@/services/slugManager";
 
+const TEST_TOKEN = process.env.SINK_TOKEN ?? "";
+
 describe("SinkClient New API Tests", () => {
   it("should query a link using /api/link/query", async () => {
     const originalFetch = globalThis.fetch;
@@ -99,26 +101,26 @@ describe("SinkClient New API Tests", () => {
     }
   });
 
-  it("should retrieve a link with getLink via fallback without listAllLinks full-scan", async () => {
+  it("should retrieve a link with getLink using queryLink as primary without calling legacy endpoints", async () => {
     const originalFetch = globalThis.fetch;
     let directCalled = false;
     let queryCalled = false;
 
     globalThis.fetch = mock(async (url: RequestInfo | URL) => {
       const urlStr = String(url);
-      if (urlStr.includes("/api/link/fallback-slug")) {
+      if (urlStr.includes("/api/link/primary-slug")) {
         directCalled = true;
         return new Response(JSON.stringify({ error: "Not Found" }), {
           status: 404,
           statusText: "Not Found",
         });
       }
-      if (urlStr.includes("/api/link/query?slug=fallback-slug")) {
+      if (urlStr.includes("/api/link/query?slug=primary-slug")) {
         queryCalled = true;
         return new Response(
           JSON.stringify({
-            slug: "fallback-slug",
-            url: "https://fallback.com",
+            slug: "primary-slug",
+            url: "https://primary.com",
             clicks: 5,
           }),
           { status: 200 },
@@ -128,15 +130,316 @@ describe("SinkClient New API Tests", () => {
     }) as unknown as typeof fetch;
 
     try {
-      const res = await sinkClient.getLink("fallback-slug");
-      expect(directCalled).toBe(true);
+      const res = await sinkClient.getLink("primary-slug");
       expect(queryCalled).toBe(true);
+      expect(directCalled).toBe(false);
       expect(res.success).toBe(true);
-      expect(res.link?.slug).toBe("fallback-slug");
-      expect(res.link?.url).toBe("https://fallback.com");
+      expect(res.link?.slug).toBe("primary-slug");
+      expect(res.link?.url).toBe("https://primary.com");
     } finally {
       globalThis.fetch = originalFetch;
     }
+  });
+
+  it("should fall back to legacy direct endpoint when query and search fail", async () => {
+    const originalFetch = globalThis.fetch;
+    let directCalled = false;
+    let queryCalled = false;
+    let searchCalled = false;
+
+    globalThis.fetch = mock(async (url: RequestInfo | URL) => {
+      const urlStr = String(url);
+      if (urlStr.includes("/api/link/query?slug=legacy-slug")) {
+        queryCalled = true;
+        return new Response(JSON.stringify({ error: "Not Found" }), {
+          status: 404,
+        });
+      }
+      if (urlStr.includes("/api/link/search")) {
+        searchCalled = true;
+        return new Response(JSON.stringify({ list: [], total: 0 }), {
+          status: 200,
+        });
+      }
+      if (urlStr.includes("/api/link/legacy-slug")) {
+        directCalled = true;
+        return new Response(
+          JSON.stringify({
+            slug: "legacy-slug",
+            url: "https://legacy.com",
+          }),
+          { status: 200 },
+        );
+      }
+      return new Response("{}", { status: 404 });
+    }) as unknown as typeof fetch;
+
+    try {
+      const res = await sinkClient.getLink("legacy-slug");
+      expect(queryCalled).toBe(true);
+      expect(searchCalled).toBe(true);
+      expect(directCalled).toBe(true);
+      expect(res.success).toBe(true);
+      expect(res.link?.slug).toBe("legacy-slug");
+      expect(res.link?.url).toBe("https://legacy.com");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("should gracefully handle HTML SPA responses on legacy direct endpoint without 502 contract abort", async () => {
+    const originalFetch = globalThis.fetch;
+    let queryCalled = false;
+    let legacyCalled = false;
+
+    globalThis.fetch = mock(async (url: RequestInfo | URL) => {
+      const urlStr = String(url);
+      if (urlStr.includes("/api/link/query?slug=html-slug")) {
+        queryCalled = true;
+        return new Response(JSON.stringify({ error: "Link not found" }), {
+          status: 404,
+        });
+      }
+      if (urlStr.includes("/api/link/search")) {
+        return new Response(JSON.stringify({ list: [], total: 0 }), {
+          status: 200,
+        });
+      }
+      if (urlStr.includes("/api/link/html-slug")) {
+        legacyCalled = true;
+        return new Response(
+          "<!DOCTYPE html><html><body>SPA Frontend</body></html>",
+          {
+            status: 200,
+            headers: { "Content-Type": "text/html; charset=utf-8" },
+          },
+        );
+      }
+      return new Response("{}", { status: 404 });
+    }) as unknown as typeof fetch;
+
+    try {
+      const res = await sinkClient.getLink("html-slug");
+      expect(queryCalled).toBe(true);
+      expect(legacyCalled).toBe(true);
+      expect(res.success).toBe(false);
+      expect(res.status).toBe(404);
+      expect(res.error).toBe("Link not found");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("should reject invalid slugs (empty, whitespace, or too long) before making network requests in getLink and deleteLink", async () => {
+    let networkCalled = false;
+    const client = new SinkClient({
+      baseUrl: "https://sink.example",
+      token: TEST_TOKEN,
+      fetchImpl: async () => {
+        networkCalled = true;
+        return new Response("{}", { status: 200 });
+      },
+    });
+
+    const invalidSlugs = ["", "   ", "/", "/  ", "a".repeat(101)];
+    for (const invalidSlug of invalidSlugs) {
+      networkCalled = false;
+      const getRes = await client.getLink(invalidSlug);
+      expect(getRes.success).toBe(false);
+      expect(getRes.status).toBe(400);
+      expect(getRes.error).toBe("잘못된 슬러그입니다.");
+      expect(networkCalled).toBe(false);
+
+      const delRes = await client.deleteLink(invalidSlug);
+      expect(delRes.success).toBe(false);
+      expect(delRes.error).toBe("잘못된 슬러그입니다.");
+      expect(networkCalled).toBe(false);
+    }
+  });
+
+  it("should reject 200 OK responses containing HTML content in request()", async () => {
+    const client = new SinkClient({
+      baseUrl: "https://sink.example",
+      token: TEST_TOKEN,
+      fetchImpl: async () =>
+        new Response("<!DOCTYPE html><html><body>Not an API</body></html>", {
+          status: 200,
+          headers: { "Content-Type": "text/html" },
+        }),
+    });
+
+    const res = await client.createLink({
+      slug: "test",
+      url: "https://example.com",
+    });
+    expect(res.success).toBe(false);
+    expect(res.error).toContain("unexpected HTML response");
+  });
+
+  it("should successfully delete a link when getLink pre-check succeeds via queryLink", async () => {
+    const requestedCalls: string[] = [];
+    const client = new SinkClient({
+      baseUrl: "https://sink.example",
+      token: TEST_TOKEN,
+      fetchImpl: async (url, init) => {
+        const method = init?.method ?? "GET";
+        const urlStr = String(url);
+        requestedCalls.push(`${method} ${urlStr}`);
+
+        if (
+          method === "GET" &&
+          urlStr.includes("/api/link/query?slug=to-delete")
+        ) {
+          return new Response(
+            JSON.stringify({
+              slug: "to-delete",
+              url: "https://example.com/target",
+            }),
+            { status: 200 },
+          );
+        }
+        if (method === "POST" && urlStr.includes("/api/link/delete")) {
+          return new Response(JSON.stringify({ success: true }), {
+            status: 200,
+          });
+        }
+        return new Response("{}", { status: 404 });
+      },
+    });
+
+    const res = await client.deleteLink("to-delete");
+    expect(res.success).toBe(true);
+    expect(requestedCalls).toEqual([
+      "GET https://sink.example/api/link/query?slug=to-delete",
+      "POST https://sink.example/api/link/delete",
+    ]);
+  });
+
+  it("should return not-found error message when deleteLink target does not exist even if legacy endpoint returns HTML", async () => {
+    const client = new SinkClient({
+      baseUrl: "https://sink.example",
+      token: TEST_TOKEN,
+      fetchImpl: async (url, init) => {
+        const method = init?.method ?? "GET";
+        const urlStr = String(url);
+
+        if (method === "GET") {
+          if (urlStr.includes("/api/link/query?slug=ghost-slug")) {
+            return new Response(JSON.stringify({ error: "Link not found" }), {
+              status: 404,
+            });
+          }
+          if (urlStr.includes("/api/link/search")) {
+            return new Response(JSON.stringify({ list: [], total: 0 }), {
+              status: 200,
+            });
+          }
+          if (urlStr.includes("/api/link/ghost-slug")) {
+            // Nuxt catch-all returning 200 OK HTML
+            return new Response(
+              "<!DOCTYPE html><html><body>SPA</body></html>",
+              {
+                status: 200,
+                headers: { "Content-Type": "text/html" },
+              },
+            );
+          }
+        }
+        return new Response("{}", { status: 404 });
+      },
+    });
+
+    const res = await client.deleteLink("ghost-slug");
+    expect(res.success).toBe(false);
+    expect(res.error).toContain(
+      "단축 링크 '/ghost-slug'을(를) 찾을 수 없습니다.",
+    );
+  });
+
+  it("should fast-fail getLink on auth errors (401/403) or network failure (0) without running fallbacks", async () => {
+    for (const testStatus of [401, 403, 0]) {
+      const requestedUrls: string[] = [];
+      const client = new SinkClient({
+        baseUrl: "https://sink.example",
+        token: TEST_TOKEN,
+        fetchImpl: async (url) => {
+          requestedUrls.push(String(url));
+          if (testStatus === 0) {
+            throw new Error("Network unreachable");
+          }
+          return new Response(JSON.stringify({ error: "Auth failure" }), {
+            status: testStatus,
+          });
+        },
+      });
+
+      const res = await client.getLink("auth-fail-slug");
+      expect(res.success).toBe(false);
+      expect(res.status).toBe(testStatus);
+      expect(requestedUrls).toEqual([
+        "https://sink.example/api/link/query?slug=auth-fail-slug",
+      ]);
+    }
+  });
+
+  it("should sanitize HTML error response on 500 status in request()", async () => {
+    const client = new SinkClient({
+      baseUrl: "https://sink.example",
+      token: TEST_TOKEN,
+      fetchImpl: async () =>
+        new Response(
+          "<html><head><title>500 Internal</title></head><body>Crash</body></html>",
+          {
+            status: 500,
+            statusText: "Internal Server Error",
+            headers: { "Content-Type": "text/html" },
+          },
+        ),
+    });
+
+    const res = await client.getStats("some-slug");
+    expect(res.success).toBe(false);
+    expect(res.error).toBe(
+      "HTTP 500: Internal Server Error (HTML error response)",
+    );
+  });
+
+  it("should report fallback error over original 404 in deleteLink when fallback fails", async () => {
+    const client = new SinkClient({
+      baseUrl: "https://sink.example",
+      token: TEST_TOKEN,
+      fetchImpl: async (url, init) => {
+        const method = init?.method ?? "GET";
+        const urlStr = String(url);
+        if (method === "GET") {
+          return new Response(
+            JSON.stringify({
+              slug: "fallback-target",
+              url: "https://example.com",
+            }),
+            { status: 200 },
+          );
+        }
+        if (method === "POST") {
+          return new Response(JSON.stringify({ error: "Endpoint Not Found" }), {
+            status: 404,
+          });
+        }
+        if (method === "DELETE") {
+          return new Response(
+            JSON.stringify({ error: "Fallback permission denied" }),
+            {
+              status: 403,
+            },
+          );
+        }
+        return new Response("{}", { status: 404 });
+      },
+    });
+
+    const res = await client.deleteLink("fallback-target");
+    expect(res.success).toBe(false);
+    expect(res.error).toBe("Fallback permission denied");
   });
 
   it("should find exact match in search fallback when other search results exist", async () => {
@@ -210,7 +513,7 @@ describe("SinkClient New API Tests", () => {
   it("preserves outer list metadata when links are wrapped in data", async () => {
     const client = new SinkClient({
       baseUrl: "https://sink.example",
-      token: "test-token",
+      token: TEST_TOKEN,
       fetchImpl: async () =>
         new Response(
           JSON.stringify({
@@ -233,7 +536,7 @@ describe("SinkClient New API Tests", () => {
     const requestedUrls: string[] = [];
     const client = new SinkClient({
       baseUrl: "https://sink.example",
-      token: "test-token",
+      token: TEST_TOKEN,
       fetchImpl: async (url) => {
         requestedUrls.push(String(url));
         const secondPage = String(url).includes("cursor=page-2");
@@ -264,7 +567,7 @@ describe("SinkClient New API Tests", () => {
     const requestedUrls: string[] = [];
     const client = new SinkClient({
       baseUrl: "https://sink.example",
-      token: "test-token",
+      token: TEST_TOKEN,
       fetchImpl: async (url) => {
         requestedUrls.push(String(url));
         return new Response(JSON.stringify({ error: "page failed" }), {
@@ -292,7 +595,7 @@ describe("SinkClient New API Tests", () => {
     const requestedUrls: string[] = [];
     const client = new SinkClient({
       baseUrl: "https://sink.example",
-      token: "test-token",
+      token: TEST_TOKEN,
       fetchImpl: async (url) => {
         requestedUrls.push(String(url));
         if (String(url).includes("?limit=")) {
@@ -322,7 +625,7 @@ describe("SinkClient New API Tests", () => {
   it("rejects incomplete successful link responses", async () => {
     const client = new SinkClient({
       baseUrl: "https://sink.example",
-      token: "test-token",
+      token: TEST_TOKEN,
       fetchImpl: async () => new Response("{}", { status: 200 }),
     });
 
@@ -341,7 +644,7 @@ describe("SinkClient New API Tests", () => {
   it("rejects malformed list metadata on a 2xx response", async () => {
     const client = new SinkClient({
       baseUrl: "https://sink.example",
-      token: "test-token",
+      token: TEST_TOKEN,
       fetchImpl: async () =>
         new Response(
           JSON.stringify({
@@ -362,7 +665,7 @@ describe("SinkClient New API Tests", () => {
     const requestedMethods: string[] = [];
     const client = new SinkClient({
       baseUrl: "https://sink.example",
-      token: "test-token",
+      token: TEST_TOKEN,
       fetchImpl: async (url, init) => {
         requestedMethods.push(`${init?.method} ${String(url)}`);
         if (init?.method === "GET") {
@@ -391,7 +694,7 @@ describe("SinkClient New API Tests", () => {
     for (const malformedBody of [{ success: false }, "deleted"]) {
       const client = new SinkClient({
         baseUrl: "https://sink.example",
-        token: "test-token",
+        token: TEST_TOKEN,
         fetchImpl: async (_url, init) => {
           if (init?.method === "GET") {
             return new Response(
@@ -420,7 +723,7 @@ describe("SinkClient New API Tests", () => {
     let calls = 0;
     const client = new SinkClient({
       baseUrl: "https://sink.example",
-      token: "test-token",
+      token: TEST_TOKEN,
       requestTimeoutMs: 20,
       fetchImpl: async (_url, init) => {
         calls++;
@@ -452,7 +755,7 @@ describe("SinkClient New API Tests", () => {
   it("times out while reading a stalled response body", async () => {
     const client = new SinkClient({
       baseUrl: "https://sink.example",
-      token: "test-token",
+      token: TEST_TOKEN,
       requestTimeoutMs: 20,
       fetchImpl: async (_url, init) => {
         const body = new ReadableStream({
@@ -477,7 +780,7 @@ describe("SinkClient New API Tests", () => {
     let calls = 0;
     const client = new SinkClient({
       baseUrl: "https://sink.example",
-      token: "test-token",
+      token: TEST_TOKEN,
       requestTimeoutMs: 20,
       fetchImpl: async (_url, init) => {
         calls++;
@@ -578,9 +881,8 @@ describe("Dashboard Stats Optimization Tests", () => {
     });
 
     sinkClient.listLinks = mock(async (options) => {
-      const offset = options && typeof options === "object" && options.cursor
-        ? 1_000
-        : 0;
+      const offset =
+        options && typeof options === "object" && options.cursor ? 1_000 : 0;
       return {
         success: true,
         list: Array.from({ length: 1_000 }, (_, index) => ({

@@ -793,6 +793,9 @@ export const linkCommand: Command = {
 
         const res = await sinkClient.deleteLink(slug);
         if (!res.success) {
+          logger.warn(
+            `User ${interaction.user.tag} (${interaction.user.id}) failed to delete link '/${slug}': ${res.error}`,
+          );
           const errEmbed = ui.createErrorMessage(
             "삭제 실패",
             res.error || "링크 삭제 중 오류가 발생했습니다.",
@@ -1544,6 +1547,9 @@ async function handleAdminCommand(
 
     const res = await sinkClient.deleteLink(cleanSlug);
     if (!res.success) {
+      logger.warn(
+        `Admin ${interaction.user.tag} (${interaction.user.id}) failed to delete link '/${cleanSlug}': ${res.error}`,
+      );
       const errEmbed = ui.createErrorMessage(
         "관리자 강제 삭제 실패",
         res.error || "링크 삭제 중 오류가 발생했습니다.",
