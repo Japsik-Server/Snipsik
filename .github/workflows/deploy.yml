@@ -40,8 +40,8 @@ env:
   IMAGE_NAME: snipsik
   VM_NAME: snipsik
   VM_ZONE: us-central1-a
-  VM_USER: japsik
   CONTAINER_NAME: snipsik-bot
+  DEPLOY_DIR: /opt/snipsik
 
 jobs:
   build-and-deploy:
@@ -131,7 +131,8 @@ jobs:
           FORCE_BUILD: ${{ inputs.force_build }}
           IMAGE_EXISTS: ${{ steps.check-image.outputs.exists }}
           TARGET_IMAGE: ${{ steps.check-image.outputs.target_image }}
-          TARGET: ${{ env.VM_USER }}@${{ env.VM_NAME }}
+          TARGET: ${{ env.VM_NAME }}
+          DEPLOY_DIR: ${{ env.DEPLOY_DIR }}
         run: |
           if [ "$FORCE_DEPLOY" = "true" ] || [ "$FORCE_BUILD" = "true" ]; then
             echo "needs_deploy=true" >> "$GITHUB_OUTPUT"
@@ -155,6 +156,7 @@ jobs:
           RAW_OUTPUT=$(gcloud compute ssh "$TARGET" \
             --zone=${{ env.VM_ZONE }} \
             --project=${{ env.GCP_PROJECT_ID }} \
+            --tunnel-through-iap \
             --quiet \
             --command="
               set -e
@@ -162,8 +164,8 @@ jobs:
               docker info >/dev/null 2>&1 || DOCKER='sudo docker'
               RUNNING=\$(\$DOCKER inspect -f '{{.State.Running}}' '${{ env.CONTAINER_NAME }}' 2>/dev/null || echo 'false')
               IMAGE=\$(\$DOCKER inspect -f '{{.Config.Image}}' '${{ env.CONTAINER_NAME }}' 2>/dev/null || echo '')
-              ENV_HASH=\$(sha256sum ~/snipsik/.env 2>/dev/null | awk '{print \$1}' || echo '')
-              DEPLOY_HASH=\$(sha256sum ~/snipsik/deploy.sh 2>/dev/null | awk '{print \$1}' || echo '')
+              ENV_HASH=\$(sha256sum '${DEPLOY_DIR}/.env' 2>/dev/null | awk '{print \$1}' || echo '')
+              DEPLOY_HASH=\$(sha256sum '${DEPLOY_DIR}/deploy.sh' 2>/dev/null | awk '{print \$1}' || echo '')
               echo \"VM_STATUS:\$RUNNING|\$IMAGE|\$ENV_HASH|\$DEPLOY_HASH\"
             " 2>/dev/null)
           SSH_EXIT=$?
@@ -202,12 +204,14 @@ jobs:
         run: |
           IMAGE_URI="${{ steps.check-image.outputs.target_image }}"
           DEPLOY_TMP="/tmp/snipsik-deploy-${{ github.sha }}"
-          TARGET="${{ env.VM_USER }}@${{ env.VM_NAME }}"
+          DEPLOY_DIR="${{ env.DEPLOY_DIR }}"
+          TARGET="${{ env.VM_NAME }}"
 
           vm_ssh() {
             gcloud compute ssh "$TARGET" \
               --zone=${{ env.VM_ZONE }} \
               --project=${{ env.GCP_PROJECT_ID }} \
+              --tunnel-through-iap \
               --quiet \
               --command="$1"
           }
@@ -216,11 +220,15 @@ jobs:
             gcloud compute scp "$@" \
               --zone=${{ env.VM_ZONE }} \
               --project=${{ env.GCP_PROJECT_ID }} \
+              --tunnel-through-iap \
               --quiet
           }
 
+          echo "==> Ensuring deployment directory exists on VM..."
+          vm_ssh "sudo mkdir -p '$DEPLOY_DIR' && sudo chown -R \$USER:\$USER '$DEPLOY_DIR'"
+
           echo "==> Creating temporary deployment directory on VM..."
-          vm_ssh "mkdir -p $DEPLOY_TMP"
+          vm_ssh "mkdir -p '$DEPLOY_TMP'"
 
           echo "==> Uploading deployment files to temporary directory..."
           vm_scp .env.prod scripts/deploy.sh "$TARGET:$DEPLOY_TMP/"
@@ -228,13 +236,12 @@ jobs:
           echo "==> Atomically applying files and executing deployment script on VM..."
           vm_ssh "
             set -e
-            mkdir -p ~/snipsik
             chmod 600 '$DEPLOY_TMP/.env.prod'
-            mv -f '$DEPLOY_TMP/.env.prod' ~/snipsik/.env
+            mv -f '$DEPLOY_TMP/.env.prod' '$DEPLOY_DIR/.env'
             chmod +x '$DEPLOY_TMP/deploy.sh'
-            mv -f '$DEPLOY_TMP/deploy.sh' ~/snipsik/deploy.sh
+            mv -f '$DEPLOY_TMP/deploy.sh' '$DEPLOY_DIR/deploy.sh'
             rm -rf '$DEPLOY_TMP'
-            bash ~/snipsik/deploy.sh '$IMAGE_URI' '${{ env.CONTAINER_NAME }}' '${{ env.GAR_LOCATION }}' '~/snipsik/.env'
+            bash '$DEPLOY_DIR/deploy.sh' '$IMAGE_URI' '${{ env.CONTAINER_NAME }}' '${{ env.GAR_LOCATION }}' '$DEPLOY_DIR/.env'
           "
 
       - name: Generate deployment summary

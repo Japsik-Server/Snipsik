@@ -4,7 +4,7 @@ set -euo pipefail
 IMAGE_URI="${1:?Error: IMAGE_URI argument is required}"
 CONTAINER_NAME="${2:-snipsik-bot}"
 GAR_LOCATION="${3:-us-central1}"
-ENV_FILE="${4:-$HOME/snipsik/.env}"
+ENV_FILE="${4:-/opt/snipsik/.env}"
 ENV_FILE="${ENV_FILE/#\~/$HOME}"
 BACKUP_CONTAINER="${CONTAINER_NAME}-backup"
 
