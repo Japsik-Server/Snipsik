@@ -7,6 +7,7 @@ import { onChannelDelete } from "@/events/channelDelete";
 import { onThreadDelete } from "@/events/threadDelete";
 import { logger } from "@/utils/logger";
 import { stopAutomaticProcessingCacheRecovery } from "@/services/cacheReadiness";
+import { startDeploymentReadiness } from "@/services/deploymentReadiness";
 
 logger.info("Starting Snipsik Discord Bot...");
 
@@ -19,6 +20,7 @@ const client = new Client({
   ],
   partials: [Partials.Channel, Partials.Message],
 });
+const stopDeploymentReadiness = startDeploymentReadiness(client);
 
 // Event Listeners
 client.once(Events.ClientReady, async (readyClient) => {
@@ -60,6 +62,7 @@ const shutdown = (signal: string): void => {
   shuttingDown = true;
   logger.info(`Received ${signal}; stopping cache recovery and Discord client.`);
   stopAutomaticProcessingCacheRecovery();
+  stopDeploymentReadiness();
   client.destroy();
   process.exit(0);
 };

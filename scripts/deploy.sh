@@ -1,207 +1,133 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-IMAGE_URI="${1:?Error: IMAGE_URI argument is required}"
+IMAGE_URI="${1:?IMAGE_URI is required}"
 CONTAINER_NAME="${2:-snipsik-bot}"
 GAR_LOCATION="${3:-us-central1}"
 ENV_FILE="${4:-/opt/snipsik/.env}"
 ENV_FILE="${ENV_FILE/#\~/$HOME}"
-BACKUP_CONTAINER="${CONTAINER_NAME}-backup"
+BACKUP="${CONTAINER_NAME}-backup"
+CANDIDATE="${CONTAINER_NAME}-candidate"
+DOCKER=(docker)
+SWITCH_STARTED=0
+COMPLETE=0
 
-DOCKER="docker"
-HAS_OLD=0
-PREVIOUS_IMAGE_ID=""
-
-# -----------------------------------------------------------------------------
-# Helper Functions
-# -----------------------------------------------------------------------------
-dcmd() {
-  $DOCKER "$@"
+dcmd() { "${DOCKER[@]}" "$@"; }
+exists() { dcmd container inspect "$1" >/dev/null 2>&1; }
+running() { [ "$(dcmd inspect -f '{{.State.Running}}' "$1" 2>/dev/null || :)" = true ]; }
+healthy() {
+  local status
+  running "$1" || return 1
+  status="$(dcmd inspect -f '{{if .State.Health}}{{.State.Health.Status}}{{else}}missing{{end}}' "$1" 2>/dev/null || :)"
+  [ "$status" = healthy ] || { [ "${2:-}" = allow-missing ] && [ "$status" = missing ]; }
 }
 
-container_exists() {
-  dcmd container inspect "$1" >/dev/null 2>&1
-}
-
-is_container_running() {
-  [ "$(dcmd inspect -f '{{.State.Running}}' "$1" 2>/dev/null || echo 'false')" = "true" ]
-}
-
-rollback_container() {
-  if [ "$HAS_OLD" -eq 1 ]; then
-    echo "Rolling back to previous container..." >&2
-    dcmd rm -f "$CONTAINER_NAME" 2>/dev/null || true
-
-    if ! dcmd start "$BACKUP_CONTAINER"; then
-      echo "Fatal: Failed to start backup container '$BACKUP_CONTAINER' during rollback!" >&2
-      return 1
-    fi
-
-    if ! dcmd rename "$BACKUP_CONTAINER" "$CONTAINER_NAME"; then
-      echo "Fatal: Failed to rename backup container '$BACKUP_CONTAINER' to '$CONTAINER_NAME' during rollback!" >&2
-      return 1
-    fi
-
-    echo "Rollback complete." >&2
+restore_backup() {
+  echo "==> Restoring previous container..." >&2
+  if exists "$BACKUP"; then
+    if exists "$CONTAINER_NAME"; then dcmd rm -f "$CONTAINER_NAME" || return 1; fi
+    dcmd rename "$BACKUP" "$CONTAINER_NAME" || return 1
+    dcmd start "$CONTAINER_NAME" || return 1
+    echo "Recovery complete: previous container is running." >&2
+  elif exists "$CONTAINER_NAME" && ! running "$CONTAINER_NAME"; then
+    dcmd start "$CONTAINER_NAME" || return 1
+    echo "Recovery complete: stopped primary restarted." >&2
   fi
+  if exists "$CANDIDATE"; then dcmd rm -f "$CANDIDATE" || return 1; fi
 }
 
-# -----------------------------------------------------------------------------
-# Deployment Steps
-# -----------------------------------------------------------------------------
-validate_prerequisites() {
-  echo "==> 1. Checking prerequisites..."
-  if [ ! -f "$ENV_FILE" ]; then
-    echo "Error: Environment file not found at ${ENV_FILE}!" >&2
+on_exit() {
+  local result=$?
+  trap - EXIT INT TERM HUP
+  if [ "$COMPLETE" -ne 1 ] && [ "$SWITCH_STARTED" -eq 1 ]; then
+    echo "Deployment interrupted or failed (exit=$result); restoring service." >&2
+    restore_backup || echo "Recovery failed; rerun deploy.sh to retry recovery." >&2
+  fi
+  exit "$result"
+}
+trap on_exit EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
+
+echo "==> Validating deployment prerequisites..."
+[ -f "$ENV_FILE" ] || { echo "Environment file missing: $ENV_FILE" >&2; exit 1; }
+if ! docker info >/dev/null 2>&1; then
+  sudo -n docker info >/dev/null 2>&1 || { echo "Docker daemon unavailable" >&2; exit 1; }
+  DOCKER=(sudo docker)
+fi
+
+# A prior SIGKILL or VM interruption can leave a stopped primary, backup, or
+# unstarted candidate. Restore the old instance before doing any new work.
+if exists "$BACKUP"; then
+  if exists "$CONTAINER_NAME" && healthy "$CONTAINER_NAME" allow-missing; then
+    echo "==> Previous switch finished; healthy primary retained."
+    if ! dcmd rm -f "$BACKUP"; then
+      echo "Could not remove stale backup; active container remains running. Retry after Docker can remove it." >&2
+      exit 1
+    fi
+  else
+    echo "==> Recovering interrupted switch from backup."
+    restore_backup
+  fi
+elif exists "$CONTAINER_NAME" && ! running "$CONTAINER_NAME"; then
+  echo "==> Restarting stopped primary after interrupted switch."
+  dcmd start "$CONTAINER_NAME"
+fi
+if exists "$CANDIDATE"; then dcmd rm -f "$CANDIDATE"; fi
+
+echo "==> Configuring registry and pulling $IMAGE_URI..."
+gcloud auth configure-docker "${GAR_LOCATION}-docker.pkg.dev" --quiet
+if [ "${DOCKER[0]}" = sudo ]; then
+  sudo gcloud auth configure-docker "${GAR_LOCATION}-docker.pkg.dev" --quiet 2>/dev/null ||
+    echo "Root registry configuration failed; trying the existing Docker credentials." >&2
+fi
+dcmd pull "$IMAGE_URI"
+
+# Run the preflight in the target image before stopping the active bot.
+echo "==> Checking required database schema..."
+dcmd run --rm --env-file "$ENV_FILE" --entrypoint bun "$IMAGE_URI" run dist/db/checkSchema.js
+
+echo "==> Creating candidate container..."
+dcmd create --name "$CANDIDATE" --restart unless-stopped --env-file "$ENV_FILE" "$IMAGE_URI" >/dev/null
+SWITCH_STARTED=1
+
+if exists "$CONTAINER_NAME"; then
+  echo "==> Stopping current bot and preserving backup..."
+  dcmd stop "$CONTAINER_NAME" >/dev/null
+  dcmd rename "$CONTAINER_NAME" "$BACKUP"
+fi
+dcmd rename "$CANDIDATE" "$CONTAINER_NAME"
+dcmd start "$CONTAINER_NAME" >/dev/null
+
+echo "==> Waiting for Discord, database, and cache readiness..."
+for ((attempt=1; attempt<=30; attempt++)); do
+  if healthy "$CONTAINER_NAME"; then
+    echo "New container is healthy."
+    previous_image=""
+    if exists "$BACKUP"; then
+      previous_image="$(dcmd inspect -f '{{.Config.Image}}' "$BACKUP")"
+    fi
+    COMPLETE=1
+    if exists "$BACKUP" && ! dcmd rm -f "$BACKUP"; then
+      echo "Could not remove backup container; it will be cleaned up on the next deployment." >&2
+      previous_image=""
+    fi
+    if [ -n "$previous_image" ] && [ "$previous_image" != "$IMAGE_URI" ]; then
+      dcmd image rm "$previous_image" || echo "Could not remove previous image: $previous_image" >&2
+    fi
+    dcmd image prune -f || echo "Could not prune dangling images." >&2
+    echo "Deployment succeeded with one running bot."
+    exit 0
+  fi
+  if ! running "$CONTAINER_NAME"; then
+    echo "Candidate exited before readiness." >&2
+    dcmd logs --tail 30 "$CONTAINER_NAME" >&2 || true
     exit 1
   fi
-  chmod 600 "$ENV_FILE" 2>/dev/null || true
-  echo "Environment file verified: $ENV_FILE"
-}
-
-detect_docker_permission() {
-  echo "==> 2. Detecting Docker permissions..."
-  if ! docker info >/dev/null 2>&1; then
-    if sudo -n docker info >/dev/null 2>&1; then
-      echo "Notice: Non-root user lacks docker group permission. Using 'sudo docker'."
-      DOCKER="sudo docker"
-      sudo usermod -aG docker "$USER" 2>/dev/null || true
-    else
-      echo "Error: Cannot access Docker daemon (neither as $USER nor via passwordless sudo)." >&2
-      exit 1
-    fi
-  fi
-}
-
-configure_gar_auth() {
-  echo "==> 3. Configuring Artifact Registry auth on VM..."
-  gcloud auth configure-docker "${GAR_LOCATION}-docker.pkg.dev" --quiet
-  if [ "$DOCKER" = "sudo docker" ]; then
-    sudo gcloud auth configure-docker "${GAR_LOCATION}-docker.pkg.dev" --quiet 2>/dev/null || true
-  fi
-}
-
-pull_target_image() {
-  echo "==> 4. Pulling target image (${IMAGE_URI})..."
-  dcmd pull "$IMAGE_URI"
-}
-
-prepare_container_backup() {
-  echo "==> 5. Preparing container switch..."
-  local has_primary=0
-  local has_backup=0
-
-  container_exists "$CONTAINER_NAME" && has_primary=1
-  container_exists "$BACKUP_CONTAINER" && has_backup=1
-
-  if [ "$has_primary" -eq 1 ]; then
-    PREVIOUS_IMAGE_ID="$(dcmd inspect -f '{{.Image}}' "$CONTAINER_NAME" 2>/dev/null || true)"
-    # Remove previous leftover backup only when primary container is available to be backed up
-    dcmd rm -f "$BACKUP_CONTAINER" 2>/dev/null || true
-    echo "Backing up existing container to ${BACKUP_CONTAINER}..."
-    dcmd rename "$CONTAINER_NAME" "$BACKUP_CONTAINER"
-    dcmd stop "$BACKUP_CONTAINER" || true
-    HAS_OLD=1
-  elif [ "$has_backup" -eq 1 ]; then
-    PREVIOUS_IMAGE_ID="$(dcmd inspect -f '{{.Image}}' "$BACKUP_CONTAINER" 2>/dev/null || true)"
-    # Preserve leftover backup as rollback target if primary container is missing
-    echo "Warning: No primary container found, but found existing backup container. Preserving as rollback target."
-    dcmd stop "$BACKUP_CONTAINER" || true
-    HAS_OLD=1
-  fi
-}
-
-start_new_container() {
-  echo "==> 6. Starting new container..."
-  if ! dcmd run -d \
-    --name "$CONTAINER_NAME" \
-    --restart unless-stopped \
-    --env-file "$ENV_FILE" \
-    "$IMAGE_URI"; then
-    echo "Error: docker run failed! Rolling back..." >&2
-    rollback_container
-    exit 1
-  fi
-}
-
-verify_health() {
-  echo "==> 7. Verifying container health and readiness..."
-  local max_retries=10
-  local retry_delay=2
-  local is_ready=0
-
-  for ((i=1; i<=max_retries; i++)); do
-    local state
-    state="$(dcmd inspect -f '{{.State.Status}}' "$CONTAINER_NAME" 2>/dev/null || echo 'unknown')"
-
-    if [ "$state" != "running" ]; then
-      echo "Error: Container status is '${state}' (expected 'running')! Logs:" >&2
-      dcmd logs --tail 30 "$CONTAINER_NAME" >&2 || true
-      rollback_container
-      exit 1
-    fi
-
-    # Check if Discord bot has successfully initialized and logged in
-    if dcmd logs --tail 50 "$CONTAINER_NAME" 2>&1 | grep -q "Logged in as"; then
-      echo "Container readiness verified: Bot logged in successfully."
-      is_ready=1
-      break
-    fi
-
-    echo "Waiting for container readiness (${i}/${max_retries})..."
-    sleep "$retry_delay"
-  done
-
-  # If not explicitly matched 'Logged in as' within timeout window, ensure it remained stably running
-  if [ "$is_ready" -eq 0 ]; then
-    if ! is_container_running "$CONTAINER_NAME"; then
-      echo "Error: Container exited unexpectedly! Logs:" >&2
-      dcmd logs --tail 30 "$CONTAINER_NAME" >&2 || true
-      rollback_container
-      exit 1
-    fi
-    echo "Container health verified: Container is stably running."
-  fi
-}
-
-cleanup_and_finish() {
-  echo "==> 8. Cleaning up obsolete resources..."
-  # Clean up backup container after all verifications pass
-  if [ "$HAS_OLD" -eq 1 ]; then
-    dcmd rm -f "$BACKUP_CONTAINER" 2>/dev/null || true
-  fi
-
-  # Clean up superseded image on VM if a new image was deployed
-  if [ -n "$PREVIOUS_IMAGE_ID" ]; then
-    local current_image_id
-    current_image_id="$(dcmd inspect -f '{{.Image}}' "$CONTAINER_NAME" 2>/dev/null || true)"
-    if [ -n "$current_image_id" ] && [ "$PREVIOUS_IMAGE_ID" != "$current_image_id" ]; then
-      echo "Cleaning up superseded container image (${PREVIOUS_IMAGE_ID})..."
-      dcmd rmi "$PREVIOUS_IMAGE_ID" 2>/dev/null || true
-    fi
-  fi
-
-  echo "Cleaning up dangling images..."
-  dcmd image prune -f
-
-  echo "==> 9. Deployment succeeded! Container status:"
-  dcmd ps --filter "name=${CONTAINER_NAME}"
-}
-
-# -----------------------------------------------------------------------------
-# Main Execution Flow
-# -----------------------------------------------------------------------------
-echo "=========================================="
-echo "Starting deployment for ${CONTAINER_NAME}"
-echo "Image: ${IMAGE_URI}"
-echo "Env file: ${ENV_FILE}"
-echo "=========================================="
-
-validate_prerequisites
-detect_docker_permission
-configure_gar_auth
-pull_target_image
-prepare_container_backup
-start_new_container
-verify_health
-cleanup_and_finish
+  echo "Readiness pending ($attempt/30)..."
+  sleep 2
+done
+echo "Readiness timed out; rolling back." >&2
+dcmd logs --tail 30 "$CONTAINER_NAME" >&2 || true
+exit 1
