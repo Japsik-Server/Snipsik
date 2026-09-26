@@ -6,6 +6,7 @@ import {
 } from "@/db/schemaCompatibility";
 import {
   ALLOWED_DB_PROTOCOLS,
+  assertValidDatabaseUrl,
   firstConfiguredValue,
 } from "@/db/connectionConfig";
 import { isDeploymentReady } from "@/services/readinessPolicy";
@@ -219,5 +220,27 @@ describe("schema deployment gate", () => {
         "Invalid database URL: must be a valid absolute URL",
       );
     }
+  });
+
+  it("validates and rejects URLs consistently via assertValidDatabaseUrl", () => {
+    expect(assertValidDatabaseUrl("file:local.db")).toBe("file:local.db");
+    expect(assertValidDatabaseUrl("libsql://database.turso.io")).toBe(
+      "libsql://database.turso.io",
+    );
+    expect(() => assertValidDatabaseUrl("file://")).toThrow(
+      "Invalid database URL: must be a valid absolute URL",
+    );
+    expect(() => assertValidDatabaseUrl("file:/")).toThrow(
+      "Invalid database URL: must be a valid absolute URL",
+    );
+    expect(() => assertValidDatabaseUrl("https:")).toThrow(
+      "Invalid database URL: must be a valid absolute URL",
+    );
+    expect(() => assertValidDatabaseUrl("invalid://host")).toThrow(
+      "Invalid database URL: must start with one of",
+    );
+    expect(() => assertValidDatabaseUrl("postgresql://host:5432/db")).toThrow(
+      "Invalid database URL: must start with one of",
+    );
   });
 });

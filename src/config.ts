@@ -1,5 +1,8 @@
 import { z } from "zod";
-import { firstConfiguredValue } from "@/db/connectionConfig";
+import {
+  assertValidDatabaseUrl,
+  firstConfiguredValue,
+} from "@/db/connectionConfig";
 
 export const envSchema = z.object({
   DISCORD_TOKEN: z.string().min(1, "DISCORD_TOKEN is required"),
@@ -23,30 +26,9 @@ export const envSchema = z.object({
         .min(1, "DATABASE_URL or TURSO_DATABASE_URL is required")
         .refine(
           (url) => {
-            const trimmed = url.trim();
-            const lower = trimmed.toLowerCase();
-            if (
-              lower.startsWith("postgres:") ||
-              lower.startsWith("postgresql:")
-            ) {
-              return false;
-            }
-            if (lower.startsWith("file:")) {
-              return trimmed.length > 5;
-            }
             try {
-              const parsed = new URL(trimmed);
-              const validProtocols = [
-                "libsql:",
-                "https:",
-                "http:",
-                "wss:",
-                "ws:",
-              ];
-              return (
-                validProtocols.includes(parsed.protocol) &&
-                parsed.host.length > 0
-              );
+              assertValidDatabaseUrl(url);
+              return true;
             } catch {
               return false;
             }
@@ -60,7 +42,9 @@ export const envSchema = z.object({
   DATABASE_AUTH_TOKEN: z
     .string()
     .optional()
-    .transform((val) => firstConfiguredValue(val, process.env.TURSO_AUTH_TOKEN)),
+    .transform((val) =>
+      firstConfiguredValue(val, process.env.TURSO_AUTH_TOKEN),
+    ),
   SINK_BASE_URL: z
     .string()
     .url("SINK_BASE_URL must be a valid URL")
