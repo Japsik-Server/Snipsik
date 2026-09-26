@@ -144,14 +144,16 @@ describe("schema deployment gate", () => {
 
   it("accepts an applied baseline and rejects a missing required column", async () => {
     const dir = await mkdtemp(join(tmpdir(), "snipsik-schema-baseline-"));
-    process.env.TURSO_DATABASE_URL = `file:${join(dir, "baseline.db")}`;
-    const databaseUrl = process.env.TURSO_DATABASE_URL;
-    if (!databaseUrl)
-      throw new Error(
-        "TURSO_DATABASE_URL is required for schema baseline test",
-      );
-    const db = createClient({ url: databaseUrl });
+    const originalTursoUrl = process.env.TURSO_DATABASE_URL;
+    let db: ReturnType<typeof createClient> | undefined;
     try {
+      process.env.TURSO_DATABASE_URL = `file:${join(dir, "baseline.db")}`;
+      const databaseUrl = process.env.TURSO_DATABASE_URL;
+      if (!databaseUrl)
+        throw new Error(
+          "TURSO_DATABASE_URL is required for schema baseline test",
+        );
+      db = createClient({ url: databaseUrl });
       await db.execute(
         "CREATE TABLE watch_channels (id INTEGER, guild_id TEXT, channel_id TEXT, created_by TEXT, created_at INTEGER)",
       );
@@ -168,8 +170,12 @@ describe("schema deployment gate", () => {
         "Schema v1 missing user_configs: fixupx_enabled",
       );
     } finally {
-      db.close();
-      delete process.env.TURSO_DATABASE_URL;
+      db?.close();
+      if (originalTursoUrl === undefined) {
+        delete process.env.TURSO_DATABASE_URL;
+      } else {
+        process.env.TURSO_DATABASE_URL = originalTursoUrl;
+      }
       await rm(dir, { recursive: true, force: true });
     }
   });
@@ -187,6 +193,6 @@ describe("schema deployment gate", () => {
     });
     expect(await process.exited).not.toBe(0);
     const output = await new Response(process.stderr).text();
-    expect(output).toContain("Invalid database URL");
+    expect(output).toContain("Invalid database URL: must start with one of");
   });
 });
