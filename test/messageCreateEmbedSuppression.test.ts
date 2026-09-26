@@ -29,8 +29,8 @@ describe("Message Embed Suppression Workflow in DM Auto-Shortening", () => {
       success: true,
       list: [],
       total: 0,
-      page: 1,
-      size: 20,
+      listComplete: true,
+      status: 200,
     });
     sinkClient.createLink = async () => ({
       success: true,

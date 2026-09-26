@@ -3,16 +3,7 @@ import {
   assertSchemaCompatible,
   REQUIRED_SCHEMA_VERSION,
 } from "./schemaCompatibility";
-import { firstConfiguredValue } from "./connectionConfig";
-
-export const ALLOWED_DB_PROTOCOLS = [
-  "libsql:",
-  "file:",
-  "https:",
-  "http:",
-  "wss:",
-  "ws:",
-] as const;
+import { ALLOWED_DB_PROTOCOLS, firstConfiguredValue } from "./connectionConfig";
 
 const url = firstConfiguredValue(
   process.env.DATABASE_URL,
@@ -35,7 +26,7 @@ try {
 const protocol = parsed.protocol.toLowerCase();
 if (
   (protocol !== "file:" && parsed.host.length === 0) ||
-  (protocol === "file:" && normalizedUrl.length <= 5)
+  (protocol === "file:" && parsed.pathname.length <= 1)
 ) {
   throw new Error("Invalid database URL: must be a valid absolute URL");
 }

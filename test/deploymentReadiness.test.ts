@@ -4,8 +4,10 @@ import {
   assertSchemaCompatible,
   REQUIRED_SCHEMA_VERSION,
 } from "@/db/schemaCompatibility";
-import { firstConfiguredValue } from "@/db/connectionConfig";
-import { ALLOWED_DB_PROTOCOLS } from "@/db/checkSchema";
+import {
+  ALLOWED_DB_PROTOCOLS,
+  firstConfiguredValue,
+} from "@/db/connectionConfig";
 import { isDeploymentReady } from "@/services/readinessPolicy";
 import {
   createDatabaseProbe,
@@ -200,20 +202,22 @@ describe("schema deployment gate", () => {
   });
 
   it("rejects an empty or malformed database URL structure during schema preflight", async () => {
-    const process = Bun.spawn(["bun", "src/db/checkSchema.ts"], {
-      cwd: join(import.meta.dir, ".."),
-      env: {
-        ...globalThis.process.env,
-        DATABASE_URL: "https:",
-        TURSO_DATABASE_URL: "",
-      },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    expect(await process.exited).not.toBe(0);
-    const output = await new Response(process.stderr).text();
-    expect(output).toContain(
-      "Invalid database URL: must be a valid absolute URL",
-    );
+    for (const malformedUrl of ["https:", "file:", "file:/", "file://"]) {
+      const process = Bun.spawn(["bun", "src/db/checkSchema.ts"], {
+        cwd: join(import.meta.dir, ".."),
+        env: {
+          ...globalThis.process.env,
+          DATABASE_URL: malformedUrl,
+          TURSO_DATABASE_URL: "",
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      expect(await process.exited).not.toBe(0);
+      const output = await new Response(process.stderr).text();
+      expect(output).toContain(
+        "Invalid database URL: must be a valid absolute URL",
+      );
+    }
   });
 });
