@@ -110,16 +110,10 @@ export async function onInteractionCreate(
 
       // Edit Button -> Show Edit Modal
       if (customId.startsWith(CustomId.DASHBOARD_EDIT_BTN)) {
-        const slug = parseCustomIdSlug(
-          customId,
-          CustomId.DASHBOARD_EDIT_BTN,
-        );
+        const slug = parseCustomIdSlug(customId, CustomId.DASHBOARD_EDIT_BTN);
         if (!slug) {
           await interaction.reply({
-            ...ui.createErrorMessage(
-              "오류",
-              "잘못된 링크 식별자입니다.",
-            ),
+            ...ui.createErrorMessage("오류", "잘못된 링크 식별자입니다."),
             ephemeral: true,
           });
           return;
@@ -204,6 +198,9 @@ export async function onInteractionCreate(
         await interaction.deferUpdate();
         const delRes = await sinkClient.deleteLink(slug);
         if (!delRes.success) {
+          logger.warn(
+            `User ${interaction.user.tag} (${interaction.user.id}) failed to delete link '/${slug}' via dashboard: ${delRes.error}`,
+          );
           await interaction.editReply(
             ui.createErrorMessage(
               "삭제 실패",
@@ -604,10 +601,7 @@ export async function onInteractionCreate(
 
         if (!slug) {
           await interaction.followUp({
-            ...ui.createErrorMessage(
-              "오류",
-              "잘못된 링크 식별자입니다.",
-            ),
+            ...ui.createErrorMessage("오류", "잘못된 링크 식별자입니다."),
             ephemeral: true,
           });
           return;

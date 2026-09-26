@@ -1,15 +1,30 @@
 import { sql } from "drizzle-orm";
-import { check, integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import {
+  check,
+  integer,
+  sqliteTable,
+  text,
+  uniqueIndex,
+} from "drizzle-orm/sqlite-core";
 
-export const watchChannels = sqliteTable("watch_channels", {
-  id: integer("id").primaryKey({ autoIncrement: true }),
-  guildId: text("guild_id").notNull(),
-  channelId: text("channel_id").notNull(),
-  createdBy: text("created_by").notNull(),
-  createdAt: integer("created_at", { mode: "timestamp_ms" })
-    .default(sql`(unixepoch() * 1000)`)
-    .notNull(),
-});
+export const watchChannels = sqliteTable(
+  "watch_channels",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    guildId: text("guild_id").notNull(),
+    channelId: text("channel_id").notNull(),
+    createdBy: text("created_by").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .default(sql`(unixepoch() * 1000)`)
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex("watch_channels_guild_id_channel_id_unique").on(
+      table.guildId,
+      table.channelId,
+    ),
+  ],
+);
 
 export const guildConfigs = sqliteTable(
   "guild_configs",

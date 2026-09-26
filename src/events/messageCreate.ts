@@ -4,16 +4,24 @@ import { watchService } from "@/services/watchService";
 import { userConfigService } from "@/services/userConfigService";
 import { guildConfigService } from "@/services/guildConfigService";
 import { ensureAutomaticProcessingReadiness } from "@/services/cacheReadiness";
-import { generateSlug, verifyOwnership } from "@/services/slugManager";
+import {
+  generateSlug,
+  getUserHash,
+  verifyOwnership,
+} from "@/services/slugManager";
 import { sinkClient } from "@/services/sinkClient";
+import { findOwnedLink } from "@/services/ownedLinkCatalog";
 import { isDomainIgnored } from "@/utils/domain";
 import { convertToFixupxUrl, isTwitterDomain } from "@/utils/twitter";
 import { ui } from "@/utils/ui";
 import { logger } from "@/utils/logger";
 import { timestampToMilliseconds } from "@/utils/time";
+import { z } from "zod";
 
 const URL_START_REGEX = /https?:\/\//gi;
 const URL_TERMINATORS = new Set(["<", ">", '"', "^", "`", "{", "}", "\\"]);
+const SearchLimitSchema = z.number().int().min(1).max(1_000);
+const EXISTING_LINK_SEARCH_LIMIT = SearchLimitSchema.parse(1_000);
 
 export interface ExtractedDiscordUrl {
   url: string;
@@ -201,35 +209,60 @@ async function resolveShortLink(
 
     // 1. Check if an active short link already exists for this user and URL
     try {
+      const userHash = getUserHash(userId);
       const searchRes = await sinkClient.searchLinks({
+        q: userHash,
         url: originalUrl,
         status: "active",
-        limit: 20,
+        limit: EXISTING_LINK_SEARCH_LIMIT,
       });
 
-      if (searchRes.success && searchRes.list && searchRes.list.length > 0) {
-        const userLinks = searchRes.list.filter(
-          (l) =>
-            verifyOwnership(l.slug, userId) &&
-            isSameTargetUrl(l.url, originalUrl),
+      const userLinks = searchRes.success
+        ? searchRes.list.filter(
+            (l) =>
+              verifyOwnership(l.slug, userId) &&
+              isSameTargetUrl(l.url, originalUrl),
+          )
+        : [];
+      userLinks.sort((a, b) => {
+        const timeA = timestampToMilliseconds(a.createdAt);
+        const timeB = timestampToMilliseconds(b.createdAt);
+        return timeB - timeA;
+      });
+
+      let existingLink = userLinks[0];
+      const searchMayBeTruncated =
+        searchRes.success &&
+        (searchRes.listComplete === false ||
+          (searchRes.listComplete !== true &&
+            (searchRes.total > searchRes.list.length ||
+              searchRes.list.length >= EXISTING_LINK_SEARCH_LIMIT)));
+      if (!existingLink && searchMayBeTruncated) {
+        const lookup = await findOwnedLink(
+          userHash,
+          (link) => isSameTargetUrl(link.url, originalUrl),
+          { status: "active" },
         );
-
-        if (userLinks.length > 0) {
-          userLinks.sort((a, b) => {
-            const timeA = timestampToMilliseconds(a.createdAt);
-            const timeB = timestampToMilliseconds(b.createdAt);
-            return timeB - timeA;
-          });
-
-          const existingLink = userLinks[0];
-          if (existingLink && existingLink.slug) {
-            resolvedSlug = existingLink.slug;
-            isReused = true;
-            logger.info(
-              `Reusing existing short link /${resolvedSlug} for ${userTag} (${sanitizeUrlForLog(originalUrl)})`,
+        if (lookup.success) {
+          existingLink = lookup.link ?? undefined;
+          if (!lookup.link && !lookup.complete) {
+            logger.warn(
+              `Owned-link lookup reached its scan limit after ${lookup.scannedRecords} records for ${userTag} (${sanitizeUrlForLog(originalUrl)})`,
             );
           }
+        } else {
+          logger.warn(
+            `Failed to scan owned links for ${userTag} (${sanitizeUrlForLog(originalUrl)}): ${lookup.error}`,
+          );
         }
+      }
+
+      if (existingLink?.slug) {
+        resolvedSlug = existingLink.slug;
+        isReused = true;
+        logger.info(
+          `Reusing existing short link /${resolvedSlug} for ${userTag} (${sanitizeUrlForLog(originalUrl)})`,
+        );
       }
     } catch (searchErr) {
       logger.warn(
