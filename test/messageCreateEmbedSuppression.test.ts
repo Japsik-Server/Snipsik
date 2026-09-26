@@ -12,6 +12,7 @@ describe("Message Embed Suppression Workflow in DM Auto-Shortening", () => {
   const originalShouldProcessUser = userConfigService.shouldProcessUser;
   const originalCreateLink = sinkClient.createLink;
   const originalGetFullShortUrl = sinkClient.getFullShortUrl;
+  const originalSearchLinks = sinkClient.searchLinks;
 
   beforeEach(() => {
     watchService.setCacheLoadedForTest(true);
@@ -23,6 +24,13 @@ describe("Message Embed Suppression Workflow in DM Auto-Shortening", () => {
       autoDmMode: "inherit",
       dmFormat: "replace",
       autoShortenMinUrlLength: 0,
+    });
+    sinkClient.searchLinks = async () => ({
+      success: true,
+      list: [],
+      total: 0,
+      page: 1,
+      size: 20,
     });
     sinkClient.createLink = async () => ({
       success: true,
@@ -44,6 +52,7 @@ describe("Message Embed Suppression Workflow in DM Auto-Shortening", () => {
     userConfigService.shouldProcessUser = originalShouldProcessUser;
     sinkClient.createLink = originalCreateLink;
     sinkClient.getFullShortUrl = originalGetFullShortUrl;
+    sinkClient.searchLinks = originalSearchLinks;
   });
 
   it("sends replaced message chunks with MessageFlags.SuppressEmbeds without altering URLs with <URL>", async () => {

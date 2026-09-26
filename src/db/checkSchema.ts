@@ -5,14 +5,14 @@ import {
 } from "./schemaCompatibility";
 import { firstConfiguredValue } from "./connectionConfig";
 
-const ALLOWED_DB_PROTOCOLS = [
+export const ALLOWED_DB_PROTOCOLS = [
   "libsql:",
   "file:",
   "https:",
   "http:",
   "wss:",
   "ws:",
-];
+] as const;
 
 const url = firstConfiguredValue(
   process.env.DATABASE_URL,
@@ -24,11 +24,26 @@ if (!url)
   );
 
 const normalizedUrl = url.trim();
-const protocol = normalizedUrl.split(":", 1)[0]?.toLowerCase() ?? "";
+
+let parsed: URL;
+try {
+  parsed = new URL(normalizedUrl);
+} catch {
+  throw new Error("Invalid database URL: must be a valid absolute URL");
+}
+
+const protocol = parsed.protocol.toLowerCase();
 if (
-  protocol === "file"
-    ? !normalizedUrl.toLowerCase().startsWith("file:")
-    : !ALLOWED_DB_PROTOCOLS.includes(`${protocol}:`)
+  (protocol !== "file:" && parsed.host.length === 0) ||
+  (protocol === "file:" && normalizedUrl.length <= 5)
+) {
+  throw new Error("Invalid database URL: must be a valid absolute URL");
+}
+
+if (
+  !ALLOWED_DB_PROTOCOLS.includes(
+    protocol as (typeof ALLOWED_DB_PROTOCOLS)[number],
+  )
 ) {
   throw new Error(
     `Invalid database URL: must start with one of ${ALLOWED_DB_PROTOCOLS.join(", ")}`,
