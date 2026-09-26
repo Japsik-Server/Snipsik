@@ -41,7 +41,8 @@ export function assertValidDatabaseUrl(url: string): string {
     );
   }
 
-  return normalizedUrl;
+  const colonIndex = normalizedUrl.indexOf(":");
+  return `${protocol}${normalizedUrl.slice(colonIndex + 1)}`;
 }
 
 export function firstConfiguredValue(

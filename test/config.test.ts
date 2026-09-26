@@ -75,6 +75,14 @@ describe("Config Schema AUTO_SHORTEN_MIN_URL_LENGTH parsing", () => {
       expect(parsed.DATABASE_URL).toBe("file:local.db");
     });
 
+    it("normalizes whitespace and protocol case in DATABASE_URL", () => {
+      const parsed = envSchema.parse({
+        ...baseEnv,
+        DATABASE_URL: "  LIBSQL://my-db-org.turso.io  ",
+      });
+      expect(parsed.DATABASE_URL).toBe("libsql://my-db-org.turso.io");
+    });
+
     it("rejects unsupported URL scheme in production environment", () => {
       const originalNodeEnv = process.env.NODE_ENV;
       try {

@@ -24,20 +24,18 @@ export const envSchema = z.object({
       z
         .string()
         .min(1, "DATABASE_URL or TURSO_DATABASE_URL is required")
-        .refine(
-          (url) => {
-            try {
-              assertValidDatabaseUrl(url);
-              return true;
-            } catch {
-              return false;
-            }
-          },
-          {
-            message:
-              "DATABASE_URL must be a valid LibSQL connection URL with a host (e.g. 'libsql://database-org.turso.io') or a valid local file path (e.g. 'file:local.db'). PostgreSQL URLs are no longer supported.",
-          },
-        ),
+        .transform((url, ctx) => {
+          try {
+            return assertValidDatabaseUrl(url);
+          } catch {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              message:
+                "DATABASE_URL must be a valid LibSQL connection URL with a host (e.g. 'libsql://database-org.turso.io') or a valid local file path (e.g. 'file:local.db'). PostgreSQL URLs are no longer supported.",
+            });
+            return z.NEVER;
+          }
+        }),
     ),
   DATABASE_AUTH_TOKEN: z
     .string()

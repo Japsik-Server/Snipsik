@@ -227,6 +227,9 @@ describe("schema deployment gate", () => {
     expect(assertValidDatabaseUrl("libsql://database.turso.io")).toBe(
       "libsql://database.turso.io",
     );
+    expect(assertValidDatabaseUrl("  LIBSQL://database.turso.io  ")).toBe(
+      "libsql://database.turso.io",
+    );
     expect(() => assertValidDatabaseUrl("file://")).toThrow(
       "Invalid database URL: must be a valid absolute URL",
     );
