@@ -1,23 +1,23 @@
 import { describe, expect, it } from 'bun:test'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { createClient } from '@libsql/client'
-import {
-  assertSchemaCompatible,
-  REQUIRED_SCHEMA_VERSION
-} from '@/db/schemaCompatibility'
 import {
   ALLOWED_DB_PROTOCOLS,
   assertValidDatabaseUrl,
   firstConfiguredValue
 } from '@/db/connectionConfig'
-import { isDeploymentReady } from '@/services/readinessPolicy'
+import {
+  assertSchemaCompatible,
+  REQUIRED_SCHEMA_VERSION
+} from '@/db/schemaCompatibility'
 import {
   createDatabaseProbe,
   probeDatabase,
   writeReadinessTimestamp
 } from '@/services/deploymentReadiness'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { isDeploymentReady } from '@/services/readinessPolicy'
 
 describe('deployment readiness', () => {
   it('requires Discord, DB, and every policy cache ready', () => {

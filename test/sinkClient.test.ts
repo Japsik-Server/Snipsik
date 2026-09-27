@@ -1,8 +1,8 @@
 import { describe, expect, it, mock } from 'bun:test'
-import { SinkClient, sinkClient } from '@/services/sinkClient'
 import { fetchUserDashboardStats } from '@/commands/link'
-import { getUserHash } from '@/services/slugManager'
 import { attachClickCounts } from '@/services/ownedLinkCatalog'
+import { SinkClient, sinkClient } from '@/services/sinkClient'
+import { getUserHash } from '@/services/slugManager'
 
 const TEST_TOKEN = process.env.SINK_TOKEN ?? ''
 

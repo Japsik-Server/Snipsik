@@ -1,18 +1,24 @@
 import { and, eq } from 'drizzle-orm'
 import { db } from '@/db'
-import { watchChannels, type WatchChannel } from '@/db/schema'
-import { logger } from '@/utils/logger'
+import { type WatchChannel, watchChannels } from '@/db/schema'
 import {
   CacheRecoveryController,
   type CacheStatus
 } from '@/services/cacheRecovery'
+import { logger } from '@/utils/logger'
 
 export interface WatchableChannelLike {
   id: string
   parentId?: string | null
   isThread?: () => boolean
   parent?: { parentId?: string | null } | null
-  guild?: { channels?: { cache?: { get?: (id: string) => any } } } | null
+  guild?: {
+    channels?: {
+      cache?: {
+        get?: (id: string) => { parentId?: string | null } | null | undefined
+      }
+    }
+  } | null
 }
 
 export class WatchService {

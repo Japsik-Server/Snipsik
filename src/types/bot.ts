@@ -1,8 +1,8 @@
 import type {
   ChatInputCommandInteraction,
   SlashCommandBuilder,
-  SlashCommandSubcommandsOnlyBuilder,
-  SlashCommandOptionsOnlyBuilder
+  SlashCommandOptionsOnlyBuilder,
+  SlashCommandSubcommandsOnlyBuilder
 } from 'discord.js'
 import type { SinkLink } from '@/types/sink'
 

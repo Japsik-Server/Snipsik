@@ -1,6 +1,6 @@
 import { sinkClient } from '@/services/sinkClient'
-import { logger } from '@/utils/logger'
 import type { SinkLink, SinkListParams } from '@/types/sink'
+import { logger } from '@/utils/logger'
 
 export interface ClickCountResult {
   links: SinkLink[]

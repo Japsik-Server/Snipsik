@@ -11,11 +11,11 @@ import {
   TextDisplayBuilder,
   type User
 } from 'discord.js'
+import { sinkClient } from '@/services/sinkClient'
+import { getUserHash } from '@/services/slugManager'
+import type { UserConfigData } from '@/services/userConfigService'
 import { CustomId, type UserDashboardStats } from '@/types/bot'
 import type { SinkLink, SinkStats } from '@/types/sink'
-import type { UserConfigData } from '@/services/userConfigService'
-import { getUserHash } from '@/services/slugManager'
-import { sinkClient } from '@/services/sinkClient'
 import { expirationToUnixSeconds } from '@/utils/time'
 
 export const COLORS = {

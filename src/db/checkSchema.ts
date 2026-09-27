@@ -1,12 +1,12 @@
 import { createClient } from '@libsql/client'
 import {
-  assertSchemaCompatible,
-  REQUIRED_SCHEMA_VERSION
-} from './schemaCompatibility'
-import {
   assertValidDatabaseUrl,
   firstConfiguredValue
 } from './connectionConfig'
+import {
+  assertSchemaCompatible,
+  REQUIRED_SCHEMA_VERSION
+} from './schemaCompatibility'
 
 const url = firstConfiguredValue(
   process.env.DATABASE_URL,

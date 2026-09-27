@@ -23,7 +23,7 @@ export function crc32(str: string): number {
   let crc = 0 ^ -1
   for (let i = 0; i < str.length; i++) {
     const code = str.charCodeAt(i)
-    crc = (crc >>> 8) ^ CRC32_TABLE[(crc ^ code) & 0xff]!
+    crc = (crc >>> 8) ^ (CRC32_TABLE[(crc ^ code) & 0xff] ?? 0)
   }
   return (crc ^ -1) >>> 0
 }
@@ -67,7 +67,7 @@ export function generateRandomString(length: number): string {
   crypto.getRandomValues(bytes)
   let result = ''
   for (let i = 0; i < length; i++) {
-    const byte = bytes[i]!
+    const byte = bytes[i] ?? 0
     result += BASE36_CHARS[byte % 36]
   }
   return result

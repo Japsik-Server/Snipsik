@@ -1,19 +1,19 @@
 import { afterEach, describe, expect, it, mock } from 'bun:test'
 import {
+  buildEditLinkPayload,
+  onInteractionCreate
+} from '@/events/interactionCreate'
+import {
   clearDashboardLinkSnapshots,
   getDashboardLinkSnapshot,
   storeDashboardLinkSnapshots
 } from '@/services/dashboardLinkSnapshot'
 import { SinkClient, sinkClient } from '@/services/sinkClient'
-import {
-  buildEditLinkPayload,
-  onInteractionCreate
-} from '@/events/interactionCreate'
-import { CustomId } from '@/types/bot'
 import { getUserHash } from '@/services/slugManager'
-import { createIgnoredDomainsContent, ui } from '@/utils/ui'
-import { parseExpiration } from '@/utils/time'
+import { CustomId } from '@/types/bot'
 import { parseTagsInput } from '@/utils/tags'
+import { parseExpiration } from '@/utils/time'
+import { createIgnoredDomainsContent, ui } from '@/utils/ui'
 
 afterEach(() => {
   clearDashboardLinkSnapshots()

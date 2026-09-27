@@ -6,7 +6,13 @@ import {
   PermissionFlagsBits,
   SlashCommandBuilder
 } from 'discord.js'
-import type { Command, UserDashboardStats } from '@/types/bot'
+import { config } from '@/config'
+import { storeDashboardLinkSnapshots } from '@/services/dashboardLinkSnapshot'
+import { guildConfigService } from '@/services/guildConfigService'
+import {
+  attachClickCounts,
+  collectOwnedLinks
+} from '@/services/ownedLinkCatalog'
 import { sinkClient } from '@/services/sinkClient'
 import {
   generateSlug,
@@ -15,31 +21,25 @@ import {
   validateCustomSlug,
   verifyOwnership
 } from '@/services/slugManager'
-import { watchService } from '@/services/watchService'
 import {
-  userConfigService,
   normalizeAutoDmMode,
   normalizeDmFormat,
-  normalizeMinUrlLength,
+  normalizeFixupxEnabled,
   normalizeIgnoredDomains,
-  normalizeFixupxEnabled
+  normalizeMinUrlLength,
+  userConfigService
 } from '@/services/userConfigService'
-import { guildConfigService } from '@/services/guildConfigService'
-import { config } from '@/config'
+import { watchService } from '@/services/watchService'
+import type { Command, UserDashboardStats } from '@/types/bot'
 import { getAllSystemDefaultDomains, normalizeDomain } from '@/utils/domain'
-import { ui } from '@/utils/ui'
+import { logger } from '@/utils/logger'
+import { parseTagsInput } from '@/utils/tags'
 import {
   expirationToUnixSeconds,
   parseExpiration,
   timestampToMilliseconds
 } from '@/utils/time'
-import { logger } from '@/utils/logger'
-import { storeDashboardLinkSnapshots } from '@/services/dashboardLinkSnapshot'
-import { parseTagsInput } from '@/utils/tags'
-import {
-  attachClickCounts,
-  collectOwnedLinks
-} from '@/services/ownedLinkCatalog'
+import { ui } from '@/utils/ui'
 
 /**
  * Fetches link statistics and dashboard summary for a specific Discord user.
@@ -853,21 +853,25 @@ export const linkCommand: Command = {
   }
 }
 
+export interface AccessibleChannelLike {
+  id: string
+  type?: ChannelType | number
+  permissionsFor?: (member: {
+    id: string
+  }) => { has: (perm: bigint) => boolean } | null
+  members?: {
+    cache: { has: (id: string) => boolean }
+    fetchMe?: () => Promise<unknown>
+  }
+}
+
 /**
  * Validates whether the bot has required access to monitor messages in the given channel or thread.
  * For regular channels and categories, ViewChannel permission is required.
  * For private threads, either ManageThreads permission or confirmed thread membership is required in addition to ViewChannel.
  */
 export async function validateBotChannelAccess(
-  channel: {
-    id: string
-    type?: ChannelType | number
-    permissionsFor?: (member: any) => { has: (perm: bigint) => boolean } | null
-    members?: {
-      cache: { has: (id: string) => boolean }
-      fetchMe?: () => Promise<any>
-    }
-  },
+  channel: AccessibleChannelLike,
   botMember: { id: string } | null
 ): Promise<{ canAccess: boolean; errorTitle?: string; errorMessage?: string }> {
   if (!botMember || !channel.permissionsFor) {
@@ -960,7 +964,7 @@ async function handleWatchCommand(
     const botMember =
       guild.members.me ?? (await guild.members.fetchMe().catch(() => null))
     const accessCheck = await validateBotChannelAccess(
-      channel as any,
+      channel as AccessibleChannelLike,
       botMember
     )
     if (!accessCheck.canAccess) {

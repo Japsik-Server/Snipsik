@@ -1,12 +1,12 @@
-import { describe, expect, it, beforeEach } from 'bun:test'
+import { beforeEach, describe, expect, it } from 'bun:test'
 import { ChannelType, PermissionFlagsBits } from 'discord.js'
-import {
-  watchService,
-  type WatchableChannelLike
-} from '@/services/watchService'
+import { validateBotChannelAccess } from '@/commands/link'
 import { onChannelDelete } from '@/events/channelDelete'
 import { onThreadDelete } from '@/events/threadDelete'
-import { validateBotChannelAccess } from '@/commands/link'
+import {
+  type WatchableChannelLike,
+  watchService
+} from '@/services/watchService'
 
 describe('WatchService Hierarchy & Special Channel Tests', () => {
   const guildId = 'guild-123456'

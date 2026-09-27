@@ -1,22 +1,22 @@
 import { type Message, MessageFlags } from 'discord.js'
+import { z } from 'zod'
 import { config } from '@/config'
-import { watchService } from '@/services/watchService'
-import { userConfigService } from '@/services/userConfigService'
-import { guildConfigService } from '@/services/guildConfigService'
 import { ensureAutomaticProcessingReadiness } from '@/services/cacheReadiness'
+import { guildConfigService } from '@/services/guildConfigService'
+import { findOwnedLink } from '@/services/ownedLinkCatalog'
+import { sinkClient } from '@/services/sinkClient'
 import {
   generateSlug,
   getUserHash,
   verifyOwnership
 } from '@/services/slugManager'
-import { sinkClient } from '@/services/sinkClient'
-import { findOwnedLink } from '@/services/ownedLinkCatalog'
+import { userConfigService } from '@/services/userConfigService'
+import { watchService } from '@/services/watchService'
 import { isDomainIgnored } from '@/utils/domain'
-import { convertToFixupxUrl, isTwitterDomain } from '@/utils/twitter'
-import { ui } from '@/utils/ui'
 import { logger } from '@/utils/logger'
 import { timestampToMilliseconds } from '@/utils/time'
-import { z } from 'zod'
+import { convertToFixupxUrl, isTwitterDomain } from '@/utils/twitter'
+import { ui } from '@/utils/ui'
 
 const URL_START_REGEX = /https?:\/\//gi
 const URL_TERMINATORS = new Set(['<', '>', '"', '^', '`', '{', '}', '\\'])
@@ -55,8 +55,9 @@ export function extractUrlsFromDiscordMarkdown(
     let bracketDepth = 0
 
     while (cursor < content.length) {
-      const char = content[cursor]!
+      const char = content[cursor]
       if (
+        !char ||
         /\s/.test(char) ||
         URL_TERMINATORS.has(char) ||
         (char === '*' && content[cursor + 1] === '*')

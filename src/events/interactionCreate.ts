@@ -1,29 +1,29 @@
 import type { Interaction } from 'discord.js'
 import { z } from 'zod'
-import { CustomId } from '@/types/bot'
 import {
   fetchUserDashboardStats,
   handleConfigAutocomplete,
   linkCommand
 } from '@/commands/link'
+import { getDashboardLinkSnapshot } from '@/services/dashboardLinkSnapshot'
+import { guildConfigService } from '@/services/guildConfigService'
 import { sinkClient } from '@/services/sinkClient'
 import { generateSlug, verifyOwnership } from '@/services/slugManager'
 import {
-  userConfigService,
-  normalizeMinUrlLength
+  normalizeMinUrlLength,
+  userConfigService
 } from '@/services/userConfigService'
-import { guildConfigService } from '@/services/guildConfigService'
-import { ui } from '@/utils/ui'
+import { CustomId } from '@/types/bot'
+import type { SinkLink, UpdateLinkPayload } from '@/types/sink'
+import { logger } from '@/utils/logger'
 import {
   createEditLinkModal,
   createLinkModal,
   createMinLengthConfigModal
 } from '@/utils/modals'
-import { parseExpiration } from '@/utils/time'
-import { logger } from '@/utils/logger'
-import { getDashboardLinkSnapshot } from '@/services/dashboardLinkSnapshot'
 import { parseTagsInput } from '@/utils/tags'
-import type { SinkLink, UpdateLinkPayload } from '@/types/sink'
+import { parseExpiration } from '@/utils/time'
+import { ui } from '@/utils/ui'
 
 const dashboardSlugSchema = z.string().trim().min(1).max(100)
 

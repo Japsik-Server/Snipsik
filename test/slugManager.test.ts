@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'bun:test'
 import {
-  toBase36,
-  getUserHash,
   generateSlug,
-  verifyOwnership,
-  validateCustomSlug
+  getUserHash,
+  toBase36,
+  validateCustomSlug,
+  verifyOwnership
 } from '@/services/slugManager'
 
 describe('SlugManager Unit Tests', () => {

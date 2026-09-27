@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test'
 import { createClient } from '@libsql/client'
-import { WatchService } from '@/services/watchService'
 import type { WatchChannel } from '@/db/schema'
+import { WatchService } from '@/services/watchService'
 
 describe('watch storage consistency', () => {
   it('deduplicates existing rows before adding the composite unique index', async () => {

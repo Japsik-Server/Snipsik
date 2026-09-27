@@ -1,10 +1,10 @@
-import { describe, expect, it, mock, beforeEach, afterEach } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test'
+import { type Message, MessageFlags } from 'discord.js'
 import { onMessageCreate } from '@/events/messageCreate'
-import { watchService } from '@/services/watchService'
-import { userConfigService } from '@/services/userConfigService'
 import { guildConfigService } from '@/services/guildConfigService'
 import { sinkClient } from '@/services/sinkClient'
-import { MessageFlags, type Message } from 'discord.js'
+import { userConfigService } from '@/services/userConfigService'
+import { watchService } from '@/services/watchService'
 
 describe('MessageCreate Twitter fixupx Conversion', () => {
   const originalIsChannelWatched = watchService.isChannelWatched
