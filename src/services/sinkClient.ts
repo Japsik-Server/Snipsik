@@ -1139,8 +1139,10 @@ export class SinkClient {
   /**
    * Fetches total visit counters for a single slug.
    *
-   * Sink's counters only contain rows for links that were actually clicked, so
-   * an empty result means zero clicks for a link that exists.
+   * `visits` is `undefined` when Sink returns no analytics row. That case is
+   * ambiguous - it covers both a link that was never clicked and an instance
+   * whose analytics dataset is unavailable - so it is reported as unknown
+   * rather than as a measured zero.
    */
   async getCountersBySlug(slug: string): Promise<{
     success: boolean;
@@ -1162,13 +1164,16 @@ export class SinkClient {
     const rows = isRecord(res.body) ? res.body.data : undefined;
     const first = Array.isArray(rows) ? rows[0] : undefined;
     if (!isRecord(first)) {
-      // No analytics row for a link that exists means it was never clicked.
-      return { success: true, visits: 0 };
+      // An empty result is ambiguous and must not be reported as a measured 0.
+      // Sink answers `{ data: [] }` both when the instance has no analytics
+      // dataset (no Cloudflare credentials) and when the link has no rows; only
+      // the instance side can tell those apart, so stay unknown here.
+      return { success: true, visits: undefined };
     }
     const visits = Number(first.visits);
     return {
       success: true,
-      visits: Number.isFinite(visits) ? visits : 0,
+      visits: Number.isFinite(visits) ? visits : undefined,
     };
   }
 

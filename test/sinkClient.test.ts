@@ -1231,7 +1231,7 @@ describe("Sink Analytics Tests", () => {
     );
   });
 
-  it("reports a real zero when a link was never clicked", async () => {
+  it("leaves clicks unknown when the analytics result is empty", async () => {
     const client = new SinkClient({
       baseUrl: "https://sink.example",
       token: TEST_TOKEN,
@@ -1248,9 +1248,10 @@ describe("Sink Analytics Tests", () => {
 
     const res = await client.getStats("quiet");
     expect(res.success).toBe(true);
-    // Sink's counters only hold rows for links that were clicked, so an empty
-    // result for a link that exists means it was never clicked: a real zero.
-    expect(res.stats?.clicks).toBe(0);
+    // An empty analytics result is ambiguous: the link may simply have no
+    // clicks, or the instance may have no analytics dataset at all. Reporting a
+    // measured 0 here would fabricate a figure, so it stays unknown.
+    expect(res.stats?.clicks).toBeUndefined();
     expect(res.stats?.lastClickedAt).toBeUndefined();
   });
 
@@ -1513,5 +1514,108 @@ describe("Zero-Click Link Resolution Tests", () => {
       sinkClient.listLinks = originalList;
       sinkClient.getCountersByIds = originalCounters;
     }
+  });
+});
+
+describe("Failed Lookup Must Not Fabricate Zeroes", () => {
+  const userId = "781920391829381920";
+  const userHash = getUserHash(userId);
+
+  it("leaves clicks undefined when the counter lookup failed entirely", async () => {
+    const originalCount = sinkClient.countLinks;
+    const originalList = sinkClient.listLinks;
+    const originalCounters = sinkClient.getCountersByIds;
+
+    sinkClient.countLinks = mock(async () => ({
+      success: true,
+      count: 2,
+      status: 200,
+    }));
+    sinkClient.listLinks = mock(async () => ({
+      success: true,
+      list: [
+        { id: "id-1", slug: `a-${userHash}`, url: "https://a.com" },
+        { id: "id-2", slug: `b-${userHash}`, url: "https://b.com" },
+      ],
+      total: 2,
+      listComplete: true,
+    }));
+    // A failed lookup (network error, or a rejected id) returns an empty map.
+    sinkClient.getCountersByIds = mock(async () => ({
+      success: false,
+      counters: new Map(),
+      error: "network down",
+    }));
+
+    try {
+      const stats = await fetchUserDashboardStats(userId);
+      expect(stats.clicksComplete).toBe(false);
+      // No link may be given a fabricated measured 0.
+      expect(stats.links.every((l) => l.clicks === undefined)).toBe(true);
+      expect(stats.totalClicks).toBeUndefined();
+    } finally {
+      sinkClient.countLinks = originalCount;
+      sinkClient.listLinks = originalList;
+      sinkClient.getCountersByIds = originalCounters;
+    }
+  });
+
+  it("keeps resolved counts but never fabricates zeros on a partial failure", async () => {
+    const originalCount = sinkClient.countLinks;
+    const originalList = sinkClient.listLinks;
+    const originalCounters = sinkClient.getCountersByIds;
+
+    sinkClient.countLinks = mock(async () => ({
+      success: true,
+      count: 2,
+      status: 200,
+    }));
+    sinkClient.listLinks = mock(async () => ({
+      success: true,
+      list: [
+        { id: "id-1", slug: `a-${userHash}`, url: "https://a.com" },
+        { id: "id-2", slug: `b-${userHash}`, url: "https://b.com" },
+      ],
+      total: 2,
+      listComplete: true,
+    }));
+    sinkClient.getCountersByIds = mock(async () => ({
+      success: false,
+      counters: new Map([["id-1", 11]]),
+      error: "one batch failed",
+    }));
+
+    try {
+      const stats = await fetchUserDashboardStats(userId);
+      expect(stats.clicksComplete).toBe(false);
+      // The resolved link keeps its real value; the unresolved one stays unknown.
+      expect(stats.links.find((l) => l.id === "id-1")?.clicks).toBe(11);
+      expect(stats.links.find((l) => l.id === "id-2")?.clicks).toBeUndefined();
+      expect(stats.totalClicks).toBe(11);
+    } finally {
+      sinkClient.countLinks = originalCount;
+      sinkClient.listLinks = originalList;
+      sinkClient.getCountersByIds = originalCounters;
+    }
+  });
+
+  it("reports unknown clicks on the stats card when analytics are empty", async () => {
+    const client = new SinkClient({
+      baseUrl: "https://sink.example",
+      token: TEST_TOKEN,
+      fetchImpl: async (url) => {
+        const urlStr = String(url);
+        if (urlStr.includes("/api/link/query"))
+          return new Response(
+            JSON.stringify({ slug: "s", url: "https://example.com" }),
+            { status: 200 },
+          );
+        return new Response(JSON.stringify({ data: [] }), { status: 200 });
+      },
+    });
+
+    const res = await client.getStats("s");
+    expect(res.success).toBe(true);
+    expect(res.stats?.clicks).toBeUndefined();
   });
 });
