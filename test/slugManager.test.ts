@@ -1,79 +1,79 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it } from 'bun:test'
 import {
   toBase36,
   getUserHash,
   generateSlug,
   verifyOwnership,
-  validateCustomSlug,
-} from "@/services/slugManager";
+  validateCustomSlug
+} from '@/services/slugManager'
 
-describe("SlugManager Unit Tests", () => {
-  it("should encode 32-bit integers to 7-character lowercase Base36 injectively", () => {
-    expect(toBase36(0)).toBe("0000000");
-    expect(toBase36(4294967295)).toBe("1z141z3");
-    expect(toBase36(123456789)).toBe("021i3v9");
+describe('SlugManager Unit Tests', () => {
+  it('should encode 32-bit integers to 7-character lowercase Base36 injectively', () => {
+    expect(toBase36(0)).toBe('0000000')
+    expect(toBase36(4294967295)).toBe('1z141z3')
+    expect(toBase36(123456789)).toBe('021i3v9')
 
     // Injective check: different numbers must produce different Base36 strings
-    expect(toBase36(10)).not.toBe(toBase36(36));
-    expect(toBase36(10)).toBe("000000a");
-    expect(toBase36(36)).toBe("0000010");
-  });
+    expect(toBase36(10)).not.toBe(toBase36(36))
+    expect(toBase36(10)).toBe('000000a')
+    expect(toBase36(36)).toBe('0000010')
+  })
 
-  it("should calculate deterministic CRC32 and 7-character lowercase Base36 user hashes", () => {
-    const userId1 = "294123456789012345";
-    const userId2 = "294123456789012346";
+  it('should calculate deterministic CRC32 and 7-character lowercase Base36 user hashes', () => {
+    const userId1 = '294123456789012345'
+    const userId2 = '294123456789012346'
 
-    const hash1 = getUserHash(userId1);
-    const hash2 = getUserHash(userId2);
+    const hash1 = getUserHash(userId1)
+    const hash2 = getUserHash(userId2)
 
-    expect(typeof hash1).toBe("string");
-    expect(hash1.length).toBe(7);
-    expect(hash1).not.toBe(hash2);
-    expect(hash1).toBe(hash1.toLowerCase());
-    expect(/^[0-9a-z]{7}$/.test(hash1)).toBe(true);
+    expect(typeof hash1).toBe('string')
+    expect(hash1.length).toBe(7)
+    expect(hash1).not.toBe(hash2)
+    expect(hash1).toBe(hash1.toLowerCase())
+    expect(/^[0-9a-z]{7}$/.test(hash1)).toBe(true)
 
     // Deterministic check
-    expect(getUserHash(userId1)).toBe(hash1);
-  });
+    expect(getUserHash(userId1)).toBe(hash1)
+  })
 
-  it("should generate proper slug format {random}-{userHash} in lowercase", () => {
-    const userId = "123456789012345678";
-    const userHash = getUserHash(userId);
-    const slug = generateSlug(userId);
+  it('should generate proper slug format {random}-{userHash} in lowercase', () => {
+    const userId = '123456789012345678'
+    const userHash = getUserHash(userId)
+    const slug = generateSlug(userId)
 
-    expect(slug).toContain(`-${userHash}`);
-    expect(slug.endsWith(`-${userHash}`)).toBe(true);
-    expect(slug).toBe(slug.toLowerCase());
-    expect(/^[0-9a-z_-]+$/.test(slug)).toBe(true);
-  });
+    expect(slug).toContain(`-${userHash}`)
+    expect(slug.endsWith(`-${userHash}`)).toBe(true)
+    expect(slug).toBe(slug.toLowerCase())
+    expect(/^[0-9a-z_-]+$/.test(slug)).toBe(true)
+  })
 
-  it("should verify ownership accurately with case-insensitive matching", () => {
-    const userA = "111111111111111111";
-    const userB = "222222222222222222";
+  it('should verify ownership accurately with case-insensitive matching', () => {
+    const userA = '111111111111111111'
+    const userB = '222222222222222222'
 
-    const hashA = getUserHash(userA);
-    const slugA = generateSlug(userA);
+    const hashA = getUserHash(userA)
+    const slugA = generateSlug(userA)
 
-    expect(verifyOwnership(slugA, userA)).toBe(true);
-    expect(verifyOwnership(slugA, userB)).toBe(false);
+    expect(verifyOwnership(slugA, userA)).toBe(true)
+    expect(verifyOwnership(slugA, userB)).toBe(false)
 
     // Case-insensitivity check (uppercase / mixed-case user input should still match)
-    expect(verifyOwnership(slugA.toUpperCase(), userA)).toBe(true);
-    expect(verifyOwnership(`/${slugA.toUpperCase()}`, userA)).toBe(true);
-    expect(verifyOwnership(`/${slugA}`, userA)).toBe(true);
+    expect(verifyOwnership(slugA.toUpperCase(), userA)).toBe(true)
+    expect(verifyOwnership(`/${slugA.toUpperCase()}`, userA)).toBe(true)
+    expect(verifyOwnership(`/${slugA}`, userA)).toBe(true)
 
     // User A should own direct hash
-    expect(verifyOwnership(hashA, userA)).toBe(true);
-    expect(verifyOwnership(hashA.toUpperCase(), userA)).toBe(true);
+    expect(verifyOwnership(hashA, userA)).toBe(true)
+    expect(verifyOwnership(hashA.toUpperCase(), userA)).toBe(true)
 
     // Completely different hash should fail
-    expect(verifyOwnership(`test-differenthash`, userA)).toBe(false);
-  });
+    expect(verifyOwnership(`test-differenthash`, userA)).toBe(false)
+  })
 
-  it("should validate custom slugs properly", () => {
+  it('should validate custom slugs properly', () => {
     // Non-admin user
-    const regularUser = "999999999999999999";
-    const result = validateCustomSlug("my-custom-link", regularUser);
-    expect(result.valid).toBe(false);
-  });
-});
+    const regularUser = '999999999999999999'
+    const result = validateCustomSlug('my-custom-link', regularUser)
+    expect(result.valid).toBe(false)
+  })
+})

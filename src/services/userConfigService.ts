@@ -1,33 +1,33 @@
-import { and, eq } from "drizzle-orm";
-import { db } from "@/db";
-import { userConfigs } from "@/db/schema";
-import { normalizeDomain, MAX_CUSTOM_IGNORED_DOMAINS } from "@/utils/domain";
-import { logger } from "@/utils/logger";
-import { keyedMutex } from "@/utils/mutex";
+import { and, eq } from 'drizzle-orm'
+import { db } from '@/db'
+import { userConfigs } from '@/db/schema'
+import { normalizeDomain, MAX_CUSTOM_IGNORED_DOMAINS } from '@/utils/domain'
+import { logger } from '@/utils/logger'
+import { keyedMutex } from '@/utils/mutex'
 import {
   CacheRecoveryController,
-  type CacheStatus,
-} from "@/services/cacheRecovery";
+  type CacheStatus
+} from '@/services/cacheRecovery'
 
-export type AutoDmMode = "inherit" | "on" | "off";
-export type DmFormat = "replace" | "list";
+export type AutoDmMode = 'inherit' | 'on' | 'off'
+export type DmFormat = 'replace' | 'list'
 
 export interface UserConfigData {
-  userId?: string;
-  autoDmMode: AutoDmMode;
-  dmFormat: DmFormat;
-  autoShortenMinUrlLength: number | null;
-  ignoredDomains: string[];
-  fixupxEnabled: boolean;
+  userId?: string
+  autoDmMode: AutoDmMode
+  dmFormat: DmFormat
+  autoShortenMinUrlLength: number | null
+  ignoredDomains: string[]
+  fixupxEnabled: boolean
 }
 
 export const DEFAULT_USER_CONFIG: Readonly<UserConfigData> = {
-  autoDmMode: "inherit",
-  dmFormat: "replace",
+  autoDmMode: 'inherit',
+  dmFormat: 'replace',
   autoShortenMinUrlLength: null,
   ignoredDomains: [],
-  fixupxEnabled: true,
-};
+  fixupxEnabled: true
+}
 
 /**
  * Normalizes input value for custom ignored domains.
@@ -40,62 +40,62 @@ export const DEFAULT_USER_CONFIG: Readonly<UserConfigData> = {
  * @returns An object indicating validity, normalized string array, and optional error message.
  */
 export function normalizeIgnoredDomains(value: unknown): {
-  valid: boolean;
-  value: string[];
-  error?: string;
+  valid: boolean
+  value: string[]
+  error?: string
 } {
   if (value === null || value === undefined) {
-    return { valid: true, value: [] };
+    return { valid: true, value: [] }
   }
 
-  let candidates: string[] = [];
+  let candidates: string[] = []
 
-  if (typeof value === "string") {
-    const trimmed = value.trim();
+  if (typeof value === 'string') {
+    const trimmed = value.trim()
     if (
       !trimmed ||
-      trimmed.toLowerCase() === "reset" ||
-      trimmed.toLowerCase() === "clear" ||
-      trimmed.toLowerCase() === "inherit" ||
-      trimmed.toLowerCase() === "default"
+      trimmed.toLowerCase() === 'reset' ||
+      trimmed.toLowerCase() === 'clear' ||
+      trimmed.toLowerCase() === 'inherit' ||
+      trimmed.toLowerCase() === 'default'
     ) {
-      return { valid: true, value: [] };
+      return { valid: true, value: [] }
     }
-    candidates = trimmed.split(/[\s,]+/);
+    candidates = trimmed.split(/[\s,]+/)
   } else if (Array.isArray(value)) {
-    candidates = value.map((v) => String(v));
+    candidates = value.map(v => String(v))
   } else {
     return {
       valid: false,
       value: [],
-      error: "도메인 목록은 쉼표로 구분된 문자열 또는 배열이어야 합니다.",
-    };
+      error: '도메인 목록은 쉼표로 구분된 문자열 또는 배열이어야 합니다.'
+    }
   }
 
-  const result = new Set<string>();
+  const result = new Set<string>()
   for (const raw of candidates) {
-    const item = raw.trim();
-    if (!item) continue;
-    const normalized = normalizeDomain(item);
+    const item = raw.trim()
+    if (!item) continue
+    const normalized = normalizeDomain(item)
     if (!normalized) {
       return {
         valid: false,
         value: [],
-        error: `유효하지 않은 도메인 형식입니다: '${item}'`,
-      };
+        error: `유효하지 않은 도메인 형식입니다: '${item}'`
+      }
     }
-    result.add(normalized);
+    result.add(normalized)
   }
 
   if (result.size > MAX_CUSTOM_IGNORED_DOMAINS) {
     return {
       valid: false,
       value: [],
-      error: `제외 도메인은 최대 ${MAX_CUSTOM_IGNORED_DOMAINS}개까지 등록할 수 있습니다. (입력: ${result.size}개)`,
-    };
+      error: `제외 도메인은 최대 ${MAX_CUSTOM_IGNORED_DOMAINS}개까지 등록할 수 있습니다. (입력: ${result.size}개)`
+    }
   }
 
-  return { valid: true, value: Array.from(result) };
+  return { valid: true, value: Array.from(result) }
 }
 
 /**
@@ -109,43 +109,43 @@ export function normalizeIgnoredDomains(value: unknown): {
  * @returns An object indicating validity and the normalized number or null.
  */
 export function normalizeMinUrlLength(value: unknown): {
-  valid: boolean;
-  value: number | null;
+  valid: boolean
+  value: number | null
 } {
   if (value === null || value === undefined) {
-    return { valid: true, value: null };
+    return { valid: true, value: null }
   }
 
-  if (typeof value === "number") {
-    if (!Number.isInteger(value)) return { valid: false, value: null };
-    if (value === -1) return { valid: true, value: null };
-    if (value === 0) return { valid: true, value: 0 };
-    if (value >= 1 && value <= 2048) return { valid: true, value };
-    return { valid: false, value: null };
+  if (typeof value === 'number') {
+    if (!Number.isInteger(value)) return { valid: false, value: null }
+    if (value === -1) return { valid: true, value: null }
+    if (value === 0) return { valid: true, value: 0 }
+    if (value >= 1 && value <= 2048) return { valid: true, value }
+    return { valid: false, value: null }
   }
 
-  if (typeof value === "string") {
-    const lower = value.trim().toLowerCase();
+  if (typeof value === 'string') {
+    const lower = value.trim().toLowerCase()
     if (
-      lower === "inherit" ||
-      lower === "default" ||
-      lower === "reset" ||
-      lower === "-1"
+      lower === 'inherit' ||
+      lower === 'default' ||
+      lower === 'reset' ||
+      lower === '-1'
     ) {
-      return { valid: true, value: null };
+      return { valid: true, value: null }
     }
-    if (lower === "all" || lower === "0") {
-      return { valid: true, value: 0 };
+    if (lower === 'all' || lower === '0') {
+      return { valid: true, value: 0 }
     }
-    const parsed = parseInt(lower, 10);
+    const parsed = parseInt(lower, 10)
     if (String(parsed) === lower) {
-      if (parsed === -1) return { valid: true, value: null };
-      if (parsed === 0) return { valid: true, value: 0 };
-      if (parsed >= 1 && parsed <= 2048) return { valid: true, value: parsed };
+      if (parsed === -1) return { valid: true, value: null }
+      if (parsed === 0) return { valid: true, value: 0 }
+      if (parsed >= 1 && parsed <= 2048) return { valid: true, value: parsed }
     }
   }
 
-  return { valid: false, value: null };
+  return { valid: false, value: null }
 }
 
 /**
@@ -155,24 +155,24 @@ export function normalizeMinUrlLength(value: unknown): {
  * @returns Normalized AutoDmMode or null if invalid.
  */
 export function normalizeAutoDmMode(value: unknown): AutoDmMode | null {
-  if (typeof value !== "string") return null;
-  const lower = value.trim().toLowerCase();
-  if (lower === "inherit" || lower === "default") return "inherit";
+  if (typeof value !== 'string') return null
+  const lower = value.trim().toLowerCase()
+  if (lower === 'inherit' || lower === 'default') return 'inherit'
   if (
-    lower === "on" ||
-    lower === "true" ||
-    lower === "enable" ||
-    lower === "enabled"
+    lower === 'on' ||
+    lower === 'true' ||
+    lower === 'enable' ||
+    lower === 'enabled'
   )
-    return "on";
+    return 'on'
   if (
-    lower === "off" ||
-    lower === "false" ||
-    lower === "disable" ||
-    lower === "disabled"
+    lower === 'off' ||
+    lower === 'false' ||
+    lower === 'disable' ||
+    lower === 'disabled'
   )
-    return "off";
-  return null;
+    return 'off'
+  return null
 }
 
 /**
@@ -182,11 +182,11 @@ export function normalizeAutoDmMode(value: unknown): AutoDmMode | null {
  * @returns Normalized DmFormat or null if invalid.
  */
 export function normalizeDmFormat(value: unknown): DmFormat | null {
-  if (typeof value !== "string") return null;
-  const lower = value.trim().toLowerCase();
-  if (lower === "replace" || lower === "message") return "replace";
-  if (lower === "list" || lower === "urls") return "list";
-  return null;
+  if (typeof value !== 'string') return null
+  const lower = value.trim().toLowerCase()
+  if (lower === 'replace' || lower === 'message') return 'replace'
+  if (lower === 'list' || lower === 'urls') return 'list'
+  return null
 }
 
 /**
@@ -196,61 +196,60 @@ export function normalizeDmFormat(value: unknown): DmFormat | null {
  * @returns Boolean value or null if invalid.
  */
 export function normalizeFixupxEnabled(value: unknown): boolean | null {
-  if (typeof value === "boolean") return value;
-  if (typeof value !== "string") return null;
-  const lower = value.trim().toLowerCase();
+  if (typeof value === 'boolean') return value
+  if (typeof value !== 'string') return null
+  const lower = value.trim().toLowerCase()
   if (
-    lower === "on" ||
-    lower === "true" ||
-    lower === "enable" ||
-    lower === "enabled" ||
-    lower === "1"
+    lower === 'on' ||
+    lower === 'true' ||
+    lower === 'enable' ||
+    lower === 'enabled' ||
+    lower === '1'
   ) {
-    return true;
+    return true
   }
   if (
-    lower === "off" ||
-    lower === "false" ||
-    lower === "disable" ||
-    lower === "disabled" ||
-    lower === "0"
+    lower === 'off' ||
+    lower === 'false' ||
+    lower === 'disable' ||
+    lower === 'disabled' ||
+    lower === '0'
   ) {
-    return false;
+    return false
   }
-  return null;
+  return null
 }
 
 class UserConfigService {
   // In-memory cache for O(1) sync lookups in messageCreate
-  private cache: Map<string, UserConfigData> = new Map();
-  private cacheEpoch: number = 0;
+  private cache: Map<string, UserConfigData> = new Map()
+  private cacheEpoch: number = 0
   private cacheMutations = new Map<
     string,
     { epoch: number; value: UserConfigData }
-  >();
-  private readonly recovery = new CacheRecoveryController(
-    "UserConfig",
-    () => this.refreshCache(),
-  );
+  >()
+  private readonly recovery = new CacheRecoveryController('UserConfig', () =>
+    this.refreshCache()
+  )
 
   /**
    * Triggers a non-blocking background attempt to reload user configs cache if currently unloaded.
    * Coalesced and retried with capped exponential backoff.
    */
   triggerBackgroundReload(): void {
-    this.recovery.ensureLoading();
+    this.recovery.ensureLoading()
   }
 
   startCacheRecovery(): Promise<void> {
-    return this.recovery.start();
+    return this.recovery.start()
   }
 
   stopCacheRecovery(): void {
-    this.recovery.stop();
+    this.recovery.stop()
   }
 
   getCacheStatus(): CacheStatus {
-    return this.recovery.getStatus();
+    return this.recovery.getStatus()
   }
 
   /**
@@ -259,7 +258,7 @@ class UserConfigService {
    * @param loaded - Cache loaded status flag.
    */
   setCacheLoadedForTest(loaded: boolean): void {
-    this.recovery.setUsableForTest(loaded);
+    this.recovery.setUsableForTest(loaded)
   }
 
   /**
@@ -268,7 +267,7 @@ class UserConfigService {
    * @returns True if cache is loaded, false otherwise.
    */
   isCacheLoaded(): boolean {
-    return this.recovery.isUsable();
+    return this.recovery.isUsable()
   }
 
   /**
@@ -276,50 +275,50 @@ class UserConfigService {
    * Synchronizes with concurrent writes using cacheEpoch to avoid clobbering newer rows.
    */
   async loadCache(): Promise<void> {
-    return this.recovery.loadNow();
+    return this.recovery.loadNow()
   }
 
   private async refreshCache(): Promise<void> {
-    const startEpoch = this.cacheEpoch;
+    const startEpoch = this.cacheEpoch
     try {
-      const records = await db.select().from(userConfigs);
-      const nextCache = new Map<string, UserConfigData>();
+      const records = await db.select().from(userConfigs)
+      const nextCache = new Map<string, UserConfigData>()
       for (const record of records) {
         nextCache.set(record.userId, {
           userId: record.userId,
-          autoDmMode: normalizeAutoDmMode(record.autoDmMode) ?? "inherit",
-          dmFormat: normalizeDmFormat(record.dmFormat) ?? "replace",
+          autoDmMode: normalizeAutoDmMode(record.autoDmMode) ?? 'inherit',
+          dmFormat: normalizeDmFormat(record.dmFormat) ?? 'replace',
           autoShortenMinUrlLength: record.autoShortenMinUrlLength ?? null,
           ignoredDomains: record.ignoredDomains ?? [],
-          fixupxEnabled: record.fixupxEnabled ?? true,
-        });
+          fixupxEnabled: record.fixupxEnabled ?? true
+        })
       }
 
-      this.cache = nextCache;
-      const appliedEpoch = this.cacheEpoch;
+      this.cache = nextCache
+      const appliedEpoch = this.cacheEpoch
       for (const [userId, mutation] of this.cacheMutations) {
         if (mutation.epoch > startEpoch && mutation.epoch <= appliedEpoch) {
-          this.cache.set(userId, mutation.value);
+          this.cache.set(userId, mutation.value)
         }
       }
 
-      this.pruneCacheMutations(appliedEpoch);
-      logger.info(`Loaded ${records.length} user config(s) into memory cache.`);
+      this.pruneCacheMutations(appliedEpoch)
+      logger.info(`Loaded ${records.length} user config(s) into memory cache.`)
     } catch (error) {
-      logger.error("Failed to load user configs cache from DB:", error);
-      throw error;
+      logger.error('Failed to load user configs cache from DB:', error)
+      throw error
     }
   }
 
   private recordCacheMutation(userId: string, value: UserConfigData): void {
-    this.cacheEpoch += 1;
-    this.cacheMutations.set(userId, { epoch: this.cacheEpoch, value });
-    this.cache.set(userId, value);
+    this.cacheEpoch += 1
+    this.cacheMutations.set(userId, { epoch: this.cacheEpoch, value })
+    this.cache.set(userId, value)
   }
 
   private pruneCacheMutations(appliedEpoch: number): void {
     for (const [userId, mutation] of this.cacheMutations) {
-      if (mutation.epoch <= appliedEpoch) this.cacheMutations.delete(userId);
+      if (mutation.epoch <= appliedEpoch) this.cacheMutations.delete(userId)
     }
   }
 
@@ -330,14 +329,14 @@ class UserConfigService {
    * @returns User configuration data.
    */
   getUserConfig(userId: string): UserConfigData {
-    const cached = this.cache.get(userId);
+    const cached = this.cache.get(userId)
     if (cached) {
-      return { ...cached };
+      return { ...cached }
     }
     return {
       userId,
-      ...DEFAULT_USER_CONFIG,
-    };
+      ...DEFAULT_USER_CONFIG
+    }
   }
 
   /**
@@ -353,195 +352,195 @@ class UserConfigService {
     updates: Partial<
       Pick<
         UserConfigData,
-        | "autoDmMode"
-        | "dmFormat"
-        | "autoShortenMinUrlLength"
-        | "ignoredDomains"
-        | "fixupxEnabled"
+        | 'autoDmMode'
+        | 'dmFormat'
+        | 'autoShortenMinUrlLength'
+        | 'ignoredDomains'
+        | 'fixupxEnabled'
       >
-    >,
+    >
   ): Promise<{ success: boolean; error?: string; config: UserConfigData }> {
-    const current = this.getUserConfig(userId);
+    const current = this.getUserConfig(userId)
 
     const setClause: Record<string, unknown> = {
-      updatedAt: new Date(),
-    };
+      updatedAt: new Date()
+    }
     const insertValues: {
-      userId: string;
-      autoDmMode?: AutoDmMode;
-      dmFormat?: DmFormat;
-      autoShortenMinUrlLength?: number | null;
-      ignoredDomains?: string[];
-      fixupxEnabled?: boolean;
-      updatedAt: Date;
+      userId: string
+      autoDmMode?: AutoDmMode
+      dmFormat?: DmFormat
+      autoShortenMinUrlLength?: number | null
+      ignoredDomains?: string[]
+      fixupxEnabled?: boolean
+      updatedAt: Date
     } = {
       userId,
-      updatedAt: new Date(),
-    };
+      updatedAt: new Date()
+    }
 
     if (updates.autoDmMode !== undefined) {
-      const normalized = normalizeAutoDmMode(updates.autoDmMode);
+      const normalized = normalizeAutoDmMode(updates.autoDmMode)
       if (normalized) {
-        setClause.autoDmMode = normalized;
-        insertValues.autoDmMode = normalized;
+        setClause.autoDmMode = normalized
+        insertValues.autoDmMode = normalized
       }
     }
 
     if (updates.dmFormat !== undefined) {
-      const normalized = normalizeDmFormat(updates.dmFormat);
+      const normalized = normalizeDmFormat(updates.dmFormat)
       if (normalized) {
-        setClause.dmFormat = normalized;
-        insertValues.dmFormat = normalized;
+        setClause.dmFormat = normalized
+        insertValues.dmFormat = normalized
       }
     }
 
     if (updates.autoShortenMinUrlLength !== undefined) {
       const normalizedLen = normalizeMinUrlLength(
-        updates.autoShortenMinUrlLength,
-      );
+        updates.autoShortenMinUrlLength
+      )
       if (!normalizedLen.valid) {
         return {
           success: false,
           error:
-            "Invalid autoShortenMinUrlLength. Must be -1 (inherit), 0 (all), or an integer between 1 and 2048.",
-          config: current,
-        };
+            'Invalid autoShortenMinUrlLength. Must be -1 (inherit), 0 (all), or an integer between 1 and 2048.',
+          config: current
+        }
       }
-      setClause.autoShortenMinUrlLength = normalizedLen.value;
-      insertValues.autoShortenMinUrlLength = normalizedLen.value;
+      setClause.autoShortenMinUrlLength = normalizedLen.value
+      insertValues.autoShortenMinUrlLength = normalizedLen.value
     }
 
     if (updates.ignoredDomains !== undefined) {
-      const normalizedDomains = normalizeIgnoredDomains(updates.ignoredDomains);
+      const normalizedDomains = normalizeIgnoredDomains(updates.ignoredDomains)
       if (!normalizedDomains.valid) {
         return {
           success: false,
-          error: normalizedDomains.error || "Invalid ignoredDomains.",
-          config: current,
-        };
+          error: normalizedDomains.error || 'Invalid ignoredDomains.',
+          config: current
+        }
       }
-      setClause.ignoredDomains = normalizedDomains.value;
-      insertValues.ignoredDomains = normalizedDomains.value;
+      setClause.ignoredDomains = normalizedDomains.value
+      insertValues.ignoredDomains = normalizedDomains.value
     }
 
     if (updates.fixupxEnabled !== undefined) {
-      const normalizedFixupx = normalizeFixupxEnabled(updates.fixupxEnabled);
+      const normalizedFixupx = normalizeFixupxEnabled(updates.fixupxEnabled)
       if (normalizedFixupx === null) {
         return {
           success: false,
           error: "Invalid fixupx setting. Must be 'on' or 'off'.",
-          config: current,
-        };
+          config: current
+        }
       }
-      setClause.fixupxEnabled = normalizedFixupx;
-      insertValues.fixupxEnabled = normalizedFixupx;
+      setClause.fixupxEnabled = normalizedFixupx
+      insertValues.fixupxEnabled = normalizedFixupx
     }
 
-    const MAX_RETRIES = 3;
+    const MAX_RETRIES = 3
     for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
       try {
         const result = await keyedMutex.runExclusive(userId, async () => {
-          return await db.transaction(async (tx) => {
+          return await db.transaction(async tx => {
             const [existing] = await tx
               .select()
               .from(userConfigs)
-              .where(eq(userConfigs.userId, userId));
+              .where(eq(userConfigs.userId, userId))
 
-            let saved: typeof userConfigs.$inferSelect | undefined;
+            let saved: typeof userConfigs.$inferSelect | undefined
 
             if (!existing) {
               const [inserted] = await tx
                 .insert(userConfigs)
                 .values(insertValues)
                 .onConflictDoNothing()
-                .returning();
+                .returning()
 
               if (!inserted) {
                 // Raced with concurrent insert
-                return { retry: true as const };
+                return { retry: true as const }
               }
-              saved = inserted;
+              saved = inserted
             } else {
               const [updated] = await tx
                 .update(userConfigs)
                 .set({
                   ...setClause,
-                  version: existing.version + 1,
+                  version: existing.version + 1
                 })
                 .where(
                   and(
                     eq(userConfigs.userId, userId),
-                    eq(userConfigs.version, existing.version),
-                  ),
+                    eq(userConfigs.version, existing.version)
+                  )
                 )
-                .returning();
+                .returning()
 
               if (!updated) {
                 // Raced with concurrent update
-                return { retry: true as const };
+                return { retry: true as const }
               }
-              saved = updated;
+              saved = updated
             }
 
             const savedConfig: UserConfigData = {
               userId: saved.userId,
-              autoDmMode: normalizeAutoDmMode(saved.autoDmMode) ?? "inherit",
-              dmFormat: normalizeDmFormat(saved.dmFormat) ?? "replace",
+              autoDmMode: normalizeAutoDmMode(saved.autoDmMode) ?? 'inherit',
+              dmFormat: normalizeDmFormat(saved.dmFormat) ?? 'replace',
               autoShortenMinUrlLength: saved.autoShortenMinUrlLength ?? null,
               ignoredDomains: saved.ignoredDomains ?? [],
-              fixupxEnabled: saved.fixupxEnabled ?? true,
-            };
+              fixupxEnabled: saved.fixupxEnabled ?? true
+            }
 
-            return { success: true, config: savedConfig };
-          });
-        });
+            return { success: true, config: savedConfig }
+          })
+        })
 
-        if ("retry" in result) {
+        if ('retry' in result) {
           if (attempt < MAX_RETRIES) {
-            await new Promise((resolve) => setTimeout(resolve, 25 * attempt));
-            continue;
+            await new Promise(resolve => setTimeout(resolve, 25 * attempt))
+            continue
           }
           logger.warn(
-            `Concurrent mutation conflict on user ${userId} exceeded max retries (${MAX_RETRIES}).`,
-          );
+            `Concurrent mutation conflict on user ${userId} exceeded max retries (${MAX_RETRIES}).`
+          )
           return {
             success: false,
-            error: "Concurrent update conflict. Please try again.",
-            config: current,
-          };
+            error: 'Concurrent update conflict. Please try again.',
+            config: current
+          }
         }
 
         if (result.success) {
-          this.recordCacheMutation(userId, result.config);
+          this.recordCacheMutation(userId, result.config)
           if (!this.isCacheLoaded()) {
-            this.triggerBackgroundReload();
+            this.triggerBackgroundReload()
           }
           logger.info(
-            `Updated user config for ${userId}: autoDmMode=${result.config.autoDmMode}, dmFormat=${result.config.dmFormat}, autoShortenMinUrlLength=${result.config.autoShortenMinUrlLength}, ignoredDomains=${result.config.ignoredDomains.length}`,
-          );
+            `Updated user config for ${userId}: autoDmMode=${result.config.autoDmMode}, dmFormat=${result.config.dmFormat}, autoShortenMinUrlLength=${result.config.autoShortenMinUrlLength}, ignoredDomains=${result.config.ignoredDomains.length}`
+          )
         }
 
-        return result;
+        return result
       } catch (error) {
         logger.error(
           `Failed to update user config for ${userId} (attempt ${attempt}/${MAX_RETRIES}):`,
-          error,
-        );
+          error
+        )
         if (attempt >= MAX_RETRIES) {
           return {
             success: false,
-            error: error instanceof Error ? error.message : "Database error",
-            config: current,
-          };
+            error: error instanceof Error ? error.message : 'Database error',
+            config: current
+          }
         }
       }
     }
 
     return {
       success: false,
-      error: "Database update failed after retries.",
-      config: current,
-    };
+      error: 'Database update failed after retries.',
+      config: current
+    }
   }
 
   /**
@@ -551,17 +550,17 @@ class UserConfigService {
    */
   shouldProcessUser(userId: string, isChannelWatched: boolean): boolean {
     if (!this.isCacheLoaded()) {
-      this.triggerBackgroundReload();
+      this.triggerBackgroundReload()
       logger.warn(
-        `UserConfig cache not loaded; failing closed for user ${userId} and scheduled background reload`,
-      );
-      return false;
+        `UserConfig cache not loaded; failing closed for user ${userId} and scheduled background reload`
+      )
+      return false
     }
 
-    const cfg = this.getUserConfig(userId);
-    if (cfg.autoDmMode === "off") return false;
-    if (cfg.autoDmMode === "on") return true;
-    return isChannelWatched;
+    const cfg = this.getUserConfig(userId)
+    if (cfg.autoDmMode === 'off') return false
+    if (cfg.autoDmMode === 'on') return true
+    return isChannelWatched
   }
 
   /**
@@ -571,65 +570,65 @@ class UserConfigService {
   replaceUrlsInText(
     content: string,
     replacements: Array<{
-      originalUrl: string;
-      shortenedUrl?: string;
-      targetUrl?: string;
-    }>,
+      originalUrl: string
+      shortenedUrl?: string
+      targetUrl?: string
+    }>
   ): string {
-    if (!content || replacements.length === 0) return content;
+    if (!content || replacements.length === 0) return content
 
     // Deduplicate replacements by originalUrl
-    const map = new Map<string, string>();
+    const map = new Map<string, string>()
     for (const r of replacements) {
-      const target = r.targetUrl || r.shortenedUrl;
+      const target = r.targetUrl || r.shortenedUrl
       if (target && !map.has(r.originalUrl)) {
-        map.set(r.originalUrl, target);
+        map.set(r.originalUrl, target)
       }
     }
 
     // Sort by descending URL length
     const sorted = Array.from(map.entries()).sort(
-      ([urlA], [urlB]) => urlB.length - urlA.length,
-    );
+      ([urlA], [urlB]) => urlB.length - urlA.length
+    )
 
-    let result = content;
+    let result = content
     for (const [origUrl, targetUrl] of sorted) {
-      result = result.split(origUrl).join(targetUrl);
+      result = result.split(origUrl).join(targetUrl)
     }
 
-    return result;
+    return result
   }
 
   /**
    * Splits text into safe chunks under Discord's 2,000 character limit.
    */
   chunkText(text: string, maxLength = 2000): string[] {
-    if (text.length <= maxLength) return [text];
+    if (text.length <= maxLength) return [text]
 
-    const chunks: string[] = [];
-    let remaining = text;
+    const chunks: string[] = []
+    let remaining = text
 
     while (remaining.length > 0) {
       if (remaining.length <= maxLength) {
-        chunks.push(remaining);
-        break;
+        chunks.push(remaining)
+        break
       }
 
       // Try to break at a newline or space
-      let splitIndex = remaining.lastIndexOf("\n", maxLength);
+      let splitIndex = remaining.lastIndexOf('\n', maxLength)
       if (splitIndex <= 0) {
-        splitIndex = remaining.lastIndexOf(" ", maxLength);
+        splitIndex = remaining.lastIndexOf(' ', maxLength)
       }
       if (splitIndex <= 0) {
-        splitIndex = maxLength;
+        splitIndex = maxLength
       }
 
-      chunks.push(remaining.substring(0, splitIndex));
-      remaining = remaining.substring(splitIndex).replace(/^\n+/, "");
+      chunks.push(remaining.substring(0, splitIndex))
+      remaining = remaining.substring(splitIndex).replace(/^\n+/, '')
     }
 
-    return chunks;
+    return chunks
   }
 }
 
-export const userConfigService = new UserConfigService();
+export const userConfigService = new UserConfigService()

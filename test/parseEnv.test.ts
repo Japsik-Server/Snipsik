@@ -1,12 +1,12 @@
-import { describe, expect, it } from "bun:test";
-import { execFileSync } from "node:child_process";
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
+import { describe, expect, it } from 'bun:test'
+import { execFileSync } from 'node:child_process'
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
 
-describe("scripts/parse-env.js", () => {
-  it("parses double quotes, single quotes, escapes, and inline comments using dotenv spec", () => {
-    const tmpFile = path.join(os.tmpdir(), `test-parse-${Date.now()}.txt`);
+describe('scripts/parse-env.js', () => {
+  it('parses double quotes, single quotes, escapes, and inline comments using dotenv spec', () => {
+    const tmpFile = path.join(os.tmpdir(), `test-parse-${Date.now()}.txt`)
 
     const input = `
 # Comment line
@@ -15,73 +15,70 @@ SINK_API_TOKEN="complex$#@!\\"with\\"quotes"
 SINGLE_TOKEN='raw$#@!\\"no_escape\\"'
 PLAIN_TOKEN=plain_value # inline comment
 DATABASE_URL="postgresql://user:pass@localhost:5432/db"
-`;
+`
 
-    execFileSync("bun", ["run", "scripts/parse-env.js", tmpFile], {
-      env: { ...process.env, APP_ENV: input },
-    });
+    execFileSync('bun', ['run', 'scripts/parse-env.js', tmpFile], {
+      env: { ...process.env, APP_ENV: input }
+    })
 
-    const content = fs.readFileSync(tmpFile, "utf-8");
-    fs.unlinkSync(tmpFile);
+    const content = fs.readFileSync(tmpFile, 'utf-8')
+    fs.unlinkSync(tmpFile)
 
-    const lines = content.trim().split("\n");
-    expect(lines).toContain("DISCORD_TOKEN=bot-token$#@!");
-    expect(lines).toContain('SINK_API_TOKEN=complex$#@!\\"with\\"quotes');
-    expect(lines).toContain('SINGLE_TOKEN=raw$#@!\\"no_escape\\"');
-    expect(lines).toContain("PLAIN_TOKEN=plain_value");
+    const lines = content.trim().split('\n')
+    expect(lines).toContain('DISCORD_TOKEN=bot-token$#@!')
+    expect(lines).toContain('SINK_API_TOKEN=complex$#@!\\"with\\"quotes')
+    expect(lines).toContain('SINGLE_TOKEN=raw$#@!\\"no_escape\\"')
+    expect(lines).toContain('PLAIN_TOKEN=plain_value')
     expect(lines).toContain(
-      "DATABASE_URL=postgresql://user:pass@localhost:5432/db",
-    );
-  });
+      'DATABASE_URL=postgresql://user:pass@localhost:5432/db'
+    )
+  })
 
-  it("sorts keys alphabetically for deterministic output and consistent sha256 checksums", () => {
-    const tmpFile = path.join(
-      os.tmpdir(),
-      `test-parse-order-${Date.now()}.txt`,
-    );
+  it('sorts keys alphabetically for deterministic output and consistent sha256 checksums', () => {
+    const tmpFile = path.join(os.tmpdir(), `test-parse-order-${Date.now()}.txt`)
 
     const input = `
 ZEBRA="last"
 APPLE="first"
 MANGO="middle"
-`;
+`
 
-    execFileSync("bun", ["run", "scripts/parse-env.js", tmpFile], {
-      env: { ...process.env, APP_ENV: input },
-    });
+    execFileSync('bun', ['run', 'scripts/parse-env.js', tmpFile], {
+      env: { ...process.env, APP_ENV: input }
+    })
 
-    const content = fs.readFileSync(tmpFile, "utf-8");
-    fs.unlinkSync(tmpFile);
+    const content = fs.readFileSync(tmpFile, 'utf-8')
+    fs.unlinkSync(tmpFile)
 
-    const lines = content.trim().split("\n");
-    expect(lines).toEqual(["APPLE=first", "MANGO=middle", "ZEBRA=last"]);
-  });
+    const lines = content.trim().split('\n')
+    expect(lines).toEqual(['APPLE=first', 'MANGO=middle', 'ZEBRA=last'])
+  })
 
-  it("rejects environment variables with newline characters to preserve Docker env-file contract", () => {
-    const tmpFile = path.join(os.tmpdir(), `test-parse-fail-${Date.now()}.txt`);
+  it('rejects environment variables with newline characters to preserve Docker env-file contract', () => {
+    const tmpFile = path.join(os.tmpdir(), `test-parse-fail-${Date.now()}.txt`)
     const inputWithNewline = `
 VALID_KEY="valid"
 MULTILINE_KEY="line1\\nline2"
-`;
+`
 
-    let caughtError: unknown;
+    let caughtError: unknown
     try {
-      execFileSync("bun", ["run", "scripts/parse-env.js", tmpFile], {
+      execFileSync('bun', ['run', 'scripts/parse-env.js', tmpFile], {
         env: { ...process.env, APP_ENV: inputWithNewline },
-        stdio: "pipe",
-      });
+        stdio: 'pipe'
+      })
     } catch (err) {
-      caughtError = err;
+      caughtError = err
     }
 
-    expect(caughtError).toBeDefined();
+    expect(caughtError).toBeDefined()
     const stderr =
-      (caughtError as { stderr?: Buffer })?.stderr?.toString() || "";
-    expect(stderr).toContain("contains newline characters");
-    expect(fs.existsSync(tmpFile)).toBe(false);
+      (caughtError as { stderr?: Buffer })?.stderr?.toString() || ''
+    expect(stderr).toContain('contains newline characters')
+    expect(fs.existsSync(tmpFile)).toBe(false)
 
     if (fs.existsSync(tmpFile)) {
-      fs.unlinkSync(tmpFile);
+      fs.unlinkSync(tmpFile)
     }
-  });
-});
+  })
+})

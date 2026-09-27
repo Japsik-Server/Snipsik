@@ -1,77 +1,77 @@
-import { Client, Events, GatewayIntentBits, Partials } from "discord.js";
-import { config } from "@/config";
-import { onReady } from "@/events/ready";
-import { onInteractionCreate } from "@/events/interactionCreate";
-import { onMessageCreate } from "@/events/messageCreate";
-import { onChannelDelete } from "@/events/channelDelete";
-import { onThreadDelete } from "@/events/threadDelete";
-import { logger } from "@/utils/logger";
-import { stopAutomaticProcessingCacheRecovery } from "@/services/cacheReadiness";
-import { startDeploymentReadiness } from "@/services/deploymentReadiness";
+import { Client, Events, GatewayIntentBits, Partials } from 'discord.js'
+import { config } from '@/config'
+import { onReady } from '@/events/ready'
+import { onInteractionCreate } from '@/events/interactionCreate'
+import { onMessageCreate } from '@/events/messageCreate'
+import { onChannelDelete } from '@/events/channelDelete'
+import { onThreadDelete } from '@/events/threadDelete'
+import { logger } from '@/utils/logger'
+import { stopAutomaticProcessingCacheRecovery } from '@/services/cacheReadiness'
+import { startDeploymentReadiness } from '@/services/deploymentReadiness'
 
-logger.info("Starting Snipsik Discord Bot...");
+logger.info('Starting Snipsik Discord Bot...')
 
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,
-    GatewayIntentBits.DirectMessages,
+    GatewayIntentBits.DirectMessages
   ],
-  partials: [Partials.Channel, Partials.Message],
-});
-const stopDeploymentReadiness = startDeploymentReadiness(client);
+  partials: [Partials.Channel, Partials.Message]
+})
+const stopDeploymentReadiness = startDeploymentReadiness(client)
 
 // Event Listeners
-client.once(Events.ClientReady, async (readyClient) => {
-  await onReady(readyClient);
-});
+client.once(Events.ClientReady, async readyClient => {
+  await onReady(readyClient)
+})
 
-client.on(Events.InteractionCreate, async (interaction) => {
-  await onInteractionCreate(interaction);
-});
+client.on(Events.InteractionCreate, async interaction => {
+  await onInteractionCreate(interaction)
+})
 
-client.on(Events.MessageCreate, async (message) => {
-  await onMessageCreate(message);
-});
+client.on(Events.MessageCreate, async message => {
+  await onMessageCreate(message)
+})
 
-client.on(Events.ChannelDelete, async (channel) => {
-  await onChannelDelete(channel);
-});
+client.on(Events.ChannelDelete, async channel => {
+  await onChannelDelete(channel)
+})
 
-client.on(Events.ThreadDelete, async (thread) => {
-  await onThreadDelete(thread);
-});
+client.on(Events.ThreadDelete, async thread => {
+  await onThreadDelete(thread)
+})
 
 // Global Error Handlers
-client.on("error", (error) => {
-  logger.error("Discord Client Error:", error);
-});
+client.on('error', error => {
+  logger.error('Discord Client Error:', error)
+})
 
-process.on("unhandledRejection", (reason) => {
-  logger.error("Unhandled Promise Rejection:", reason);
-});
+process.on('unhandledRejection', reason => {
+  logger.error('Unhandled Promise Rejection:', reason)
+})
 
-process.on("uncaughtException", (error) => {
-  logger.error("Uncaught Exception:", error);
-});
+process.on('uncaughtException', error => {
+  logger.error('Uncaught Exception:', error)
+})
 
-let shuttingDown = false;
+let shuttingDown = false
 const shutdown = (signal: string): void => {
-  if (shuttingDown) return;
-  shuttingDown = true;
-  logger.info(`Received ${signal}; stopping cache recovery and Discord client.`);
-  stopAutomaticProcessingCacheRecovery();
-  stopDeploymentReadiness();
-  client.destroy();
-  process.exit(0);
-};
+  if (shuttingDown) return
+  shuttingDown = true
+  logger.info(`Received ${signal}; stopping cache recovery and Discord client.`)
+  stopAutomaticProcessingCacheRecovery()
+  stopDeploymentReadiness()
+  client.destroy()
+  process.exit(0)
+}
 
-process.once("SIGINT", () => shutdown("SIGINT"));
-process.once("SIGTERM", () => shutdown("SIGTERM"));
+process.once('SIGINT', () => shutdown('SIGINT'))
+process.once('SIGTERM', () => shutdown('SIGTERM'))
 
 // Login
-client.login(config.DISCORD_TOKEN).catch((err) => {
-  logger.error("Failed to login to Discord:", err);
-  process.exit(1);
-});
+client.login(config.DISCORD_TOKEN).catch(err => {
+  logger.error('Failed to login to Discord:', err)
+  process.exit(1)
+})

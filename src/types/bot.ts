@@ -2,56 +2,56 @@ import type {
   ChatInputCommandInteraction,
   SlashCommandBuilder,
   SlashCommandSubcommandsOnlyBuilder,
-  SlashCommandOptionsOnlyBuilder,
-} from "discord.js";
-import type { SinkLink } from "@/types/sink";
+  SlashCommandOptionsOnlyBuilder
+} from 'discord.js'
+import type { SinkLink } from '@/types/sink'
 
 export interface Command {
   data:
     | SlashCommandBuilder
     | SlashCommandSubcommandsOnlyBuilder
     | SlashCommandOptionsOnlyBuilder
-    | Omit<SlashCommandBuilder, "addSubcommand" | "addSubcommandGroup">;
-  execute: (interaction: ChatInputCommandInteraction) => Promise<void>;
+    | Omit<SlashCommandBuilder, 'addSubcommand' | 'addSubcommandGroup'>
+  execute: (interaction: ChatInputCommandInteraction) => Promise<void>
 }
 
 export interface UserDashboardStats {
-  totalLinks: number;
-  activeLinks: number;
-  expiredLinks: number;
+  totalLinks: number
+  activeLinks: number
+  expiredLinks: number
   /** `undefined` when Sink returned no analytics at all, distinct from a real 0. */
-  totalClicks: number | undefined;
-  displayedLinks: number;
-  linksComplete: boolean;
+  totalClicks: number | undefined
+  displayedLinks: number
+  linksComplete: boolean
   /**
    * False when some link's click count could not be resolved, making
    * `totalClicks` a floor rather than a real total.
    */
-  clicksComplete?: boolean;
-  links: SinkLink[];
+  clicksComplete?: boolean
+  links: SinkLink[]
 }
 
 export const CustomId = {
-  DASHBOARD_CREATE_BTN: "dash:create_btn",
-  DASHBOARD_SELECT_LINK: "dash:select_link",
-  DASHBOARD_EDIT_BTN: "dash:edit_btn",
-  DASHBOARD_DELETE_BTN: "dash:delete_btn",
-  DASHBOARD_REFRESH_BTN: "dash:refresh_btn",
-  DASHBOARD_CONFIG_BTN: "dash:config_btn",
-  DASHBOARD_CONFIRM_DELETE_BTN: "dash:confirm_del_btn",
-  DASHBOARD_CANCEL_DELETE_BTN: "dash:cancel_del_btn",
-  CONFIG_DM_INHERIT: "cfg:dm:inherit",
-  CONFIG_DM_ON: "cfg:dm:on",
-  CONFIG_DM_OFF: "cfg:dm:off",
-  CONFIG_FMT_REPLACE: "cfg:fmt:replace",
-  CONFIG_FMT_LIST: "cfg:fmt:list",
-  CONFIG_FIXUPX_ON: "cfg:fixupx:on",
-  CONFIG_FIXUPX_OFF: "cfg:fixupx:off",
-  CONFIG_LEN_INHERIT: "cfg:len:inherit",
-  CONFIG_LEN_ALL: "cfg:len:all",
-  CONFIG_LEN_CUSTOM: "cfg:len:custom",
-  CONFIG_NAV_DASHBOARD: "cfg:nav:dash",
-  MODAL_CREATE_LINK: "modal:create_link",
-  MODAL_EDIT_LINK: "modal:edit_link",
-  MODAL_CONFIG_MIN_LENGTH: "modal:cfg:min_len",
-} as const;
+  DASHBOARD_CREATE_BTN: 'dash:create_btn',
+  DASHBOARD_SELECT_LINK: 'dash:select_link',
+  DASHBOARD_EDIT_BTN: 'dash:edit_btn',
+  DASHBOARD_DELETE_BTN: 'dash:delete_btn',
+  DASHBOARD_REFRESH_BTN: 'dash:refresh_btn',
+  DASHBOARD_CONFIG_BTN: 'dash:config_btn',
+  DASHBOARD_CONFIRM_DELETE_BTN: 'dash:confirm_del_btn',
+  DASHBOARD_CANCEL_DELETE_BTN: 'dash:cancel_del_btn',
+  CONFIG_DM_INHERIT: 'cfg:dm:inherit',
+  CONFIG_DM_ON: 'cfg:dm:on',
+  CONFIG_DM_OFF: 'cfg:dm:off',
+  CONFIG_FMT_REPLACE: 'cfg:fmt:replace',
+  CONFIG_FMT_LIST: 'cfg:fmt:list',
+  CONFIG_FIXUPX_ON: 'cfg:fixupx:on',
+  CONFIG_FIXUPX_OFF: 'cfg:fixupx:off',
+  CONFIG_LEN_INHERIT: 'cfg:len:inherit',
+  CONFIG_LEN_ALL: 'cfg:len:all',
+  CONFIG_LEN_CUSTOM: 'cfg:len:custom',
+  CONFIG_NAV_DASHBOARD: 'cfg:nav:dash',
+  MODAL_CREATE_LINK: 'modal:create_link',
+  MODAL_EDIT_LINK: 'modal:edit_link',
+  MODAL_CONFIG_MIN_LENGTH: 'modal:cfg:min_len'
+} as const

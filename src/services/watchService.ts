@@ -1,122 +1,121 @@
-import { and, eq } from "drizzle-orm";
-import { db } from "@/db";
-import { watchChannels, type WatchChannel } from "@/db/schema";
-import { logger } from "@/utils/logger";
+import { and, eq } from 'drizzle-orm'
+import { db } from '@/db'
+import { watchChannels, type WatchChannel } from '@/db/schema'
+import { logger } from '@/utils/logger'
 import {
   CacheRecoveryController,
-  type CacheStatus,
-} from "@/services/cacheRecovery";
+  type CacheStatus
+} from '@/services/cacheRecovery'
 
 export interface WatchableChannelLike {
-  id: string;
-  parentId?: string | null;
-  isThread?: () => boolean;
-  parent?: { parentId?: string | null } | null;
-  guild?: { channels?: { cache?: { get?: (id: string) => any } } } | null;
+  id: string
+  parentId?: string | null
+  isThread?: () => boolean
+  parent?: { parentId?: string | null } | null
+  guild?: { channels?: { cache?: { get?: (id: string) => any } } } | null
 }
 
 export class WatchService {
   // In-memory cache formatted as "guildId:channelId"
-  private watchedChannelKeys: Set<string> = new Set();
-  private cacheEpoch = 0;
+  private watchedChannelKeys: Set<string> = new Set()
+  private cacheEpoch = 0
   private cacheMutations = new Map<
     string,
     { epoch: number; present: boolean }
-  >();
-  private readonly recovery = new CacheRecoveryController(
-    "Watch",
-    () => this.refreshCache(),
-  );
+  >()
+  private readonly recovery = new CacheRecoveryController('Watch', () =>
+    this.refreshCache()
+  )
 
   constructor(
     private readonly loadRecords: () => Promise<
-      Array<Pick<WatchChannel, "guildId" | "channelId">>
+      Array<Pick<WatchChannel, 'guildId' | 'channelId'>>
     > = () => db.select().from(watchChannels),
     private readonly insertRecord: (
-      values: Pick<WatchChannel, "guildId" | "channelId" | "createdBy">,
-    ) => Promise<WatchChannel | undefined> = async (values) => {
+      values: Pick<WatchChannel, 'guildId' | 'channelId' | 'createdBy'>
+    ) => Promise<WatchChannel | undefined> = async values => {
       const [inserted] = await db
         .insert(watchChannels)
         .values(values)
         .onConflictDoNothing({
-          target: [watchChannels.guildId, watchChannels.channelId],
+          target: [watchChannels.guildId, watchChannels.channelId]
         })
-        .returning();
-      return inserted;
-    },
+        .returning()
+      return inserted
+    }
   ) {}
 
   private getKey(guildId: string, channelId: string): string {
-    return `${guildId}:${channelId}`;
+    return `${guildId}:${channelId}`
   }
 
   /**
    * Initializes and populates the in-memory cache from database.
    */
   async loadCache(): Promise<void> {
-    return this.recovery.loadNow();
+    return this.recovery.loadNow()
   }
 
   startCacheRecovery(): Promise<void> {
-    return this.recovery.start();
+    return this.recovery.start()
   }
 
   stopCacheRecovery(): void {
-    this.recovery.stop();
+    this.recovery.stop()
   }
 
   ensureCacheRecovery(): void {
-    this.recovery.ensureLoading();
+    this.recovery.ensureLoading()
   }
 
   getCacheStatus(): CacheStatus {
-    return this.recovery.getStatus();
+    return this.recovery.getStatus()
   }
 
   isCacheUsable(): boolean {
-    return this.recovery.isUsable();
+    return this.recovery.isUsable()
   }
 
   setCacheLoadedForTest(loaded: boolean): void {
-    this.recovery.setUsableForTest(loaded);
+    this.recovery.setUsableForTest(loaded)
   }
 
   private async refreshCache(): Promise<void> {
-    const startEpoch = this.cacheEpoch;
+    const startEpoch = this.cacheEpoch
     try {
-      const records = await this.loadRecords();
+      const records = await this.loadRecords()
       const nextKeys = new Set(
-        records.map((record) => this.getKey(record.guildId, record.channelId)),
-      );
+        records.map(record => this.getKey(record.guildId, record.channelId))
+      )
 
-      this.watchedChannelKeys = nextKeys;
-      const appliedEpoch = this.cacheEpoch;
+      this.watchedChannelKeys = nextKeys
+      const appliedEpoch = this.cacheEpoch
       for (const [key, mutation] of this.cacheMutations) {
         if (mutation.epoch <= startEpoch || mutation.epoch > appliedEpoch) {
-          continue;
+          continue
         }
-        if (mutation.present) this.watchedChannelKeys.add(key);
-        else this.watchedChannelKeys.delete(key);
+        if (mutation.present) this.watchedChannelKeys.add(key)
+        else this.watchedChannelKeys.delete(key)
       }
 
-      this.pruneCacheMutations(appliedEpoch);
-      logger.info(`Loaded ${records.length} watched channels into cache.`);
+      this.pruneCacheMutations(appliedEpoch)
+      logger.info(`Loaded ${records.length} watched channels into cache.`)
     } catch (error) {
-      logger.error("Failed to load watched channels cache from DB:", error);
-      throw error;
+      logger.error('Failed to load watched channels cache from DB:', error)
+      throw error
     }
   }
 
   private recordCacheMutation(key: string, present: boolean): void {
-    this.cacheEpoch += 1;
-    this.cacheMutations.set(key, { epoch: this.cacheEpoch, present });
-    if (present) this.watchedChannelKeys.add(key);
-    else this.watchedChannelKeys.delete(key);
+    this.cacheEpoch += 1
+    this.cacheMutations.set(key, { epoch: this.cacheEpoch, present })
+    if (present) this.watchedChannelKeys.add(key)
+    else this.watchedChannelKeys.delete(key)
   }
 
   private pruneCacheMutations(appliedEpoch: number): void {
     for (const [key, mutation] of this.cacheMutations) {
-      if (mutation.epoch <= appliedEpoch) this.cacheMutations.delete(key);
+      if (mutation.epoch <= appliedEpoch) this.cacheMutations.delete(key)
     }
   }
 
@@ -124,7 +123,7 @@ export class WatchService {
    * Checks whether a channel in a guild is being watched.
    */
   isWatched(guildId: string, channelId: string): boolean {
-    return this.watchedChannelKeys.has(this.getKey(guildId, channelId));
+    return this.watchedChannelKeys.has(this.getKey(guildId, channelId))
   }
 
   /**
@@ -133,33 +132,33 @@ export class WatchService {
    */
   isChannelWatched(guildId: string, channel: WatchableChannelLike): boolean {
     if (this.isWatched(guildId, channel.id)) {
-      return true;
+      return true
     }
 
     if (channel.parentId && this.isWatched(guildId, channel.parentId)) {
-      return true;
+      return true
     }
 
     if (channel.isThread?.()) {
-      const directParentCategory = channel.parent?.parentId;
+      const directParentCategory = channel.parent?.parentId
       if (
         directParentCategory &&
         this.isWatched(guildId, directParentCategory)
       ) {
-        return true;
+        return true
       }
       if (channel.parentId && channel.guild?.channels?.cache?.get) {
-        const cachedParent = channel.guild.channels.cache.get(channel.parentId);
+        const cachedParent = channel.guild.channels.cache.get(channel.parentId)
         if (
           cachedParent?.parentId &&
           this.isWatched(guildId, cachedParent.parentId)
         ) {
-          return true;
+          return true
         }
       }
     }
 
-    return false;
+    return false
   }
 
   /**
@@ -167,32 +166,32 @@ export class WatchService {
    */
   findWatchingParent(
     guildId: string,
-    channel: WatchableChannelLike,
+    channel: WatchableChannelLike
   ): string | null {
     if (channel.parentId && this.isWatched(guildId, channel.parentId)) {
-      return channel.parentId;
+      return channel.parentId
     }
 
     if (channel.isThread?.()) {
-      const directParentCategory = channel.parent?.parentId;
+      const directParentCategory = channel.parent?.parentId
       if (
         directParentCategory &&
         this.isWatched(guildId, directParentCategory)
       ) {
-        return directParentCategory;
+        return directParentCategory
       }
       if (channel.parentId && channel.guild?.channels?.cache?.get) {
-        const cachedParent = channel.guild.channels.cache.get(channel.parentId);
+        const cachedParent = channel.guild.channels.cache.get(channel.parentId)
         if (
           cachedParent?.parentId &&
           this.isWatched(guildId, cachedParent.parentId)
         ) {
-          return cachedParent.parentId;
+          return cachedParent.parentId
         }
       }
     }
 
-    return null;
+    return null
   }
 
   /**
@@ -201,39 +200,39 @@ export class WatchService {
   async addWatchChannel(
     guildId: string,
     channelId: string,
-    createdBy: string,
+    createdBy: string
   ): Promise<{ success: boolean; error?: string; channel?: WatchChannel }> {
     if (this.isWatched(guildId, channelId)) {
       return {
         success: false,
-        error: "This channel is already being watched.",
-      };
+        error: 'This channel is already being watched.'
+      }
     }
 
     try {
       const inserted = await this.insertRecord({
         guildId,
         channelId,
-        createdBy,
-      });
+        createdBy
+      })
 
       if (inserted) {
-        this.recordCacheMutation(this.getKey(guildId, channelId), true);
-        logger.info(`Added watched channel ${channelId} in guild ${guildId}`);
-        return { success: true, channel: inserted };
+        this.recordCacheMutation(this.getKey(guildId, channelId), true)
+        logger.info(`Added watched channel ${channelId} in guild ${guildId}`)
+        return { success: true, channel: inserted }
       }
 
-      this.recordCacheMutation(this.getKey(guildId, channelId), true);
+      this.recordCacheMutation(this.getKey(guildId, channelId), true)
       return {
         success: false,
-        error: "This channel is already being watched.",
-      };
+        error: 'This channel is already being watched.'
+      }
     } catch (error) {
-      logger.error("Database error while adding watch channel:", error);
+      logger.error('Database error while adding watch channel:', error)
       return {
         success: false,
-        error: error instanceof Error ? error.message : "Database error",
-      };
+        error: error instanceof Error ? error.message : 'Database error'
+      }
     }
   }
 
@@ -242,13 +241,13 @@ export class WatchService {
    */
   async removeWatchChannel(
     guildId: string,
-    channelId: string,
+    channelId: string
   ): Promise<{ success: boolean; error?: string }> {
     if (!this.isWatched(guildId, channelId)) {
       return {
         success: false,
-        error: "This channel is not currently being watched.",
-      };
+        error: 'This channel is not currently being watched.'
+      }
     }
 
     try {
@@ -257,19 +256,19 @@ export class WatchService {
         .where(
           and(
             eq(watchChannels.guildId, guildId),
-            eq(watchChannels.channelId, channelId),
-          ),
-        );
+            eq(watchChannels.channelId, channelId)
+          )
+        )
 
-      this.recordCacheMutation(this.getKey(guildId, channelId), false);
-      logger.info(`Removed watched channel ${channelId} in guild ${guildId}`);
-      return { success: true };
+      this.recordCacheMutation(this.getKey(guildId, channelId), false)
+      logger.info(`Removed watched channel ${channelId} in guild ${guildId}`)
+      return { success: true }
     } catch (error) {
-      logger.error("Database error while removing watch channel:", error);
+      logger.error('Database error while removing watch channel:', error)
       return {
         success: false,
-        error: error instanceof Error ? error.message : "Database error",
-      };
+        error: error instanceof Error ? error.message : 'Database error'
+      }
     }
   }
 
@@ -281,15 +280,15 @@ export class WatchService {
       return await db
         .select()
         .from(watchChannels)
-        .where(eq(watchChannels.guildId, guildId));
+        .where(eq(watchChannels.guildId, guildId))
     } catch (error) {
       logger.error(
         `Failed to get watched channels for guild ${guildId}:`,
-        error,
-      );
-      return [];
+        error
+      )
+      return []
     }
   }
 }
 
-export const watchService = new WatchService();
+export const watchService = new WatchService()

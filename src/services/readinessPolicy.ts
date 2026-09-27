@@ -2,7 +2,11 @@
 export function isDeploymentReady(
   discordConnected: boolean,
   dbAvailable: boolean,
-  cacheStates: readonly string[],
+  cacheStates: readonly string[]
 ): boolean {
-  return discordConnected && dbAvailable && cacheStates.every((state) => state === "ready");
+  return (
+    discordConnected &&
+    dbAvailable &&
+    cacheStates.every(state => state === 'ready')
+  )
 }

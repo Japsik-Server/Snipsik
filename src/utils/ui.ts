@@ -9,14 +9,14 @@ import {
   StringSelectMenuBuilder,
   StringSelectMenuOptionBuilder,
   TextDisplayBuilder,
-  type User,
-} from "discord.js";
-import { CustomId, type UserDashboardStats } from "@/types/bot";
-import type { SinkLink, SinkStats } from "@/types/sink";
-import type { UserConfigData } from "@/services/userConfigService";
-import { getUserHash } from "@/services/slugManager";
-import { sinkClient } from "@/services/sinkClient";
-import { expirationToUnixSeconds } from "@/utils/time";
+  type User
+} from 'discord.js'
+import { CustomId, type UserDashboardStats } from '@/types/bot'
+import type { SinkLink, SinkStats } from '@/types/sink'
+import type { UserConfigData } from '@/services/userConfigService'
+import { getUserHash } from '@/services/slugManager'
+import { sinkClient } from '@/services/sinkClient'
+import { expirationToUnixSeconds } from '@/utils/time'
 
 export const COLORS = {
   PRIMARY: 0x5865f2, // Discord Blurple
@@ -24,89 +24,87 @@ export const COLORS = {
   WARNING: 0xfee75c, // Discord Yellow
   DANGER: 0xed4245, // Discord Red
   DARK: 0x2b2d31, // Discord Dark Container
-  MUTED: 0x949ba4, // Discord Gray
-};
+  MUTED: 0x949ba4 // Discord Gray
+}
 
 export interface V2MessageView {
-  flags: number;
-  components: ContainerBuilder[];
+  flags: number
+  components: ContainerBuilder[]
 }
 
 function safeDescription(text: unknown, maxLen = 3800): string {
-  const str = typeof text === "string" ? text : String(text || "");
+  const str = typeof text === 'string' ? text : String(text || '')
   if (str.length > maxLen) {
-    return (
-      `${str.substring(0, maxLen - 30)}\n\n...*(내용이 너무 길어 일부 생략됨)*`
-    );
+    return `${str.substring(0, maxLen - 30)}\n\n...*(내용이 너무 길어 일부 생략됨)*`
   }
-  return str;
+  return str
 }
 
 function truncateMiddle(str: string, maxLength = 50): string {
-  if (str.length <= maxLength) return str;
-  const keep = Math.max(0, maxLength - 3);
-  const front = Math.ceil(keep / 2);
-  const back = Math.floor(keep / 2);
-  return `${str.substring(0, front)}...${str.substring(str.length - back)}`;
+  if (str.length <= maxLength) return str
+  const keep = Math.max(0, maxLength - 3)
+  const front = Math.ceil(keep / 2)
+  const back = Math.floor(keep / 2)
+  return `${str.substring(0, front)}...${str.substring(str.length - back)}`
 }
 
 function formatExpiration(value: number | null | undefined): string {
-  const unixSeconds = expirationToUnixSeconds(value);
-  return unixSeconds ? `<t:${unixSeconds}:R>` : "♾️ 무제한";
+  const unixSeconds = expirationToUnixSeconds(value)
+  return unixSeconds ? `<t:${unixSeconds}:R>` : '♾️ 무제한'
 }
 
 function formatTagDisplay(tags?: readonly string[]): string {
-  return tags?.length ? tags.map((tag) => `\`#${tag}\``).join(", ") : "*없음*";
+  return tags?.length ? tags.map(tag => `\`#${tag}\``).join(', ') : '*없음*'
 }
 
 function formatTitleDisplay(title?: string | null): string {
-  return title?.trim() ? title : "*설정 안 됨*";
+  return title?.trim() ? title : '*설정 안 됨*'
 }
 
 /**
  * Formats a click count, distinguishing a real zero from "no analytics available".
  * `undefined` means the figure could not be collected, so we never render it as 0.
  */
-export function formatClicks(clicks?: number, unit: string = ""): string {
-  if (clicks === undefined) return "—";
-  const formatted = clicks.toLocaleString();
-  return unit ? `\`${formatted}\`${unit}` : `\`${formatted}\``;
+export function formatClicks(clicks?: number, unit: string = ''): string {
+  if (clicks === undefined) return '—'
+  const formatted = clicks.toLocaleString()
+  return unit ? `\`${formatted}\`${unit}` : `\`${formatted}\``
 }
 
 export function createIgnoredDomainsContent(
   domains: readonly string[] = [],
-  maxLength = 3_500,
+  maxLength = 3_500
 ): string {
-  const header = "🚫 **개인 제외 도메인 (`ignored_domains`)**\n";
+  const header = '🚫 **개인 제외 도메인 (`ignored_domains`)**\n'
   const footer =
-    "\n*변경: `/link config key:ignored_domains value:도메인1, 도메인2`*";
+    '\n*변경: `/link config key:ignored_domains value:도메인1, 도메인2`*'
   if (domains.length === 0) {
     return (
       header +
-      "🌐 **기본값만 적용 (추가 제외 없음)** — Tenor, Giphy, Discord CDN, Imgur 등 시스템 기본 도메인만 제외됩니다." +
+      '🌐 **기본값만 적용 (추가 제외 없음)** — Tenor, Giphy, Discord CDN, Imgur 등 시스템 기본 도메인만 제외됩니다.' +
       footer
-    );
+    )
   }
 
-  const prefix = `🚫 **추가 제외 도메인 (전체 ${domains.length}개):** `;
-  const shown: string[] = [];
+  const prefix = `🚫 **추가 제외 도메인 (전체 ${domains.length}개):** `
+  const shown: string[] = []
   for (const domain of domains) {
-    const next = [...shown, `\`${domain}\``];
-    const omitted = domains.length - next.length;
+    const next = [...shown, `\`${domain}\``]
+    const omitted = domains.length - next.length
     const summary =
-      omitted > 0 ? `\n*${next.length}개 표시 · ${omitted}개 생략됨*` : "";
+      omitted > 0 ? `\n*${next.length}개 표시 · ${omitted}개 생략됨*` : ''
     if (
-      (header + prefix + next.join(", ") + summary + footer).length > maxLength
+      (header + prefix + next.join(', ') + summary + footer).length > maxLength
     ) {
-      break;
+      break
     }
-    shown.push(`\`${domain}\``);
+    shown.push(`\`${domain}\``)
   }
 
-  const omitted = domains.length - shown.length;
+  const omitted = domains.length - shown.length
   const summary =
-    omitted > 0 ? `\n*${shown.length}개 표시 · ${omitted}개 생략됨*` : "";
-  return header + prefix + shown.join(", ") + summary + footer;
+    omitted > 0 ? `\n*${shown.length}개 표시 · ${omitted}개 생략됨*` : ''
+  return header + prefix + shown.join(', ') + summary + footer
 }
 
 export const ui = {
@@ -114,16 +112,16 @@ export const ui = {
 
   formatPartialOwnedLinksNotice(
     scannedRecords: number,
-    searchCount?: number,
+    searchCount?: number
   ): string {
     const searchSummary =
       searchCount !== undefined && searchCount > 0
         ? `\nSink 검색 기준 결과: \`${searchCount.toLocaleString()}\`개`
-        : "";
+        : ''
     return (
       `최신 \`${scannedRecords.toLocaleString()}\`개의 Sink 링크를 확인했지만 조건에 맞는 소유 링크를 찾지 못했습니다. ` +
       `전체 조회가 완료되지 않아 더 오래된 링크가 존재할 수 있습니다.${searchSummary}`
-    );
+    )
   },
 
   /**
@@ -134,147 +132,143 @@ export const ui = {
     user: User,
     dashboardStats: UserDashboardStats,
     selectedSlug?: string,
-    currentPage: number = 1,
+    currentPage: number = 1
   ): V2MessageView {
-    const userHash = getUserHash(user.id);
+    const userHash = getUserHash(user.id)
 
-    const PAGE_SIZE = 20;
-    const allUserLinks = dashboardStats.links || [];
-    const totalLinks = allUserLinks.length;
-    const totalPages = Math.ceil(totalLinks / PAGE_SIZE) || 1;
-    const page = Math.max(1, Math.min(currentPage, totalPages));
-    const startIndex = (page - 1) * PAGE_SIZE;
-    const currentLinks = allUserLinks.slice(startIndex, startIndex + PAGE_SIZE);
+    const PAGE_SIZE = 20
+    const allUserLinks = dashboardStats.links || []
+    const totalLinks = allUserLinks.length
+    const totalPages = Math.ceil(totalLinks / PAGE_SIZE) || 1
+    const page = Math.max(1, Math.min(currentPage, totalPages))
+    const startIndex = (page - 1) * PAGE_SIZE
+    const currentLinks = allUserLinks.slice(startIndex, startIndex + PAGE_SIZE)
 
     // 1. Top Container: Overview Stats + Select Menu + Global Action Buttons
-    const topContainer = new ContainerBuilder().setAccentColor(COLORS.DARK);
+    const topContainer = new ContainerBuilder().setAccentColor(COLORS.DARK)
 
     const headerText = new TextDisplayBuilder().setContent(
-      `### 📊 ${user.username}'s Link Dashboard\n> **개인 전용 링크 대시보드**에 오신 것을 환영합니다.\n> 고유 유저 해시: \`${userHash}\` ${totalPages > 1 ? `• 페이지: \`${page} / ${totalPages}\`` : ""}`,
-    );
+      `### 📊 ${user.username}'s Link Dashboard\n> **개인 전용 링크 대시보드**에 오신 것을 환영합니다.\n> 고유 유저 해시: \`${userHash}\` ${totalPages > 1 ? `• 페이지: \`${page} / ${totalPages}\`` : ''}`
+    )
 
     // "누적 클릭" is only honest when both the link list and the click lookup
     // were complete; otherwise the figure is a floor and says so.
     const clickLabel =
       dashboardStats.clicksComplete === false
-        ? "확인된 클릭 합계"
+        ? '확인된 클릭 합계'
         : dashboardStats.linksComplete
-          ? "누적 클릭"
-          : "표시 링크 클릭 합계";
+          ? '누적 클릭'
+          : '표시 링크 클릭 합계'
 
     const statsContent = dashboardStats.linksComplete
       ? `📊 **총 링크:** \`${dashboardStats.totalLinks}\`개  •  ⚡ **활성:** \`${dashboardStats.activeLinks}\`개\n` +
-        `⏳ **만료:** \`${dashboardStats.expiredLinks}\`개  •  🖱️ **${clickLabel}:** ${formatClicks(dashboardStats.totalClicks, "회")}`
+        `⏳ **만료:** \`${dashboardStats.expiredLinks}\`개  •  🖱️ **${clickLabel}:** ${formatClicks(dashboardStats.totalClicks, '회')}`
       : `📊 **검색 기준 총 링크:** \`${dashboardStats.totalLinks.toLocaleString()}\`개  •  🗂️ **관리 목록:** 최신 \`${dashboardStats.displayedLinks.toLocaleString()}\`개\n` +
-        `⚡ **활성:** \`${dashboardStats.activeLinks}\`개  •  ⏳ **만료:** \`${dashboardStats.expiredLinks}\`개  •  🖱️ **${clickLabel}:** ${formatClicks(dashboardStats.totalClicks, "회")}`;
-    const statsText = new TextDisplayBuilder().setContent(statsContent);
+        `⚡ **활성:** \`${dashboardStats.activeLinks}\`개  •  ⏳ **만료:** \`${dashboardStats.expiredLinks}\`개  •  🖱️ **${clickLabel}:** ${formatClicks(dashboardStats.totalClicks, '회')}`
+    const statsText = new TextDisplayBuilder().setContent(statsContent)
 
-    topContainer.addTextDisplayComponents(headerText);
-    topContainer.addSeparatorComponents(
-      new SeparatorBuilder().setDivider(true),
-    );
-    topContainer.addTextDisplayComponents(statsText);
+    topContainer.addTextDisplayComponents(headerText)
+    topContainer.addSeparatorComponents(new SeparatorBuilder().setDivider(true))
+    topContainer.addTextDisplayComponents(statsText)
 
     // Select Menu for choosing links
-    const selectedSlugLower = selectedSlug?.toLowerCase();
+    const selectedSlugLower = selectedSlug?.toLowerCase()
     if (totalLinks > 0) {
       topContainer.addSeparatorComponents(
-        new SeparatorBuilder().setDivider(true),
-      );
+        new SeparatorBuilder().setDivider(true)
+      )
 
       const selectMenu = new StringSelectMenuBuilder()
         .setCustomId(CustomId.DASHBOARD_SELECT_LINK)
         .setPlaceholder(
           totalPages > 1
             ? `📋 관리할 링크 선택... (페이지 ${page}/${totalPages}, 총 ${totalLinks}개)`
-            : `📋 관리할 링크를 선택하세요... (총 ${totalLinks}개)`,
+            : `📋 관리할 링크를 선택하세요... (총 ${totalLinks}개)`
         )
         .setMinValues(1)
-        .setMaxValues(1);
+        .setMaxValues(1)
 
-      const options: StringSelectMenuOptionBuilder[] = [];
+      const options: StringSelectMenuOptionBuilder[] = []
 
       if (page > 1) {
         options.push(
           new StringSelectMenuOptionBuilder()
             .setLabel(`⬅️ 이전 페이지 (${page - 1}/${totalPages})`)
-            .setDescription("이전 20개 링크 목록으로 이동합니다.")
-            .setEmoji("⬅️")
-            .setValue(`nav:page:${page - 1}`),
-        );
+            .setDescription('이전 20개 링크 목록으로 이동합니다.')
+            .setEmoji('⬅️')
+            .setValue(`nav:page:${page - 1}`)
+        )
       }
 
       for (const l of currentLinks) {
-        const labelText = `/${l.slug}`;
-        const descText = (l.url || "URL 정보 없음").substring(0, 100);
+        const labelText = `/${l.slug}`
+        const descText = (l.url || 'URL 정보 없음').substring(0, 100)
 
         const opt = new StringSelectMenuOptionBuilder()
           .setLabel(labelText)
           .setDescription(descText)
-          .setValue(`slug:${l.slug}:${page}`);
+          .setValue(`slug:${l.slug}:${page}`)
 
         if (selectedSlugLower && l.slug.toLowerCase() === selectedSlugLower) {
-          opt.setDefault(true);
+          opt.setDefault(true)
         }
-        options.push(opt);
+        options.push(opt)
       }
 
       if (page < totalPages) {
         options.push(
           new StringSelectMenuOptionBuilder()
             .setLabel(`다음 페이지 ➡️ (${page + 1}/${totalPages})`)
-            .setDescription("다음 20개 링크 목록으로 이동합니다.")
-            .setEmoji("➡️")
-            .setValue(`nav:page:${page + 1}`),
-        );
+            .setDescription('다음 20개 링크 목록으로 이동합니다.')
+            .setEmoji('➡️')
+            .setValue(`nav:page:${page + 1}`)
+        )
       }
 
-      selectMenu.addOptions(options);
+      selectMenu.addOptions(options)
       topContainer.addActionRowComponents(
         new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
-          selectMenu,
-        ),
-      );
+          selectMenu
+        )
+      )
     }
 
     // Global Action Buttons (Create, Refresh, Config)
-    topContainer.addSeparatorComponents(
-      new SeparatorBuilder().setDivider(true),
-    );
+    topContainer.addSeparatorComponents(new SeparatorBuilder().setDivider(true))
     const globalButtonRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
       new ButtonBuilder()
         .setCustomId(CustomId.DASHBOARD_CREATE_BTN)
-        .setLabel("새 링크 생성")
-        .setEmoji("➕")
+        .setLabel('새 링크 생성')
+        .setEmoji('➕')
         .setStyle(ButtonStyle.Success),
       new ButtonBuilder()
         .setCustomId(`${CustomId.DASHBOARD_REFRESH_BTN}:${page}`)
-        .setLabel("새로고침")
-        .setEmoji("🔄")
+        .setLabel('새로고침')
+        .setEmoji('🔄')
         .setStyle(ButtonStyle.Secondary),
       new ButtonBuilder()
         .setCustomId(CustomId.DASHBOARD_CONFIG_BTN)
-        .setLabel("설정")
-        .setEmoji("⚙️")
-        .setStyle(ButtonStyle.Secondary),
-    );
-    topContainer.addActionRowComponents(globalButtonRow);
+        .setLabel('설정')
+        .setEmoji('⚙️')
+        .setStyle(ButtonStyle.Secondary)
+    )
+    topContainer.addActionRowComponents(globalButtonRow)
 
-    const components: ContainerBuilder[] = [topContainer];
+    const components: ContainerBuilder[] = [topContainer]
 
     // 2. Bottom Container: Selected Link Detail + Link-dependent Action Buttons
     const selectedLink = selectedSlugLower
-      ? allUserLinks.find((l) => l.slug.toLowerCase() === selectedSlugLower)
-      : undefined;
+      ? allUserLinks.find(l => l.slug.toLowerCase() === selectedSlugLower)
+      : undefined
 
     if (selectedLink) {
-      const fullShortUrl = sinkClient.getFullShortUrl(selectedLink.slug);
+      const fullShortUrl = sinkClient.getFullShortUrl(selectedLink.slug)
       const truncatedUrl =
         selectedLink.url.length > 70
           ? `${selectedLink.url.substring(0, 67)}...`
-          : selectedLink.url;
+          : selectedLink.url
 
-      const linkContainer = new ContainerBuilder().setAccentColor(COLORS.DARK);
+      const linkContainer = new ContainerBuilder().setAccentColor(COLORS.DARK)
 
       const linkDetailText = new TextDisplayBuilder().setContent(
         `### 📌 선택된 링크: /${selectedLink.slug}\n` +
@@ -282,158 +276,158 @@ export const ui = {
           `**원본 타겟:** [🌐 원본 웹사이트 열기 ↗](${selectedLink.url})\n` +
           `↳ \`${truncatedUrl}\`\n\n` +
           `🏷️ **타이틀:** ${formatTitleDisplay(selectedLink.title)}  •  🏷️ **태그:** ${formatTagDisplay(selectedLink.tags)}\n` +
-          `🖱️ **클릭 수:** ${formatClicks(selectedLink.clicks, "회")}  •  🔒 **비밀번호:** ${selectedLink.password ? "🔒 설정됨" : "🔓 공개"}\n` +
-          `⏳ **만료일:** ${formatExpiration(selectedLink.expiration)}`,
-      );
+          `🖱️ **클릭 수:** ${formatClicks(selectedLink.clicks, '회')}  •  🔒 **비밀번호:** ${selectedLink.password ? '🔒 설정됨' : '🔓 공개'}\n` +
+          `⏳ **만료일:** ${formatExpiration(selectedLink.expiration)}`
+      )
 
-      linkContainer.addTextDisplayComponents(linkDetailText);
+      linkContainer.addTextDisplayComponents(linkDetailText)
       linkContainer.addSeparatorComponents(
-        new SeparatorBuilder().setDivider(true),
-      );
+        new SeparatorBuilder().setDivider(true)
+      )
 
       // Section with Inline Link Open Button Accessory
       const linkSection = new SectionBuilder()
         .addTextDisplayComponents(
           new TextDisplayBuilder().setContent(
-            "🌐 **브라우저에서 단축 링크 바로 열기**",
-          ),
+            '🌐 **브라우저에서 단축 링크 바로 열기**'
+          )
         )
         .setButtonAccessory(
           new ButtonBuilder()
-            .setLabel("링크 열기")
+            .setLabel('링크 열기')
             .setStyle(ButtonStyle.Link)
-            .setURL(fullShortUrl),
-        );
-      linkContainer.addSectionComponents(linkSection);
+            .setURL(fullShortUrl)
+        )
+      linkContainer.addSectionComponents(linkSection)
 
       linkContainer.addSeparatorComponents(
-        new SeparatorBuilder().setDivider(true),
-      );
+        new SeparatorBuilder().setDivider(true)
+      )
 
       // Link-specific Action Buttons (Edit, Delete)
       const linkActionRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
         new ButtonBuilder()
           .setCustomId(`${CustomId.DASHBOARD_EDIT_BTN}:${selectedLink.slug}`)
-          .setLabel("수정")
-          .setEmoji("✏️")
+          .setLabel('수정')
+          .setEmoji('✏️')
           .setStyle(ButtonStyle.Primary),
         new ButtonBuilder()
           .setCustomId(`${CustomId.DASHBOARD_DELETE_BTN}:${selectedLink.slug}`)
-          .setLabel("삭제")
-          .setEmoji("🗑️")
-          .setStyle(ButtonStyle.Danger),
-      );
-      linkContainer.addActionRowComponents(linkActionRow);
+          .setLabel('삭제')
+          .setEmoji('🗑️')
+          .setStyle(ButtonStyle.Danger)
+      )
+      linkContainer.addActionRowComponents(linkActionRow)
 
-      components.push(linkContainer);
+      components.push(linkContainer)
     }
 
-    return { flags: MessageFlags.IsComponentsV2, components };
+    return { flags: MessageFlags.IsComponentsV2, components }
   },
 
   /**
    * Creates a modern card for a newly created or viewed link using ContainerBuilder.
    */
   createLinkCard(link: SinkLink): V2MessageView {
-    const fullShortUrl = sinkClient.getFullShortUrl(link.slug);
+    const fullShortUrl = sinkClient.getFullShortUrl(link.slug)
     const truncatedUrl =
-      link.url.length > 70 ? `${link.url.substring(0, 67)}...` : link.url;
+      link.url.length > 70 ? `${link.url.substring(0, 67)}...` : link.url
 
-    const container = new ContainerBuilder().setAccentColor(COLORS.DARK);
+    const container = new ContainerBuilder().setAccentColor(COLORS.DARK)
 
     const linkText = new TextDisplayBuilder().setContent(
       `### 🔗 단축 링크: /${link.slug}\n` +
         `**단축 URL:** [🔗 /${link.slug}](${fullShortUrl}) • \`${fullShortUrl}\`\n` +
         `**원본 링크:** [🌐 원본 웹사이트 열기 ↗](${link.url})\n` +
         `↳ \`${truncatedUrl}\`\n\n` +
-        `🏷️ **태그:** ${formatTagDisplay(link.tags)}  •  🔒 **비밀번호:** ${link.password ? "설정됨" : "없음"}\n` +
-        `⏳ **만료일:** ${formatExpiration(link.expiration)}`,
-    );
+        `🏷️ **태그:** ${formatTagDisplay(link.tags)}  •  🔒 **비밀번호:** ${link.password ? '설정됨' : '없음'}\n` +
+        `⏳ **만료일:** ${formatExpiration(link.expiration)}`
+    )
 
-    container.addTextDisplayComponents(linkText);
-    container.addSeparatorComponents(new SeparatorBuilder().setDivider(true));
+    container.addTextDisplayComponents(linkText)
+    container.addSeparatorComponents(new SeparatorBuilder().setDivider(true))
 
     const openSection = new SectionBuilder()
       .addTextDisplayComponents(
         new TextDisplayBuilder().setContent(
-          "🌐 **브라우저에서 단축 링크 바로 열기**",
-        ),
+          '🌐 **브라우저에서 단축 링크 바로 열기**'
+        )
       )
       .setButtonAccessory(
         new ButtonBuilder()
-          .setLabel("링크 바로가기")
+          .setLabel('링크 바로가기')
           .setStyle(ButtonStyle.Link)
-          .setURL(fullShortUrl),
-      );
-    container.addSectionComponents(openSection);
+          .setURL(fullShortUrl)
+      )
+    container.addSectionComponents(openSection)
 
-    return { flags: MessageFlags.IsComponentsV2, components: [container] };
+    return { flags: MessageFlags.IsComponentsV2, components: [container] }
   },
 
   /**
    * Creates a detailed statistics view for a slug using ContainerBuilder.
    */
   createStatsCard(stats: SinkStats): V2MessageView {
-    const fullShortUrl = sinkClient.getFullShortUrl(stats.slug);
+    const fullShortUrl = sinkClient.getFullShortUrl(stats.slug)
     const truncatedUrl =
-      stats.url.length > 70 ? `${stats.url.substring(0, 67)}...` : stats.url;
+      stats.url.length > 70 ? `${stats.url.substring(0, 67)}...` : stats.url
 
-    const container = new ContainerBuilder().setAccentColor(COLORS.DARK);
+    const container = new ContainerBuilder().setAccentColor(COLORS.DARK)
 
     let content =
       `### 📊 링크 통계: /${stats.slug}\n` +
       `**단축 URL:** [🔗 /${stats.slug}](${fullShortUrl}) • \`${fullShortUrl}\`\n` +
       `**원본 타겟:** [🌐 원본 웹사이트 열기 ↗](${stats.url})\n` +
       `↳ \`${truncatedUrl}\`\n\n` +
-      `🖱️ **총 클릭 수:** ${formatClicks(stats.clicks, "회")}  •  ⏱️ **마지막 클릭:** ${
+      `🖱️ **총 클릭 수:** ${formatClicks(stats.clicks, '회')}  •  ⏱️ **마지막 클릭:** ${
         stats.lastClickedAt
           ? `<t:${Math.floor(new Date(stats.lastClickedAt).getTime() / 1000)}:R>`
-          : "*클릭 기록 없음*"
-      }`;
+          : '*클릭 기록 없음*'
+      }`
 
     if (stats.devices && Object.keys(stats.devices).length > 0) {
       const deviceStr = Object.entries(stats.devices)
         .map(([dev, count]) => `• **${dev}**: \`${count}\``)
-        .join("  ");
-      content += `\n\n📱 **디바이스:** ${deviceStr}`;
+        .join('  ')
+      content += `\n\n📱 **디바이스:** ${deviceStr}`
     }
 
     if (stats.countries && Object.keys(stats.countries).length > 0) {
       const countryStr = Object.entries(stats.countries)
         .slice(0, 5)
         .map(([c, count]) => `• **${c}**: \`${count}\``)
-        .join("  ");
-      content += `\n\n🌍 **상위 국가:** ${countryStr}`;
+        .join('  ')
+      content += `\n\n🌍 **상위 국가:** ${countryStr}`
     }
 
     if (stats.referrers && Object.keys(stats.referrers).length > 0) {
       const refStr = Object.entries(stats.referrers)
         .slice(0, 5)
         .map(([ref, count]) => `• **${ref}**: \`${count}\``)
-        .join("  ");
-      content += `\n\n🌐 **유입 경로:** ${refStr}`;
+        .join('  ')
+      content += `\n\n🌐 **유입 경로:** ${refStr}`
     }
 
     container.addTextDisplayComponents(
-      new TextDisplayBuilder().setContent(safeDescription(content)),
-    );
-    container.addSeparatorComponents(new SeparatorBuilder().setDivider(true));
+      new TextDisplayBuilder().setContent(safeDescription(content))
+    )
+    container.addSeparatorComponents(new SeparatorBuilder().setDivider(true))
 
     const openSection = new SectionBuilder()
       .addTextDisplayComponents(
         new TextDisplayBuilder().setContent(
-          "🌐 **브라우저에서 단축 링크 바로 열기**",
-        ),
+          '🌐 **브라우저에서 단축 링크 바로 열기**'
+        )
       )
       .setButtonAccessory(
         new ButtonBuilder()
-          .setLabel("링크 열기")
+          .setLabel('링크 열기')
           .setStyle(ButtonStyle.Link)
-          .setURL(fullShortUrl),
-      );
-    container.addSectionComponents(openSection);
+          .setURL(fullShortUrl)
+      )
+    container.addSectionComponents(openSection)
 
-    return { flags: MessageFlags.IsComponentsV2, components: [container] };
+    return { flags: MessageFlags.IsComponentsV2, components: [container] }
   },
 
   /**
@@ -441,143 +435,143 @@ export const ui = {
    */
   createWatchDmCard(
     items: Array<{
-      originalUrl: string;
-      targetUrl: string;
-      type: "shorten" | "fixupx";
-      shortenedUrl?: string;
-      slug?: string;
-      isReused?: boolean;
+      originalUrl: string
+      targetUrl: string
+      type: 'shorten' | 'fixupx'
+      shortenedUrl?: string
+      slug?: string
+      isReused?: boolean
     }>,
     messageUrl: string,
-    dmFormat: "replace" | "list" = "replace",
+    dmFormat: 'replace' | 'list' = 'replace'
   ): V2MessageView {
-    const container = new ContainerBuilder().setAccentColor(COLORS.DARK);
+    const container = new ContainerBuilder().setAccentColor(COLORS.DARK)
 
-    const hasFixupx = items.some((item) => item.type === "fixupx");
-    const hasShorten = items.some((item) => item.type === "shorten");
+    const hasFixupx = items.some(item => item.type === 'fixupx')
+    const hasShorten = items.some(item => item.type === 'shorten')
 
     const lines = items.map((item, idx) => {
-      const url = item.targetUrl || item.shortenedUrl || "";
-      const origTrunc = truncateMiddle(item.originalUrl, 48);
+      const url = item.targetUrl || item.shortenedUrl || ''
+      const origTrunc = truncateMiddle(item.originalUrl, 48)
       const tag =
-        item.type === "fixupx"
-          ? " *(fixupx 변환)*"
+        item.type === 'fixupx'
+          ? ' *(fixupx 변환)*'
           : item.isReused
-            ? " *(기존 링크 재사용)*"
-            : "";
-      return `**${idx + 1}.** \`${url}\`${tag}\n   ↳ 원본: \`${origTrunc}\``;
-    });
+            ? ' *(기존 링크 재사용)*'
+            : ''
+      return `**${idx + 1}.** \`${url}\`${tag}\n   ↳ 원본: \`${origTrunc}\``
+    })
 
     const headerTitle =
       hasFixupx && !hasShorten
-        ? "### 🐦 트위터 링크가 fixupx로 변환되었습니다!"
+        ? '### 🐦 트위터 링크가 fixupx로 변환되었습니다!'
         : hasFixupx && hasShorten
-          ? "### ✂️ 링크가 단축 및 fixupx로 변환되었습니다!"
-          : "### ✂️ 긴 URL이 자동으로 단축되었습니다!";
+          ? '### ✂️ 링크가 단축 및 fixupx로 변환되었습니다!'
+          : '### ✂️ 긴 URL이 자동으로 단축되었습니다!'
 
     const listSectionTitle =
       hasFixupx && !hasShorten
-        ? "**변환된 링크 목록:**"
+        ? '**변환된 링크 목록:**'
         : hasFixupx && hasShorten
-          ? "**처리된 링크 목록:**"
-          : "**단축된 링크 목록:**";
+          ? '**처리된 링크 목록:**'
+          : '**단축된 링크 목록:**'
 
     const footerNotice =
-      dmFormat === "replace"
-        ? "*아래 메시지에서 URL이 치환된 본문을 빠르게 복사할 수 있습니다.*"
+      dmFormat === 'replace'
+        ? '*아래 메시지에서 URL이 치환된 본문을 빠르게 복사할 수 있습니다.*'
         : hasFixupx && !hasShorten
-          ? "*아래 메시지에서 변환된 URL만 빠르게 복사할 수 있습니다.*"
+          ? '*아래 메시지에서 변환된 URL만 빠르게 복사할 수 있습니다.*'
           : hasFixupx && hasShorten
-            ? "*아래 메시지에서 변환 및 단축된 URL만 빠르게 복사할 수 있습니다.*"
-            : "*아래 메시지에서 단축 URL만 빠르게 복사할 수 있습니다.*";
+            ? '*아래 메시지에서 변환 및 단축된 URL만 빠르게 복사할 수 있습니다.*'
+            : '*아래 메시지에서 단축 URL만 빠르게 복사할 수 있습니다.*'
 
     const description = [
       headerTitle,
       `> 📍 **원본 메시지:** ${messageUrl}`,
-      "",
+      '',
       listSectionTitle,
       ...lines,
-      "",
-      footerNotice,
-    ].join("\n");
+      '',
+      footerNotice
+    ].join('\n')
 
     container.addTextDisplayComponents(
-      new TextDisplayBuilder().setContent(safeDescription(description)),
-    );
+      new TextDisplayBuilder().setContent(safeDescription(description))
+    )
 
     return {
       flags: MessageFlags.IsComponentsV2 | MessageFlags.SuppressEmbeds,
-      components: [container],
-    };
+      components: [container]
+    }
   },
 
   /**
    * Creates standard success message container.
    */
   createSuccessMessage(title: string, description: string): V2MessageView {
-    const container = new ContainerBuilder().setAccentColor(COLORS.DARK);
+    const container = new ContainerBuilder().setAccentColor(COLORS.DARK)
     container.addTextDisplayComponents(
       new TextDisplayBuilder().setContent(
-        `### ✅ ${title}\n${safeDescription(description)}`,
-      ),
-    );
-    return { flags: MessageFlags.IsComponentsV2, components: [container] };
+        `### ✅ ${title}\n${safeDescription(description)}`
+      )
+    )
+    return { flags: MessageFlags.IsComponentsV2, components: [container] }
   },
 
   /**
    * Creates standard error message container.
    */
   createErrorMessage(title: string, description: string): V2MessageView {
-    const container = new ContainerBuilder().setAccentColor(COLORS.DANGER);
+    const container = new ContainerBuilder().setAccentColor(COLORS.DANGER)
     container.addTextDisplayComponents(
       new TextDisplayBuilder().setContent(
-        `### ❌ ${title}\n${safeDescription(description || "오류가 발생했습니다.")}`,
-      ),
-    );
-    return { flags: MessageFlags.IsComponentsV2, components: [container] };
+        `### ❌ ${title}\n${safeDescription(description || '오류가 발생했습니다.')}`
+      )
+    )
+    return { flags: MessageFlags.IsComponentsV2, components: [container] }
   },
 
   /**
    * Creates standard warning/info message container.
    */
   createInfoMessage(title: string, description: string): V2MessageView {
-    const container = new ContainerBuilder().setAccentColor(COLORS.DARK);
+    const container = new ContainerBuilder().setAccentColor(COLORS.DARK)
     container.addTextDisplayComponents(
       new TextDisplayBuilder().setContent(
-        `### ℹ️ ${title}\n${safeDescription(description)}`,
-      ),
-    );
-    return { flags: MessageFlags.IsComponentsV2, components: [container] };
+        `### ℹ️ ${title}\n${safeDescription(description)}`
+      )
+    )
+    return { flags: MessageFlags.IsComponentsV2, components: [container] }
   },
 
   /**
    * Creates a confirmation dialog for deleting a link using ContainerBuilder.
    */
   createDeleteConfirmView(slug: string): V2MessageView {
-    const container = new ContainerBuilder().setAccentColor(COLORS.DANGER);
+    const container = new ContainerBuilder().setAccentColor(COLORS.DANGER)
 
     const text = new TextDisplayBuilder().setContent(
       `### ⚠️ 링크 영구 삭제 확인\n` +
         `정말로 단축 링크 **\`/${slug}\`**을(를) 삭제하시겠습니까?\n` +
-        `> ⚠️ **경고:** 삭제된 링크는 복구할 수 없으며 기존 공유된 연결이 영구히 끊어집니다.`,
-    );
-    container.addTextDisplayComponents(text);
-    container.addSeparatorComponents(new SeparatorBuilder().setDivider(true));
+        `> ⚠️ **경고:** 삭제된 링크는 복구할 수 없으며 기존 공유된 연결이 영구히 끊어집니다.`
+    )
+    container.addTextDisplayComponents(text)
+    container.addSeparatorComponents(new SeparatorBuilder().setDivider(true))
 
     const actionRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
       new ButtonBuilder()
         .setCustomId(`${CustomId.DASHBOARD_CONFIRM_DELETE_BTN}:${slug}`)
-        .setLabel("영구 삭제")
+        .setLabel('영구 삭제')
         .setStyle(ButtonStyle.Danger)
-        .setEmoji("🗑️"),
+        .setEmoji('🗑️'),
       new ButtonBuilder()
         .setCustomId(CustomId.DASHBOARD_CANCEL_DELETE_BTN)
-        .setLabel("취소")
-        .setStyle(ButtonStyle.Secondary),
-    );
-    container.addActionRowComponents(actionRow);
+        .setLabel('취소')
+        .setStyle(ButtonStyle.Secondary)
+    )
+    container.addActionRowComponents(actionRow)
 
-    return { flags: MessageFlags.IsComponentsV2, components: [container] };
+    return { flags: MessageFlags.IsComponentsV2, components: [container] }
   },
 
   /**
@@ -587,214 +581,210 @@ export const ui = {
     user: User,
     userConfig: UserConfigData,
     notice?: {
-      title: string;
-      description: string;
-      type?: "success" | "info" | "error";
+      title: string
+      description: string
+      type?: 'success' | 'info' | 'error'
     },
-    effectiveMinLength?: number,
+    effectiveMinLength?: number
   ): V2MessageView {
-    const container = new ContainerBuilder().setAccentColor(COLORS.DARK);
+    const container = new ContainerBuilder().setAccentColor(COLORS.DARK)
 
     // 1. Notice Banner (Integrated at top inside the container if present)
     if (notice) {
       const icon =
-        notice.type === "error" ? "❌" : notice.type === "info" ? "ℹ️" : "✅";
+        notice.type === 'error' ? '❌' : notice.type === 'info' ? 'ℹ️' : '✅'
       const noticeText = new TextDisplayBuilder().setContent(
-        `> ${icon} **${notice.title}**\n> ${safeDescription(notice.description)}`,
-      );
-      container.addTextDisplayComponents(noticeText);
-      container.addSeparatorComponents(new SeparatorBuilder().setDivider(true));
+        `> ${icon} **${notice.title}**\n> ${safeDescription(notice.description)}`
+      )
+      container.addTextDisplayComponents(noticeText)
+      container.addSeparatorComponents(new SeparatorBuilder().setDivider(true))
     }
 
     // 2. Header
     const headerText = new TextDisplayBuilder().setContent(
       `### ⚙️ ${user.username}'s 개인 설정 (Config Panel)\n` +
         `> 긴 URL 감지 시 동작할 **개인 맞춤 정책**을 설정합니다.\n` +
-        `> 아래 버튼을 탭하면 설정이 즉시 반영됩니다.`,
-    );
-    container.addTextDisplayComponents(headerText);
-    container.addSeparatorComponents(new SeparatorBuilder().setDivider(true));
+        `> 아래 버튼을 탭하면 설정이 즉시 반영됩니다.`
+    )
+    container.addTextDisplayComponents(headerText)
+    container.addSeparatorComponents(new SeparatorBuilder().setDivider(true))
 
     // 3. Auto DM Section
     const autoDmDesc =
-      userConfig.autoDmMode === "inherit"
-        ? "🟢 **서버 설정 따름 (기본값)** — 서버 관리자가 지정한 감시 채널에서만 자동 단축 DM이 발송됩니다."
-        : userConfig.autoDmMode === "on"
-          ? "⚡ **항상 켬 (전체 채널)** — 서버 설정과 무관하게 봇이 접근 가능한 모든 채널에서 자동 단축 DM이 발송됩니다."
-          : "🛑 **항상 끔** — 감시 채널에 등록된 곳이라도 나에게는 일절 DM을 발송하지 않습니다.";
+      userConfig.autoDmMode === 'inherit'
+        ? '🟢 **서버 설정 따름 (기본값)** — 서버 관리자가 지정한 감시 채널에서만 자동 단축 DM이 발송됩니다.'
+        : userConfig.autoDmMode === 'on'
+          ? '⚡ **항상 켬 (전체 채널)** — 서버 설정과 무관하게 봇이 접근 가능한 모든 채널에서 자동 단축 DM이 발송됩니다.'
+          : '🛑 **항상 끔** — 감시 채널에 등록된 곳이라도 나에게는 일절 DM을 발송하지 않습니다.'
 
     const autoDmText = new TextDisplayBuilder().setContent(
-      `🤖 **자동 DM 수신 모드 (\`auto_dm\`)**\n${autoDmDesc}`,
-    );
-    container.addTextDisplayComponents(autoDmText);
+      `🤖 **자동 DM 수신 모드 (\`auto_dm\`)**\n${autoDmDesc}`
+    )
+    container.addTextDisplayComponents(autoDmText)
 
     const autoDmRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
       new ButtonBuilder()
         .setCustomId(CustomId.CONFIG_DM_INHERIT)
-        .setLabel("상속 (기본)")
-        .setEmoji("🟢")
+        .setLabel('상속 (기본)')
+        .setEmoji('🟢')
         .setStyle(
-          userConfig.autoDmMode === "inherit"
+          userConfig.autoDmMode === 'inherit'
             ? ButtonStyle.Success
-            : ButtonStyle.Secondary,
+            : ButtonStyle.Secondary
         ),
       new ButtonBuilder()
         .setCustomId(CustomId.CONFIG_DM_ON)
-        .setLabel("항상 켬")
-        .setEmoji("⚡")
+        .setLabel('항상 켬')
+        .setEmoji('⚡')
         .setStyle(
-          userConfig.autoDmMode === "on"
+          userConfig.autoDmMode === 'on'
             ? ButtonStyle.Success
-            : ButtonStyle.Secondary,
+            : ButtonStyle.Secondary
         ),
       new ButtonBuilder()
         .setCustomId(CustomId.CONFIG_DM_OFF)
-        .setLabel("항상 끔")
-        .setEmoji("🛑")
+        .setLabel('항상 끔')
+        .setEmoji('🛑')
         .setStyle(
-          userConfig.autoDmMode === "off"
+          userConfig.autoDmMode === 'off'
             ? ButtonStyle.Danger
-            : ButtonStyle.Secondary,
-        ),
-    );
-    container.addActionRowComponents(autoDmRow);
-    container.addSeparatorComponents(new SeparatorBuilder().setDivider(true));
+            : ButtonStyle.Secondary
+        )
+    )
+    container.addActionRowComponents(autoDmRow)
+    container.addSeparatorComponents(new SeparatorBuilder().setDivider(true))
 
     // 4. DM Format Section
     const formatDesc =
-      userConfig.dmFormat === "replace"
-        ? "💬 **본문 치환 (기본값)** — 원본 메시지 문맥에서 긴 URL만 단축 링크로 고쳐 끼운 완성형 본문을 전송합니다."
-        : "📋 **URL 목록 나열** — 단축된 URL만을 순차 나열하여 모바일 복사에 최적화합니다.";
+      userConfig.dmFormat === 'replace'
+        ? '💬 **본문 치환 (기본값)** — 원본 메시지 문맥에서 긴 URL만 단축 링크로 고쳐 끼운 완성형 본문을 전송합니다.'
+        : '📋 **URL 목록 나열** — 단축된 URL만을 순차 나열하여 모바일 복사에 최적화합니다.'
 
     const formatText = new TextDisplayBuilder().setContent(
-      `📝 **DM 메시지 포맷 (\`dm_format\`)**\n${formatDesc}`,
-    );
-    container.addTextDisplayComponents(formatText);
+      `📝 **DM 메시지 포맷 (\`dm_format\`)**\n${formatDesc}`
+    )
+    container.addTextDisplayComponents(formatText)
 
     const formatRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
       new ButtonBuilder()
         .setCustomId(CustomId.CONFIG_FMT_REPLACE)
-        .setLabel("본문 치환 (기본)")
-        .setEmoji("💬")
+        .setLabel('본문 치환 (기본)')
+        .setEmoji('💬')
         .setStyle(
-          userConfig.dmFormat === "replace"
+          userConfig.dmFormat === 'replace'
             ? ButtonStyle.Success
-            : ButtonStyle.Secondary,
+            : ButtonStyle.Secondary
         ),
       new ButtonBuilder()
         .setCustomId(CustomId.CONFIG_FMT_LIST)
-        .setLabel("URL 목록")
-        .setEmoji("📋")
+        .setLabel('URL 목록')
+        .setEmoji('📋')
         .setStyle(
-          userConfig.dmFormat === "list"
+          userConfig.dmFormat === 'list'
             ? ButtonStyle.Success
-            : ButtonStyle.Secondary,
-        ),
-    );
-    container.addActionRowComponents(formatRow);
-    container.addSeparatorComponents(new SeparatorBuilder().setDivider(true));
+            : ButtonStyle.Secondary
+        )
+    )
+    container.addActionRowComponents(formatRow)
+    container.addSeparatorComponents(new SeparatorBuilder().setDivider(true))
 
     // 5. Twitter Fixupx Section
     const fixupxDesc = userConfig.fixupxEnabled
-      ? "🐦 **자동 변환 활성화 (기본값)** — 트위터(X) 게시물 링크를 fixupx.com 링크로 자동 변환하여 전송합니다."
-      : "⏸️ **자동 변환 비활성화** — 트위터 링크도 일반 단축 정책(min_length)에 따릅니다.";
+      ? '🐦 **자동 변환 활성화 (기본값)** — 트위터(X) 게시물 링크를 fixupx.com 링크로 자동 변환하여 전송합니다.'
+      : '⏸️ **자동 변환 비활성화** — 트위터 링크도 일반 단축 정책(min_length)에 따릅니다.'
 
     const fixupxText = new TextDisplayBuilder().setContent(
-      `🐦 **트위터 fixupx 변환 (\`fixupx\`)**\n${fixupxDesc}`,
-    );
-    container.addTextDisplayComponents(fixupxText);
+      `🐦 **트위터 fixupx 변환 (\`fixupx\`)**\n${fixupxDesc}`
+    )
+    container.addTextDisplayComponents(fixupxText)
 
     const fixupxRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
       new ButtonBuilder()
         .setCustomId(CustomId.CONFIG_FIXUPX_ON)
-        .setLabel("켬 (기본)")
-        .setEmoji("🐦")
+        .setLabel('켬 (기본)')
+        .setEmoji('🐦')
         .setStyle(
-          userConfig.fixupxEnabled
-            ? ButtonStyle.Success
-            : ButtonStyle.Secondary,
+          userConfig.fixupxEnabled ? ButtonStyle.Success : ButtonStyle.Secondary
         ),
       new ButtonBuilder()
         .setCustomId(CustomId.CONFIG_FIXUPX_OFF)
-        .setLabel("끔")
-        .setEmoji("🛑")
+        .setLabel('끔')
+        .setEmoji('🛑')
         .setStyle(
-          !userConfig.fixupxEnabled
-            ? ButtonStyle.Danger
-            : ButtonStyle.Secondary,
-        ),
-    );
-    container.addActionRowComponents(fixupxRow);
-    container.addSeparatorComponents(new SeparatorBuilder().setDivider(true));
+          !userConfig.fixupxEnabled ? ButtonStyle.Danger : ButtonStyle.Secondary
+        )
+    )
+    container.addActionRowComponents(fixupxRow)
+    container.addSeparatorComponents(new SeparatorBuilder().setDivider(true))
 
     // 6. Min URL Length Section
     const lenDesc =
       userConfig.autoShortenMinUrlLength === null
-        ? `🔄 **상위 설정 따름 (기본값)** — 서버 또는 전역 기본값(${effectiveMinLength !== undefined ? `현재: **${effectiveMinLength}자**` : "기본 70자"})을 상속받습니다.`
+        ? `🔄 **상위 설정 따름 (기본값)** — 서버 또는 전역 기본값(${effectiveMinLength !== undefined ? `현재: **${effectiveMinLength}자**` : '기본 70자'})을 상속받습니다.`
         : userConfig.autoShortenMinUrlLength === 0
-          ? "⚡ **전체 단축 (제한 없음)** — URL 길이에 관계없이 모든 유효 URL을 단축합니다."
-          : `🎯 **최소 ${userConfig.autoShortenMinUrlLength}자 이상 단축** — ${userConfig.autoShortenMinUrlLength}자 이상인 긴 URL만 단축합니다.`;
+          ? '⚡ **전체 단축 (제한 없음)** — URL 길이에 관계없이 모든 유효 URL을 단축합니다.'
+          : `🎯 **최소 ${userConfig.autoShortenMinUrlLength}자 이상 단축** — ${userConfig.autoShortenMinUrlLength}자 이상인 긴 URL만 단축합니다.`
 
     const lenText = new TextDisplayBuilder().setContent(
-      `📏 **최소 URL 길이 (\`min_length\`)**\n${lenDesc}`,
-    );
-    container.addTextDisplayComponents(lenText);
+      `📏 **최소 URL 길이 (\`min_length\`)**\n${lenDesc}`
+    )
+    container.addTextDisplayComponents(lenText)
 
     const lenRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
       new ButtonBuilder()
         .setCustomId(CustomId.CONFIG_LEN_INHERIT)
-        .setLabel("상속 (-1)")
-        .setEmoji("🔄")
+        .setLabel('상속 (-1)')
+        .setEmoji('🔄')
         .setStyle(
           userConfig.autoShortenMinUrlLength === null
             ? ButtonStyle.Success
-            : ButtonStyle.Secondary,
+            : ButtonStyle.Secondary
         ),
       new ButtonBuilder()
         .setCustomId(CustomId.CONFIG_LEN_ALL)
-        .setLabel("전체 (0)")
-        .setEmoji("⚡")
+        .setLabel('전체 (0)')
+        .setEmoji('⚡')
         .setStyle(
           userConfig.autoShortenMinUrlLength === 0
             ? ButtonStyle.Success
-            : ButtonStyle.Secondary,
+            : ButtonStyle.Secondary
         ),
       new ButtonBuilder()
         .setCustomId(CustomId.CONFIG_LEN_CUSTOM)
-        .setLabel("직접 입력...")
-        .setEmoji("✏️")
+        .setLabel('직접 입력...')
+        .setEmoji('✏️')
         .setStyle(
           userConfig.autoShortenMinUrlLength !== null &&
             userConfig.autoShortenMinUrlLength > 0
             ? ButtonStyle.Success
-            : ButtonStyle.Secondary,
-        ),
-    );
-    container.addActionRowComponents(lenRow);
-    container.addSeparatorComponents(new SeparatorBuilder().setDivider(true));
+            : ButtonStyle.Secondary
+        )
+    )
+    container.addActionRowComponents(lenRow)
+    container.addSeparatorComponents(new SeparatorBuilder().setDivider(true))
 
     // 6. Ignored Domains Section
     const domainsText = new TextDisplayBuilder().setContent(
-      createIgnoredDomainsContent(userConfig.ignoredDomains),
-    );
-    container.addTextDisplayComponents(domainsText);
-    container.addSeparatorComponents(new SeparatorBuilder().setDivider(true));
+      createIgnoredDomainsContent(userConfig.ignoredDomains)
+    )
+    container.addTextDisplayComponents(domainsText)
+    container.addSeparatorComponents(new SeparatorBuilder().setDivider(true))
 
     // 7. Navigation Section
     const navRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
       new ButtonBuilder()
         .setCustomId(CustomId.CONFIG_NAV_DASHBOARD)
-        .setLabel("대시보드로 이동")
-        .setEmoji("📊")
-        .setStyle(ButtonStyle.Primary),
-    );
-    container.addActionRowComponents(navRow);
+        .setLabel('대시보드로 이동')
+        .setEmoji('📊')
+        .setStyle(ButtonStyle.Primary)
+    )
+    container.addActionRowComponents(navRow)
 
     const footerText = new TextDisplayBuilder().setContent(
-      "*Snipsik • 개인 설정은 모든 서버에서 동일하게 적용됩니다.*",
-    );
-    container.addTextDisplayComponents(footerText);
+      '*Snipsik • 개인 설정은 모든 서버에서 동일하게 적용됩니다.*'
+    )
+    container.addTextDisplayComponents(footerText)
 
-    return { flags: MessageFlags.IsComponentsV2, components: [container] };
-  },
-};
+    return { flags: MessageFlags.IsComponentsV2, components: [container] }
+  }
+}
