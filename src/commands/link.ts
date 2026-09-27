@@ -2,6 +2,7 @@ import {
   type AutocompleteInteraction,
   ChannelType,
   type ChatInputCommandInteraction,
+  type GuildMember,
   MessageFlags,
   PermissionFlagsBits,
   SlashCommandBuilder
@@ -856,30 +857,19 @@ export const linkCommand: Command = {
 
 export const accessibleChannelSchema = z
   .object({
-    id: z.string().min(1),
-    type: z.union([z.nativeEnum(ChannelType), z.number()]).optional(),
-    permissionsFor: z
-      .custom<
-        (member: { id: string }) => { has: (perm: bigint) => boolean } | null
-      >(val => typeof val === 'function' || val === undefined, {
-        message: 'Invalid permissionsFor method'
-      })
-      .optional(),
-    members: z
-      .custom<{
-        cache: { has: (id: string) => boolean }
-        fetchMe?: () => Promise<unknown>
-      }>(
-        val =>
-          val === undefined ||
-          (typeof val === 'object' && val !== null && 'cache' in val),
-        { message: 'Invalid members collection' }
-      )
-      .optional()
+    id: z.string().regex(/^\d{17,20}$/, 'Invalid Discord channel snowflake ID'),
+    type: z.union([z.nativeEnum(ChannelType), z.number()]).optional()
   })
   .passthrough()
 
-export type AccessibleChannelLike = z.infer<typeof accessibleChannelSchema>
+export interface AccessibleChannelLike {
+  id: string
+  type?: ChannelType | number
+  permissionsFor?: (
+    member: GuildMember
+  ) => { has: (perm: bigint) => boolean } | null
+  members?: unknown
+}
 
 /**
  * Validates whether the bot has required access to monitor messages in the given channel or thread.
@@ -894,7 +884,7 @@ export async function validateBotChannelAccess(
     return { canAccess: true }
   }
 
-  const perms = channel.permissionsFor(botMember)
+  const perms = channel.permissionsFor(botMember as GuildMember)
   if (perms && !perms.has(PermissionFlagsBits.ViewChannel)) {
     return {
       canAccess: false,
@@ -910,11 +900,15 @@ export async function validateBotChannelAccess(
     let isThreadMember = false
 
     if (!hasManageThreads && channel.members) {
-      if (channel.members.cache.has(botMember.id)) {
+      const threadMembers = channel.members as {
+        cache?: { has: (id: string) => boolean }
+        fetchMe?: () => Promise<unknown>
+      }
+      if (threadMembers.cache?.has(botMember.id)) {
         isThreadMember = true
-      } else if (typeof channel.members.fetchMe === 'function') {
+      } else if (typeof threadMembers.fetchMe === 'function') {
         try {
-          const member = await channel.members.fetchMe()
+          const member = await threadMembers.fetchMe()
           isThreadMember = Boolean(member)
         } catch {
           isThreadMember = false
@@ -984,7 +978,9 @@ async function handleWatchCommand(
       await interaction.editReply(errEmbed)
       return
     }
-    const channel = channelParse.data
+    // Keep the original discord.js Channel instance: zod's object parse returns a
+    // plain copy that loses prototype members (permissionsFor, guild getter, isThread).
+    const channel = rawChannel
 
     // Bot channel/thread access check (strict mode)
     const botMember =
