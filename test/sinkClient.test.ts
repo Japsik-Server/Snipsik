@@ -2,6 +2,7 @@ import { describe, expect, it, mock } from "bun:test";
 import { SinkClient, sinkClient } from "@/services/sinkClient";
 import { fetchUserDashboardStats } from "@/commands/link";
 import { getUserHash } from "@/services/slugManager";
+import { attachClickCounts } from "@/services/ownedLinkCatalog";
 
 const TEST_TOKEN = process.env.SINK_TOKEN ?? "";
 
@@ -1490,7 +1491,7 @@ describe("Zero-Click Link Resolution Tests", () => {
     }
   });
 
-  it("stays complete when a batch failed but every id still resolved", async () => {
+  it("stays incomplete when a batch failed, as the real client reports", async () => {
     const originalCount = sinkClient.countLinks;
     const originalList = sinkClient.listLinks;
     const originalCounters = sinkClient.getCountersByIds;
@@ -1506,20 +1507,22 @@ describe("Zero-Click Link Resolution Tests", () => {
       total: 1,
       listComplete: true,
     }));
+    // The real client always marks every id in a failed batch as unresolved,
+    // even when a sibling batch resolved. Mock that faithfully, otherwise this
+    // test would pass even if that marking regressed.
     sinkClient.getCountersByIds = mock(async () => ({
       success: false,
       analyticsAvailable: false,
-      counters: new Map([["only", 5]]),
-      unresolvedIds: [],
+      counters: new Map(),
+      unresolvedIds: ["only"],
       error: "boom",
     }));
 
     try {
       const stats = await fetchUserDashboardStats(userId);
-      // Completeness is judged per id, not per request. Every id here resolved
-      // to a real value, so the total stands even though a request failed.
-      expect(stats.clicksComplete).toBe(true);
-      expect(stats.totalClicks).toBe(5);
+      expect(stats.clicksComplete).toBe(false);
+      expect(stats.totalClicks).toBeUndefined();
+      expect(stats.links.every((l) => l.clicks === undefined)).toBe(true);
     } finally {
       sinkClient.countLinks = originalCount;
       sinkClient.listLinks = originalList;
@@ -1769,6 +1772,40 @@ describe("Batch-Level Empty Results Are Not Zero", () => {
     } finally {
       sinkClient.countLinks = originalCount;
       sinkClient.listLinks = originalList;
+      sinkClient.getCountersByIds = originalCounters;
+    }
+  });
+});
+
+describe("Never-Queried Ids Are Not Zero", () => {
+  it("does not stamp a measured zero on an id the client never sent", async () => {
+    const withClicks = { id: "asked", slug: "a-hash", url: "https://a.com" };
+    // An id that is not a string cannot pass the caller's id filter, so it is
+    // never queried. It must not be turned into a measured 0.
+    const unqueryable = { slug: "b-hash", url: "https://b.com" };
+
+    const originalCounters = sinkClient.getCountersByIds;
+    let sentIds: string[] = [];
+    sinkClient.getCountersByIds = mock(async (ids) => {
+      sentIds = [...ids];
+      return {
+        success: true,
+        analyticsAvailable: true,
+        counters: new Map([["asked", 4]]),
+        unresolvedIds: [],
+      };
+    });
+
+    try {
+      const res = await attachClickCounts([withClicks, unqueryable]);
+      // Only the id that was actually sent and answered for becomes 0-or-real.
+      expect(sentIds).toEqual(["asked"]);
+      expect(res.links[0]?.clicks).toBe(4);
+      // Never queried, so it stays unknown rather than becoming a measured 0.
+      expect(res.links[1]?.clicks).toBeUndefined();
+      // An unqueryable link means a total over this set is a floor.
+      expect(res.partial).toBe(true);
+    } finally {
       sinkClient.getCountersByIds = originalCounters;
     }
   });

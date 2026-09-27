@@ -49,9 +49,10 @@ export async function attachClickCounts(
   }
 
   // A link with no id can never be correlated with analytics. `unresolvedIds`
-  // covers the other case: its batch failed or came back empty, so Sink told us
-  // nothing about whether it was clicked. Only a link Sink positively reported
-  // as having no rows is a genuine zero.
+  // covers the case where its batch failed or came back empty, so Sink said
+  // nothing about whether it was clicked. Only an id that was actually queried
+  // and positively reported as having no rows is a genuine zero.
+  const queried = new Set(ids);
   const unresolved = new Set(res.unresolvedIds);
   const unqueryable = links.filter(
     (link) => typeof link.id !== "string" || link.id.trim().length === 0,
@@ -62,9 +63,12 @@ export async function attachClickCounts(
       if (!link.id) return link;
       const clicks = res.counters.get(link.id);
       if (clicks !== undefined) return { ...link, clicks };
-      // Absent from both the map and `unresolvedIds` means Sink answered for
-      // this id and reported no clicks, which is a measured zero.
-      if (!unresolved.has(link.id)) return { ...link, clicks: 0 };
+      // Absent from the counters, from `unresolvedIds`, and present in the
+      // queried set means Sink answered for this id and reported no clicks.
+      // An id we never sent is not evidence of anything, so it stays unknown.
+      if (queried.has(link.id) && !unresolved.has(link.id)) {
+        return { ...link, clicks: 0 };
+      }
       return link;
     }),
     partial: unresolved.size > 0 || unqueryable > 0,
