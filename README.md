@@ -119,6 +119,8 @@ docker compose logs -f snipsik
 
 - **[상세 사양서 (Specification)](./docs/SPECIFICATION.md)**
 - **[시스템 아키텍처 & 배포 가이드 (Architecture & Deployment)](./docs/ARCHITECTURE.md)**
+- **[기여 가이드 (Contributing Guidelines)](./CONTRIBUTING.md)**
+- **[보안 정책 (Security Policy)](./SECURITY.md)**
 
 ---
 
