@@ -6,6 +6,7 @@ import {
   PermissionFlagsBits,
   SlashCommandBuilder
 } from 'discord.js'
+import { z } from 'zod'
 import { config } from '@/config'
 import { storeDashboardLinkSnapshots } from '@/services/dashboardLinkSnapshot'
 import { guildConfigService } from '@/services/guildConfigService'
@@ -853,17 +854,32 @@ export const linkCommand: Command = {
   }
 }
 
-export interface AccessibleChannelLike {
-  id: string
-  type?: ChannelType | number
-  permissionsFor?: (member: {
-    id: string
-  }) => { has: (perm: bigint) => boolean } | null
-  members?: {
-    cache: { has: (id: string) => boolean }
-    fetchMe?: () => Promise<unknown>
-  }
-}
+export const accessibleChannelSchema = z
+  .object({
+    id: z.string().min(1),
+    type: z.union([z.nativeEnum(ChannelType), z.number()]).optional(),
+    permissionsFor: z
+      .custom<
+        (member: { id: string }) => { has: (perm: bigint) => boolean } | null
+      >(val => typeof val === 'function' || val === undefined, {
+        message: 'Invalid permissionsFor method'
+      })
+      .optional(),
+    members: z
+      .custom<{
+        cache: { has: (id: string) => boolean }
+        fetchMe?: () => Promise<unknown>
+      }>(
+        val =>
+          val === undefined ||
+          (typeof val === 'object' && val !== null && 'cache' in val),
+        { message: 'Invalid members collection' }
+      )
+      .optional()
+  })
+  .passthrough()
+
+export type AccessibleChannelLike = z.infer<typeof accessibleChannelSchema>
 
 /**
  * Validates whether the bot has required access to monitor messages in the given channel or thread.
@@ -958,15 +974,22 @@ async function handleWatchCommand(
   })
 
   if (subcommand === 'add') {
-    const channel = interaction.options.getChannel('channel', true)
+    const rawChannel = interaction.options.getChannel('channel', true)
+    const channelParse = accessibleChannelSchema.safeParse(rawChannel)
+    if (!channelParse.success) {
+      const errEmbed = ui.createErrorMessage(
+        '잘못된 채널',
+        '유효한 Discord 채널 정보를 확인할 수 없습니다.'
+      )
+      await interaction.editReply(errEmbed)
+      return
+    }
+    const channel = channelParse.data
 
     // Bot channel/thread access check (strict mode)
     const botMember =
       guild.members.me ?? (await guild.members.fetchMe().catch(() => null))
-    const accessCheck = await validateBotChannelAccess(
-      channel as AccessibleChannelLike,
-      botMember
-    )
+    const accessCheck = await validateBotChannelAccess(channel, botMember)
     if (!accessCheck.canAccess) {
       const errEmbed = ui.createErrorMessage(
         accessCheck.errorTitle ?? '봇 권한 부족',
