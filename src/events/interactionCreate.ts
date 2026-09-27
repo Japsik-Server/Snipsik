@@ -1,75 +1,75 @@
-import { type Interaction } from "discord.js";
-import { z } from "zod";
-import { CustomId } from "@/types/bot";
+import type { Interaction } from 'discord.js'
+import { z } from 'zod'
+import { CustomId } from '@/types/bot'
 import {
   fetchUserDashboardStats,
   handleConfigAutocomplete,
-  linkCommand,
-} from "@/commands/link";
-import { sinkClient } from "@/services/sinkClient";
-import { generateSlug, verifyOwnership } from "@/services/slugManager";
+  linkCommand
+} from '@/commands/link'
+import { sinkClient } from '@/services/sinkClient'
+import { generateSlug, verifyOwnership } from '@/services/slugManager'
 import {
   userConfigService,
-  normalizeMinUrlLength,
-} from "@/services/userConfigService";
-import { guildConfigService } from "@/services/guildConfigService";
-import { ui } from "@/utils/ui";
+  normalizeMinUrlLength
+} from '@/services/userConfigService'
+import { guildConfigService } from '@/services/guildConfigService'
+import { ui } from '@/utils/ui'
 import {
   createEditLinkModal,
   createLinkModal,
-  createMinLengthConfigModal,
-} from "@/utils/modals";
-import { parseExpiration } from "@/utils/time";
-import { logger } from "@/utils/logger";
-import { getDashboardLinkSnapshot } from "@/services/dashboardLinkSnapshot";
-import { parseTagsInput } from "@/utils/tags";
-import type { SinkLink, UpdateLinkPayload } from "@/types/sink";
+  createMinLengthConfigModal
+} from '@/utils/modals'
+import { parseExpiration } from '@/utils/time'
+import { logger } from '@/utils/logger'
+import { getDashboardLinkSnapshot } from '@/services/dashboardLinkSnapshot'
+import { parseTagsInput } from '@/utils/tags'
+import type { SinkLink, UpdateLinkPayload } from '@/types/sink'
 
-const dashboardSlugSchema = z.string().trim().min(1).max(100);
+const dashboardSlugSchema = z.string().trim().min(1).max(100)
 
 function parseCustomIdSlug(customId: string, prefix: string): string | null {
-  const marker = `${prefix}:`;
+  const marker = `${prefix}:`
   const candidate = customId.startsWith(marker)
     ? customId.substring(marker.length)
-    : undefined;
-  const parsed = dashboardSlugSchema.safeParse(candidate);
-  return parsed.success ? parsed.data : null;
+    : undefined
+  const parsed = dashboardSlugSchema.safeParse(candidate)
+  return parsed.success ? parsed.data : null
 }
 
 export function buildEditLinkPayload(
   existing: SinkLink,
   fields: {
-    url: string;
-    title: string;
-    description: string;
-    tags: string[];
-    password?: string;
-  },
+    url: string
+    title: string
+    description: string
+    tags: string[]
+    password?: string
+  }
 ): UpdateLinkPayload {
   const payload: UpdateLinkPayload = {
     url: fields.url,
     tags: fields.tags,
     title: fields.title.trim(),
-    description: fields.description.trim(),
-  };
+    description: fields.description.trim()
+  }
 
-  if (fields.password !== undefined) payload.password = fields.password;
+  if (fields.password !== undefined) payload.password = fields.password
 
-  if (existing.comment !== undefined) payload.comment = existing.comment;
+  if (existing.comment !== undefined) payload.comment = existing.comment
   if (existing.expiration !== undefined && existing.expiration !== null) {
-    payload.expiration = existing.expiration;
+    payload.expiration = existing.expiration
   }
-  if (existing.image !== undefined) payload.image = existing.image;
-  if (existing.apple !== undefined) payload.apple = existing.apple;
-  if (existing.google !== undefined) payload.google = existing.google;
-  if (existing.cloaking !== undefined) payload.cloaking = existing.cloaking;
+  if (existing.image !== undefined) payload.image = existing.image
+  if (existing.apple !== undefined) payload.apple = existing.apple
+  if (existing.google !== undefined) payload.google = existing.google
+  if (existing.cloaking !== undefined) payload.cloaking = existing.cloaking
   if (existing.redirectWithQuery !== undefined) {
-    payload.redirectWithQuery = existing.redirectWithQuery;
+    payload.redirectWithQuery = existing.redirectWithQuery
   }
-  if (existing.geo !== undefined) payload.geo = { ...existing.geo };
-  if (existing.unsafe !== undefined) payload.unsafe = existing.unsafe;
+  if (existing.geo !== undefined) payload.geo = { ...existing.geo }
+  if (existing.unsafe !== undefined) payload.unsafe = existing.unsafe
 
-  return payload;
+  return payload
 }
 
 /**
@@ -78,190 +78,190 @@ export function buildEditLinkPayload(
  * @param interaction - Received Discord interaction payload
  */
 export async function onInteractionCreate(
-  interaction: Interaction,
+  interaction: Interaction
 ): Promise<void> {
   try {
     // 0. Autocomplete Interactions
     if (interaction.isAutocomplete()) {
-      if (interaction.commandName === "link") {
-        await handleConfigAutocomplete(interaction);
+      if (interaction.commandName === 'link') {
+        await handleConfigAutocomplete(interaction)
       }
-      return;
+      return
     }
 
     // 1. Slash Commands
     if (interaction.isChatInputCommand()) {
-      if (interaction.commandName === "link") {
-        await linkCommand.execute(interaction);
+      if (interaction.commandName === 'link') {
+        await linkCommand.execute(interaction)
       }
-      return;
+      return
     }
 
     // 2. Button Interactions
     if (interaction.isButton()) {
-      const customId = interaction.customId;
+      const customId = interaction.customId
 
       // Create Button -> Show Create Modal
       if (customId === CustomId.DASHBOARD_CREATE_BTN) {
-        const modal = createLinkModal();
-        await interaction.showModal(modal);
-        return;
+        const modal = createLinkModal()
+        await interaction.showModal(modal)
+        return
       }
 
       // Edit Button -> Show Edit Modal
       if (customId.startsWith(CustomId.DASHBOARD_EDIT_BTN)) {
-        const slug = parseCustomIdSlug(customId, CustomId.DASHBOARD_EDIT_BTN);
+        const slug = parseCustomIdSlug(customId, CustomId.DASHBOARD_EDIT_BTN)
         if (!slug) {
           await interaction.reply({
-            ...ui.createErrorMessage("오류", "잘못된 링크 식별자입니다."),
-            ephemeral: true,
-          });
-          return;
+            ...ui.createErrorMessage('오류', '잘못된 링크 식별자입니다.'),
+            ephemeral: true
+          })
+          return
         }
 
         if (!verifyOwnership(slug, interaction.user.id)) {
           await interaction.reply({
             ...ui.createErrorMessage(
-              "권한 없음",
-              "이 링크를 수정할 권한이 없습니다.",
+              '권한 없음',
+              '이 링크를 수정할 권한이 없습니다.'
             ),
-            ephemeral: true,
-          });
-          return;
+            ephemeral: true
+          })
+          return
         }
 
-        const link = getDashboardLinkSnapshot(interaction.user.id, slug);
+        const link = getDashboardLinkSnapshot(interaction.user.id, slug)
         if (!link) {
           await interaction.reply({
             ...ui.createErrorMessage(
-              "대시보드 새로고침 필요",
-              "수정할 링크 정보가 만료되었습니다. 대시보드를 새로고침한 뒤 다시 시도해주세요.",
+              '대시보드 새로고침 필요',
+              '수정할 링크 정보가 만료되었습니다. 대시보드를 새로고침한 뒤 다시 시도해주세요.'
             ),
-            ephemeral: true,
-          });
-          return;
+            ephemeral: true
+          })
+          return
         }
 
-        const modal = createEditLinkModal(link);
-        await interaction.showModal(modal);
-        return;
+        const modal = createEditLinkModal(link)
+        await interaction.showModal(modal)
+        return
       }
 
       // Delete Button -> Show Confirm Dialog
       if (customId.startsWith(CustomId.DASHBOARD_DELETE_BTN)) {
-        const slug = customId.includes(":")
+        const slug = customId.includes(':')
           ? customId.substring(CustomId.DASHBOARD_DELETE_BTN.length + 1)
-          : undefined;
+          : undefined
         if (!slug) {
           await interaction.reply({
             ...ui.createErrorMessage(
-              "오류",
-              "삭제할 링크를 먼저 선택해주세요.",
+              '오류',
+              '삭제할 링크를 먼저 선택해주세요.'
             ),
-            ephemeral: true,
-          });
-          return;
+            ephemeral: true
+          })
+          return
         }
 
         if (!verifyOwnership(slug, interaction.user.id)) {
           await interaction.reply({
             ...ui.createErrorMessage(
-              "권한 없음",
-              "이 링크를 삭제할 권한이 없습니다.",
+              '권한 없음',
+              '이 링크를 삭제할 권한이 없습니다.'
             ),
-            ephemeral: true,
-          });
-          return;
+            ephemeral: true
+          })
+          return
         }
 
-        const confirmView = ui.createDeleteConfirmView(slug);
-        await interaction.update(confirmView);
-        return;
+        const confirmView = ui.createDeleteConfirmView(slug)
+        await interaction.update(confirmView)
+        return
       }
 
       // Confirm Delete Button -> Execute Delete
       if (customId.startsWith(CustomId.DASHBOARD_CONFIRM_DELETE_BTN)) {
-        const slug = customId.includes(":")
+        const slug = customId.includes(':')
           ? customId.substring(CustomId.DASHBOARD_CONFIRM_DELETE_BTN.length + 1)
-          : undefined;
+          : undefined
         if (!slug || !verifyOwnership(slug, interaction.user.id)) {
           await interaction.reply({
             ...ui.createErrorMessage(
-              "권한 없음",
-              "이 링크를 삭제할 권한이 없습니다.",
+              '권한 없음',
+              '이 링크를 삭제할 권한이 없습니다.'
             ),
-            ephemeral: true,
-          });
-          return;
+            ephemeral: true
+          })
+          return
         }
 
-        await interaction.deferUpdate();
-        const delRes = await sinkClient.deleteLink(slug);
+        await interaction.deferUpdate()
+        const delRes = await sinkClient.deleteLink(slug)
         if (!delRes.success) {
           logger.warn(
-            `User ${interaction.user.tag} (${interaction.user.id}) failed to delete link '/${slug}' via dashboard: ${delRes.error}`,
-          );
+            `User ${interaction.user.tag} (${interaction.user.id}) failed to delete link '/${slug}' via dashboard: ${delRes.error}`
+          )
           await interaction.editReply(
             ui.createErrorMessage(
-              "삭제 실패",
-              delRes.error || "오류가 발생했습니다.",
-            ),
-          );
-          return;
+              '삭제 실패',
+              delRes.error || '오류가 발생했습니다.'
+            )
+          )
+          return
         }
 
         // Refresh dashboard
-        const stats = await fetchUserDashboardStats(interaction.user.id);
-        const view = ui.createDashboardView(interaction.user, stats);
-        await interaction.editReply(view);
-        return;
+        const stats = await fetchUserDashboardStats(interaction.user.id)
+        const view = ui.createDashboardView(interaction.user, stats)
+        await interaction.editReply(view)
+        return
       }
 
       // Cancel Delete Button -> Return to Dashboard
       if (customId === CustomId.DASHBOARD_CANCEL_DELETE_BTN) {
-        await interaction.deferUpdate();
-        const stats = await fetchUserDashboardStats(interaction.user.id);
-        const view = ui.createDashboardView(interaction.user, stats);
-        await interaction.editReply(view);
-        return;
+        await interaction.deferUpdate()
+        const stats = await fetchUserDashboardStats(interaction.user.id)
+        const view = ui.createDashboardView(interaction.user, stats)
+        await interaction.editReply(view)
+        return
       }
 
       // Refresh Button -> Update Dashboard
       if (customId.startsWith(CustomId.DASHBOARD_REFRESH_BTN)) {
-        await interaction.deferUpdate();
-        const page = customId.includes(":")
+        await interaction.deferUpdate()
+        const page = customId.includes(':')
           ? parseInt(
               customId.substring(CustomId.DASHBOARD_REFRESH_BTN.length + 1),
-              10,
+              10
             ) || 1
-          : 1;
-        const stats = await fetchUserDashboardStats(interaction.user.id);
+          : 1
+        const stats = await fetchUserDashboardStats(interaction.user.id)
         const view = ui.createDashboardView(
           interaction.user,
           stats,
           undefined,
-          page,
-        );
-        await interaction.editReply(view);
-        return;
+          page
+        )
+        await interaction.editReply(view)
+        return
       }
 
       // Open Config Panel from Dashboard
       if (customId === CustomId.DASHBOARD_CONFIG_BTN) {
-        const userConfig = userConfigService.getUserConfig(interaction.user.id);
+        const userConfig = userConfigService.getUserConfig(interaction.user.id)
         const effectiveMinLength =
           guildConfigService.resolveEffectiveMinUrlLength(
             interaction.guildId,
-            interaction.user.id,
-          );
+            interaction.user.id
+          )
         const view = ui.createConfigPanelView(
           interaction.user,
           userConfig,
           undefined,
-          effectiveMinLength,
-        );
-        await interaction.update(view);
-        return;
+          effectiveMinLength
+        )
+        await interaction.update(view)
+        return
       }
 
       // Config Toggle: Auto DM Mode
@@ -270,41 +270,41 @@ export async function onInteractionCreate(
         customId === CustomId.CONFIG_DM_ON ||
         customId === CustomId.CONFIG_DM_OFF
       ) {
-        await interaction.deferUpdate();
+        await interaction.deferUpdate()
         const targetMode =
           customId === CustomId.CONFIG_DM_INHERIT
-            ? "inherit"
+            ? 'inherit'
             : customId === CustomId.CONFIG_DM_ON
-              ? "on"
-              : "off";
+              ? 'on'
+              : 'off'
 
         const res = await userConfigService.setUserConfig(interaction.user.id, {
-          autoDmMode: targetMode,
-        });
+          autoDmMode: targetMode
+        })
 
         const effectiveMinLength =
           guildConfigService.resolveEffectiveMinUrlLength(
             interaction.guildId,
-            interaction.user.id,
-          );
+            interaction.user.id
+          )
 
         const notice = res.success
           ? undefined
           : {
-              title: "설정 변경 실패",
+              title: '설정 변경 실패',
               description:
-                res.error || "데이터베이스 저장 중 오류가 발생했습니다.",
-              type: "error" as const,
-            };
+                res.error || '데이터베이스 저장 중 오류가 발생했습니다.',
+              type: 'error' as const
+            }
 
         const view = ui.createConfigPanelView(
           interaction.user,
           res.config,
           notice,
-          effectiveMinLength,
-        );
-        await interaction.editReply(view);
-        return;
+          effectiveMinLength
+        )
+        await interaction.editReply(view)
+        return
       }
 
       // Config Toggle: DM Format
@@ -312,37 +312,37 @@ export async function onInteractionCreate(
         customId === CustomId.CONFIG_FMT_REPLACE ||
         customId === CustomId.CONFIG_FMT_LIST
       ) {
-        await interaction.deferUpdate();
+        await interaction.deferUpdate()
         const targetFormat =
-          customId === CustomId.CONFIG_FMT_REPLACE ? "replace" : "list";
+          customId === CustomId.CONFIG_FMT_REPLACE ? 'replace' : 'list'
 
         const res = await userConfigService.setUserConfig(interaction.user.id, {
-          dmFormat: targetFormat,
-        });
+          dmFormat: targetFormat
+        })
 
         const effectiveMinLength =
           guildConfigService.resolveEffectiveMinUrlLength(
             interaction.guildId,
-            interaction.user.id,
-          );
+            interaction.user.id
+          )
 
         const notice = res.success
           ? undefined
           : {
-              title: "설정 변경 실패",
+              title: '설정 변경 실패',
               description:
-                res.error || "데이터베이스 저장 중 오류가 발생했습니다.",
-              type: "error" as const,
-            };
+                res.error || '데이터베이스 저장 중 오류가 발생했습니다.',
+              type: 'error' as const
+            }
 
         const view = ui.createConfigPanelView(
           interaction.user,
           res.config,
           notice,
-          effectiveMinLength,
-        );
-        await interaction.editReply(view);
-        return;
+          effectiveMinLength
+        )
+        await interaction.editReply(view)
+        return
       }
 
       // Config Toggle: Fixupx Enabled
@@ -350,169 +350,169 @@ export async function onInteractionCreate(
         customId === CustomId.CONFIG_FIXUPX_ON ||
         customId === CustomId.CONFIG_FIXUPX_OFF
       ) {
-        await interaction.deferUpdate();
-        const targetBool = customId === CustomId.CONFIG_FIXUPX_ON;
+        await interaction.deferUpdate()
+        const targetBool = customId === CustomId.CONFIG_FIXUPX_ON
 
         const res = await userConfigService.setUserConfig(interaction.user.id, {
-          fixupxEnabled: targetBool,
-        });
+          fixupxEnabled: targetBool
+        })
 
         const effectiveMinLength =
           guildConfigService.resolveEffectiveMinUrlLength(
             interaction.guildId,
-            interaction.user.id,
-          );
+            interaction.user.id
+          )
 
         const notice = res.success
           ? undefined
           : {
-              title: "설정 변경 실패",
+              title: '설정 변경 실패',
               description:
-                res.error || "데이터베이스 저장 중 오류가 발생했습니다.",
-              type: "error" as const,
-            };
+                res.error || '데이터베이스 저장 중 오류가 발생했습니다.',
+              type: 'error' as const
+            }
 
         const view = ui.createConfigPanelView(
           interaction.user,
           res.config,
           notice,
-          effectiveMinLength,
-        );
-        await interaction.editReply(view);
-        return;
+          effectiveMinLength
+        )
+        await interaction.editReply(view)
+        return
       }
 
       // Config Toggle: Min URL Length (Inherit -1)
       if (customId === CustomId.CONFIG_LEN_INHERIT) {
-        await interaction.deferUpdate();
+        await interaction.deferUpdate()
         const res = await userConfigService.setUserConfig(interaction.user.id, {
-          autoShortenMinUrlLength: null,
-        });
+          autoShortenMinUrlLength: null
+        })
         const effectiveMinLength =
           guildConfigService.resolveEffectiveMinUrlLength(
             interaction.guildId,
-            interaction.user.id,
-          );
+            interaction.user.id
+          )
 
         const notice = res.success
           ? {
-              title: "설정 변경 완료",
+              title: '설정 변경 완료',
               description: `최소 URL 길이가 **상위 기본값 상속 (현재: ${effectiveMinLength}자)** (으)로 변경되었습니다.`,
-              type: "success" as const,
+              type: 'success' as const
             }
           : {
-              title: "설정 변경 실패",
+              title: '설정 변경 실패',
               description:
-                res.error || "데이터베이스 저장 중 오류가 발생했습니다.",
-              type: "error" as const,
-            };
+                res.error || '데이터베이스 저장 중 오류가 발생했습니다.',
+              type: 'error' as const
+            }
 
         const view = ui.createConfigPanelView(
           interaction.user,
           res.config,
           notice,
-          effectiveMinLength,
-        );
-        await interaction.editReply(view);
-        return;
+          effectiveMinLength
+        )
+        await interaction.editReply(view)
+        return
       }
 
       // Config Toggle: Min URL Length (All 0)
       if (customId === CustomId.CONFIG_LEN_ALL) {
-        await interaction.deferUpdate();
+        await interaction.deferUpdate()
         const res = await userConfigService.setUserConfig(interaction.user.id, {
-          autoShortenMinUrlLength: 0,
-        });
+          autoShortenMinUrlLength: 0
+        })
         const effectiveMinLength =
           guildConfigService.resolveEffectiveMinUrlLength(
             interaction.guildId,
-            interaction.user.id,
-          );
+            interaction.user.id
+          )
 
         const notice = res.success
           ? {
-              title: "설정 변경 완료",
+              title: '설정 변경 완료',
               description:
-                "최소 URL 길이가 **전체 단축 (제한 없음)** (으)로 변경되었습니다.",
-              type: "success" as const,
+                '최소 URL 길이가 **전체 단축 (제한 없음)** (으)로 변경되었습니다.',
+              type: 'success' as const
             }
           : {
-              title: "설정 변경 실패",
+              title: '설정 변경 실패',
               description:
-                res.error || "데이터베이스 저장 중 오류가 발생했습니다.",
-              type: "error" as const,
-            };
+                res.error || '데이터베이스 저장 중 오류가 발생했습니다.',
+              type: 'error' as const
+            }
 
         const view = ui.createConfigPanelView(
           interaction.user,
           res.config,
           notice,
-          effectiveMinLength,
-        );
-        await interaction.editReply(view);
-        return;
+          effectiveMinLength
+        )
+        await interaction.editReply(view)
+        return
       }
 
       // Config Toggle: Min URL Length (Custom Input Modal)
       if (customId === CustomId.CONFIG_LEN_CUSTOM) {
-        const currentCfg = userConfigService.getUserConfig(interaction.user.id);
+        const currentCfg = userConfigService.getUserConfig(interaction.user.id)
         const modal = createMinLengthConfigModal(
-          currentCfg.autoShortenMinUrlLength,
-        );
-        await interaction.showModal(modal);
-        return;
+          currentCfg.autoShortenMinUrlLength
+        )
+        await interaction.showModal(modal)
+        return
       }
 
       // Config Navigation: Return to Dashboard
       if (customId === CustomId.CONFIG_NAV_DASHBOARD) {
-        await interaction.deferUpdate();
-        const stats = await fetchUserDashboardStats(interaction.user.id);
-        const view = ui.createDashboardView(interaction.user, stats);
-        await interaction.editReply(view);
-        return;
+        await interaction.deferUpdate()
+        const stats = await fetchUserDashboardStats(interaction.user.id)
+        const view = ui.createDashboardView(interaction.user, stats)
+        await interaction.editReply(view)
+        return
       }
     }
 
     // 3. String Select Menu Interactions
     if (interaction.isStringSelectMenu()) {
       if (interaction.customId === CustomId.DASHBOARD_SELECT_LINK) {
-        await interaction.deferUpdate();
-        const val = interaction.values[0];
+        await interaction.deferUpdate()
+        const val = interaction.values[0]
 
         // Case A: Page Navigation (nav:page:N)
-        if (val && val.startsWith("nav:page:")) {
+        if (val?.startsWith('nav:page:')) {
           const targetPage =
-            parseInt(val.substring("nav:page:".length), 10) || 1;
-          const stats = await fetchUserDashboardStats(interaction.user.id);
+            parseInt(val.substring('nav:page:'.length), 10) || 1
+          const stats = await fetchUserDashboardStats(interaction.user.id)
           const view = ui.createDashboardView(
             interaction.user,
             stats,
             undefined,
-            targetPage,
-          );
-          await interaction.editReply(view);
-          return;
+            targetPage
+          )
+          await interaction.editReply(view)
+          return
         }
 
         // Case B: Link Selection (slug:slugName:page or raw slug)
-        let selectedSlug = val || "";
-        let currentPage = 1;
+        let selectedSlug = val || ''
+        let currentPage = 1
 
-        if (val && val.startsWith("slug:")) {
-          const parts = val.split(":");
-          selectedSlug = parts[1] || "";
-          currentPage = parseInt(parts[2] || "1", 10) || 1;
+        if (val?.startsWith('slug:')) {
+          const parts = val.split(':')
+          selectedSlug = parts[1] || ''
+          currentPage = parseInt(parts[2] || '1', 10) || 1
         }
 
-        const stats = await fetchUserDashboardStats(interaction.user.id);
+        const stats = await fetchUserDashboardStats(interaction.user.id)
         const view = ui.createDashboardView(
           interaction.user,
           stats,
           selectedSlug,
-          currentPage,
-        );
-        await interaction.editReply(view);
-        return;
+          currentPage
+        )
+        await interaction.editReply(view)
+        return
       }
     }
 
@@ -520,158 +520,158 @@ export async function onInteractionCreate(
     if (interaction.isModalSubmit()) {
       // Modal: Create Link
       if (interaction.customId === CustomId.MODAL_CREATE_LINK) {
-        await interaction.deferUpdate();
+        await interaction.deferUpdate()
 
-        const url = interaction.fields.getTextInputValue("url");
-        const expStr = interaction.fields.getTextInputValue("expiration");
-        const password = interaction.fields.getTextInputValue("password");
-        const tag = interaction.fields.getTextInputValue("tag");
-        const title = interaction.fields.getTextInputValue("title");
+        const url = interaction.fields.getTextInputValue('url')
+        const expStr = interaction.fields.getTextInputValue('expiration')
+        const password = interaction.fields.getTextInputValue('password')
+        const tag = interaction.fields.getTextInputValue('tag')
+        const title = interaction.fields.getTextInputValue('title')
 
         if (url && url.length > 2048) {
           await interaction.followUp({
             ...ui.createErrorMessage(
-              "URL 길이 초과",
-              "URL 길이는 최대 2,048자까지 허용됩니다.",
+              'URL 길이 초과',
+              'URL 길이는 최대 2,048자까지 허용됩니다.'
             ),
-            ephemeral: true,
-          });
-          return;
+            ephemeral: true
+          })
+          return
         }
 
-        const expirationResult = parseExpiration(expStr);
-        if (expirationResult.kind === "invalid") {
+        const expirationResult = parseExpiration(expStr)
+        if (expirationResult.kind === 'invalid') {
           await interaction.followUp({
             ...ui.createErrorMessage(
-              "잘못된 만료 기간",
-              expirationResult.error,
+              '잘못된 만료 기간',
+              expirationResult.error
             ),
-            ephemeral: true,
-          });
-          return;
+            ephemeral: true
+          })
+          return
         }
-        const tagsResult = parseTagsInput(tag);
+        const tagsResult = parseTagsInput(tag)
         if (!tagsResult.valid) {
           await interaction.followUp({
-            ...ui.createErrorMessage("잘못된 태그", tagsResult.error),
-            ephemeral: true,
-          });
-          return;
+            ...ui.createErrorMessage('잘못된 태그', tagsResult.error),
+            ephemeral: true
+          })
+          return
         }
 
-        const slug = generateSlug(interaction.user.id);
+        const slug = generateSlug(interaction.user.id)
 
         const res = await sinkClient.createLink({
           url,
           slug,
           expiration:
-            expirationResult.kind === "valid"
+            expirationResult.kind === 'valid'
               ? expirationResult.value
               : undefined,
           password: password || undefined,
           tags: tagsResult.value.length ? tagsResult.value : undefined,
-          title: title || undefined,
-        });
+          title: title || undefined
+        })
 
         if (!res.success) {
           await interaction.followUp({
             ...ui.createErrorMessage(
-              "링크 생성 실패",
-              res.error || "오류가 발생했습니다.",
+              '링크 생성 실패',
+              res.error || '오류가 발생했습니다.'
             ),
-            ephemeral: true,
-          });
-          return;
+            ephemeral: true
+          })
+          return
         }
 
         // Re-render dashboard with newly created link selected
-        const stats = await fetchUserDashboardStats(interaction.user.id);
-        const view = ui.createDashboardView(interaction.user, stats, slug);
-        await interaction.editReply(view);
-        return;
+        const stats = await fetchUserDashboardStats(interaction.user.id)
+        const view = ui.createDashboardView(interaction.user, stats, slug)
+        await interaction.editReply(view)
+        return
       }
 
       // Modal: Edit Link
       if (interaction.customId.startsWith(CustomId.MODAL_EDIT_LINK)) {
-        await interaction.deferUpdate();
+        await interaction.deferUpdate()
         const slug = parseCustomIdSlug(
           interaction.customId,
-          CustomId.MODAL_EDIT_LINK,
-        );
+          CustomId.MODAL_EDIT_LINK
+        )
 
         if (!slug) {
           await interaction.followUp({
-            ...ui.createErrorMessage("오류", "잘못된 링크 식별자입니다."),
-            ephemeral: true,
-          });
-          return;
+            ...ui.createErrorMessage('오류', '잘못된 링크 식별자입니다.'),
+            ephemeral: true
+          })
+          return
         }
 
         if (!verifyOwnership(slug, interaction.user.id)) {
           await interaction.followUp({
             ...ui.createErrorMessage(
-              "권한 없음",
-              "이 링크를 수정할 권한이 없습니다.",
+              '권한 없음',
+              '이 링크를 수정할 권한이 없습니다.'
             ),
-            ephemeral: true,
-          });
-          return;
+            ephemeral: true
+          })
+          return
         }
 
-        const url = interaction.fields.getTextInputValue("url");
+        const url = interaction.fields.getTextInputValue('url')
         const rawPassword = interaction.fields
-          .getTextInputValue("password")
-          ?.trim();
-        const tag = interaction.fields.getTextInputValue("tag");
-        const title = interaction.fields.getTextInputValue("title");
-        const description = interaction.fields.getTextInputValue("description");
+          .getTextInputValue('password')
+          ?.trim()
+        const tag = interaction.fields.getTextInputValue('tag')
+        const title = interaction.fields.getTextInputValue('title')
+        const description = interaction.fields.getTextInputValue('description')
 
         if (url && url.length > 2048) {
           await interaction.followUp({
             ...ui.createErrorMessage(
-              "URL 길이 초과",
-              "URL 길이는 최대 2,048자까지 허용됩니다.",
+              'URL 길이 초과',
+              'URL 길이는 최대 2,048자까지 허용됩니다.'
             ),
-            ephemeral: true,
-          });
-          return;
+            ephemeral: true
+          })
+          return
         }
 
-        const tagsResult = parseTagsInput(tag);
+        const tagsResult = parseTagsInput(tag)
         if (!tagsResult.valid) {
           await interaction.followUp({
-            ...ui.createErrorMessage("잘못된 태그", tagsResult.error),
-            ephemeral: true,
-          });
-          return;
+            ...ui.createErrorMessage('잘못된 태그', tagsResult.error),
+            ephemeral: true
+          })
+          return
         }
 
-        let passwordPayload: string | undefined = undefined;
+        let passwordPayload: string | undefined
         if (
           rawPassword &&
-          (rawPassword.toLowerCase() === "none" ||
-            rawPassword.toLowerCase() === "clear" ||
-            rawPassword === "삭제" ||
-            rawPassword === "해제")
+          (rawPassword.toLowerCase() === 'none' ||
+            rawPassword.toLowerCase() === 'clear' ||
+            rawPassword === '삭제' ||
+            rawPassword === '해제')
         ) {
-          passwordPayload = "";
+          passwordPayload = ''
         } else if (rawPassword && rawPassword.length > 0) {
-          passwordPayload = rawPassword;
+          passwordPayload = rawPassword
         }
 
         // The snapshot is only for opening the modal within Discord's ACK window.
         // Fetch the latest record after deferring so fields outside the modal are
         // never overwritten with stale cached values.
-        const linkRes = await sinkClient.getLink(slug);
+        const linkRes = await sinkClient.getLink(slug)
         if (!linkRes.success || !linkRes.link) {
           await interaction.followUp({
             ...ui.createErrorMessage(
-              "링크 정보 조회 실패",
-              "현재 링크 정보를 불러올 수 없습니다. 대시보드를 새로고침한 뒤 다시 시도해주세요.",
+              '링크 정보 조회 실패',
+              '현재 링크 정보를 불러올 수 없습니다. 대시보드를 새로고침한 뒤 다시 시도해주세요.'
             ),
-            ephemeral: true,
-          });
-          return;
+            ephemeral: true
+          })
+          return
         }
 
         const payload = buildEditLinkPayload(linkRes.link, {
@@ -679,108 +679,108 @@ export async function onInteractionCreate(
           password: passwordPayload,
           tags: tagsResult.value,
           title,
-          description,
-        });
-        const res = await sinkClient.updateLink(slug, payload);
+          description
+        })
+        const res = await sinkClient.updateLink(slug, payload)
 
         if (!res.success) {
           await interaction.followUp({
             ...ui.createErrorMessage(
-              "링크 수정 실패",
-              res.error || "오류가 발생했습니다.",
+              '링크 수정 실패',
+              res.error || '오류가 발생했습니다.'
             ),
-            ephemeral: true,
-          });
-          return;
+            ephemeral: true
+          })
+          return
         }
 
-        const stats = await fetchUserDashboardStats(interaction.user.id);
-        const view = ui.createDashboardView(interaction.user, stats, slug);
-        await interaction.editReply(view);
-        return;
+        const stats = await fetchUserDashboardStats(interaction.user.id)
+        const view = ui.createDashboardView(interaction.user, stats, slug)
+        await interaction.editReply(view)
+        return
       }
 
       // Modal: Min URL Length Config
       if (interaction.customId === CustomId.MODAL_CONFIG_MIN_LENGTH) {
-        await interaction.deferUpdate();
+        await interaction.deferUpdate()
 
-        const rawVal = interaction.fields.getTextInputValue("min_length");
-        const normalized = normalizeMinUrlLength(rawVal);
+        const rawVal = interaction.fields.getTextInputValue('min_length')
+        const normalized = normalizeMinUrlLength(rawVal)
         const effectiveMinLength =
           guildConfigService.resolveEffectiveMinUrlLength(
             interaction.guildId,
-            interaction.user.id,
-          );
+            interaction.user.id
+          )
 
         if (!normalized.valid) {
           const currentCfg = userConfigService.getUserConfig(
-            interaction.user.id,
-          );
+            interaction.user.id
+          )
           const view = ui.createConfigPanelView(
             interaction.user,
             currentCfg,
             {
-              title: "잘못된 설정 값",
+              title: '잘못된 설정 값',
               description: `최소 URL 길이는 \`-1\`(상속), \`0\`(전체), 또는 \`1\`~ \`2048\`(지정 길이) 숫자여야 합니다.\n입력값: \`${rawVal}\``,
-              type: "error",
+              type: 'error'
             },
-            effectiveMinLength,
-          );
-          await interaction.editReply(view);
-          return;
+            effectiveMinLength
+          )
+          await interaction.editReply(view)
+          return
         }
 
         const res = await userConfigService.setUserConfig(interaction.user.id, {
-          autoShortenMinUrlLength: normalized.value,
-        });
+          autoShortenMinUrlLength: normalized.value
+        })
         const updatedEffective =
           guildConfigService.resolveEffectiveMinUrlLength(
             interaction.guildId,
-            interaction.user.id,
-          );
+            interaction.user.id
+          )
 
         const notice = res.success
           ? {
-              title: "설정 변경 완료",
+              title: '설정 변경 완료',
               description:
                 normalized.value === null
                   ? `최소 URL 길이가 **상위 기본값 상속 (현재: ${updatedEffective}자)** (으)로 변경되었습니다.`
                   : normalized.value === 0
-                    ? "최소 URL 길이가 **전체 단축 (제한 없음)** (으)로 변경되었습니다."
+                    ? '최소 URL 길이가 **전체 단축 (제한 없음)** (으)로 변경되었습니다.'
                     : `최소 URL 길이가 **최소 ${normalized.value}자 이상 단축** (으)로 변경되었습니다.`,
-              type: "success" as const,
+              type: 'success' as const
             }
           : {
-              title: "설정 변경 실패",
+              title: '설정 변경 실패',
               description:
-                res.error || "데이터베이스 저장 중 오류가 발생했습니다.",
-              type: "error" as const,
-            };
+                res.error || '데이터베이스 저장 중 오류가 발생했습니다.',
+              type: 'error' as const
+            }
 
         const view = ui.createConfigPanelView(
           interaction.user,
           res.config,
           notice,
-          updatedEffective,
-        );
-        await interaction.editReply(view);
-        return;
+          updatedEffective
+        )
+        await interaction.editReply(view)
+        return
       }
     }
   } catch (error) {
-    logger.error("Error in onInteractionCreate:", error);
+    logger.error('Error in onInteractionCreate:', error)
     try {
       const errView = ui.createErrorMessage(
-        "인터랙션 처리 오류",
+        '인터랙션 처리 오류',
         error instanceof Error
           ? error.message
-          : "알 수 없는 오류가 발생했습니다.",
-      );
+          : '알 수 없는 오류가 발생했습니다.'
+      )
       if (interaction.isRepliable()) {
         if (interaction.deferred || interaction.replied) {
-          await interaction.followUp({ ...errView, ephemeral: true });
+          await interaction.followUp({ ...errView, ephemeral: true })
         } else {
-          await interaction.reply({ ...errView, ephemeral: true });
+          await interaction.reply({ ...errView, ephemeral: true })
         }
       }
     } catch {

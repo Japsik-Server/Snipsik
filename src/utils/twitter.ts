@@ -4,13 +4,13 @@
  */
 
 const TWITTER_HOSTS = new Set([
-  "twitter.com",
-  "www.twitter.com",
-  "mobile.twitter.com",
-  "x.com",
-  "www.x.com",
-  "mobile.x.com",
-]);
+  'twitter.com',
+  'www.twitter.com',
+  'mobile.twitter.com',
+  'x.com',
+  'www.x.com',
+  'mobile.x.com'
+])
 
 /**
  * Regex matching Twitter/X status URLs:
@@ -18,24 +18,24 @@ const TWITTER_HOSTS = new Set([
  * Allows trailing subpaths like /photo/1 or /video/1
  */
 const TWEET_STATUS_PATH_REGEX =
-  /^\/([a-zA-Z0-9_]{1,50}|i\/web)\/status(?:es)?\/(\d+)(?:\/[a-zA-Z0-9_]+)*\/?$/i;
+  /^\/([a-zA-Z0-9_]{1,50}|i\/web)\/status(?:es)?\/(\d+)(?:\/[a-zA-Z0-9_]+)*\/?$/i
 
 /**
  * Common tracking query parameters appended by Twitter/X share buttons and external referrers.
  */
 const TRACKING_QUERY_PARAMS = new Set([
-  "s",
-  "t",
-  "ref_src",
-  "ref_url",
-  "mx",
-  "fbclid",
-  "utm_source",
-  "utm_medium",
-  "utm_campaign",
-  "utm_term",
-  "utm_content",
-]);
+  's',
+  't',
+  'ref_src',
+  'ref_url',
+  'mx',
+  'fbclid',
+  'utm_source',
+  'utm_medium',
+  'utm_campaign',
+  'utm_term',
+  'utm_content'
+])
 
 /**
  * Checks whether a hostname belongs to Twitter/X (excluding embed proxy domains like fixupx.com).
@@ -44,9 +44,9 @@ const TRACKING_QUERY_PARAMS = new Set([
  * @returns True if the hostname is a Twitter/X domain
  */
 export function isTwitterDomain(hostname: string): boolean {
-  if (!hostname) return false;
-  const lower = hostname.trim().toLowerCase();
-  return TWITTER_HOSTS.has(lower);
+  if (!hostname) return false
+  const lower = hostname.trim().toLowerCase()
+  return TWITTER_HOSTS.has(lower)
 }
 
 /**
@@ -58,13 +58,13 @@ export function isTwitterDomain(hostname: string): boolean {
  */
 export function isTweetUrl(urlString: string): boolean {
   try {
-    const parsed = new URL(urlString);
+    const parsed = new URL(urlString)
     if (!isTwitterDomain(parsed.hostname)) {
-      return false;
+      return false
     }
-    return TWEET_STATUS_PATH_REGEX.test(parsed.pathname);
+    return TWEET_STATUS_PATH_REGEX.test(parsed.pathname)
   } catch {
-    return false;
+    return false
   }
 }
 
@@ -77,40 +77,40 @@ export function isTweetUrl(urlString: string): boolean {
  */
 export function convertToFixupxUrl(urlString: string): string | null {
   try {
-    const parsed = new URL(urlString);
+    const parsed = new URL(urlString)
     if (!isTwitterDomain(parsed.hostname)) {
-      return null;
+      return null
     }
 
     if (!TWEET_STATUS_PATH_REGEX.test(parsed.pathname)) {
-      return null;
+      return null
     }
 
     // Rewrite hostname to fixupx.com
-    parsed.hostname = "fixupx.com";
-    parsed.protocol = "https:";
-    parsed.port = "";
+    parsed.hostname = 'fixupx.com'
+    parsed.protocol = 'https:'
+    parsed.port = ''
 
     // Clean tracking query parameters
-    const paramsToDelete: string[] = [];
+    const paramsToDelete: string[] = []
     for (const [key] of parsed.searchParams.entries()) {
       if (
         TRACKING_QUERY_PARAMS.has(key.toLowerCase()) ||
-        key.toLowerCase().startsWith("utm_")
+        key.toLowerCase().startsWith('utm_')
       ) {
-        paramsToDelete.push(key);
+        paramsToDelete.push(key)
       }
     }
 
     for (const key of paramsToDelete) {
-      parsed.searchParams.delete(key);
+      parsed.searchParams.delete(key)
     }
 
     // Strip hash fragment
-    parsed.hash = "";
+    parsed.hash = ''
 
-    return parsed.toString();
+    return parsed.toString()
   } catch {
-    return null;
+    return null
   }
 }

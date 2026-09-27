@@ -1,68 +1,67 @@
-import { and, eq } from "drizzle-orm";
-import { db } from "@/db";
-import { guildConfigs } from "@/db/schema";
-import { config } from "@/config";
+import { and, eq } from 'drizzle-orm'
+import { db } from '@/db'
+import { guildConfigs } from '@/db/schema'
+import { config } from '@/config'
 import {
   userConfigService,
-  normalizeMinUrlLength,
-} from "@/services/userConfigService";
+  normalizeMinUrlLength
+} from '@/services/userConfigService'
 import {
   getAllSystemDefaultDomains,
   isSystemDefaultDomain,
   normalizeDomain,
-  MAX_CUSTOM_IGNORED_DOMAINS,
-} from "@/utils/domain";
-import { logger } from "@/utils/logger";
-import { keyedMutex } from "@/utils/mutex";
+  MAX_CUSTOM_IGNORED_DOMAINS
+} from '@/utils/domain'
+import { logger } from '@/utils/logger'
+import { keyedMutex } from '@/utils/mutex'
 import {
   CacheRecoveryController,
-  type CacheStatus,
-} from "@/services/cacheRecovery";
+  type CacheStatus
+} from '@/services/cacheRecovery'
 
 export interface GuildConfigData {
-  guildId?: string;
-  autoShortenEnabled: boolean;
-  autoShortenMinUrlLength: number | null;
-  ignoredDomains: string[];
+  guildId?: string
+  autoShortenEnabled: boolean
+  autoShortenMinUrlLength: number | null
+  ignoredDomains: string[]
 }
 
 export const DEFAULT_GUILD_CONFIG: Readonly<GuildConfigData> = {
   autoShortenEnabled: true,
   autoShortenMinUrlLength: null,
-  ignoredDomains: [],
-};
+  ignoredDomains: []
+}
 
 class GuildConfigService {
   // In-memory cache for O(1) sync lookups in messageCreate
-  private cache: Map<string, GuildConfigData> = new Map();
-  private cacheEpoch: number = 0;
+  private cache: Map<string, GuildConfigData> = new Map()
+  private cacheEpoch: number = 0
   private cacheMutations = new Map<
     string,
     { epoch: number; value: GuildConfigData }
-  >();
-  private readonly recovery = new CacheRecoveryController(
-    "GuildConfig",
-    () => this.refreshCache(),
-  );
+  >()
+  private readonly recovery = new CacheRecoveryController('GuildConfig', () =>
+    this.refreshCache()
+  )
 
   /**
    * Triggers a non-blocking background attempt to reload guild configs cache if currently unloaded.
    * Coalesced and retried with capped exponential backoff.
    */
   triggerBackgroundReload(): void {
-    this.recovery.ensureLoading();
+    this.recovery.ensureLoading()
   }
 
   startCacheRecovery(): Promise<void> {
-    return this.recovery.start();
+    return this.recovery.start()
   }
 
   stopCacheRecovery(): void {
-    this.recovery.stop();
+    this.recovery.stop()
   }
 
   getCacheStatus(): CacheStatus {
-    return this.recovery.getStatus();
+    return this.recovery.getStatus()
   }
 
   /**
@@ -71,7 +70,7 @@ class GuildConfigService {
    * @param loaded - Cache loaded status flag.
    */
   setCacheLoadedForTest(loaded: boolean): void {
-    this.recovery.setUsableForTest(loaded);
+    this.recovery.setUsableForTest(loaded)
   }
 
   /**
@@ -80,7 +79,7 @@ class GuildConfigService {
    * @returns True if cache is loaded, false otherwise.
    */
   isCacheLoaded(): boolean {
-    return this.recovery.isUsable();
+    return this.recovery.isUsable()
   }
 
   /**
@@ -88,50 +87,48 @@ class GuildConfigService {
    * Synchronizes with concurrent writes using cacheEpoch to avoid clobbering newer rows.
    */
   async loadCache(): Promise<void> {
-    return this.recovery.loadNow();
+    return this.recovery.loadNow()
   }
 
   private async refreshCache(): Promise<void> {
-    const startEpoch = this.cacheEpoch;
+    const startEpoch = this.cacheEpoch
     try {
-      const records = await db.select().from(guildConfigs);
-      const nextCache = new Map<string, GuildConfigData>();
+      const records = await db.select().from(guildConfigs)
+      const nextCache = new Map<string, GuildConfigData>()
       for (const record of records) {
         nextCache.set(record.guildId, {
           guildId: record.guildId,
           autoShortenEnabled: record.autoShortenEnabled,
           autoShortenMinUrlLength: record.autoShortenMinUrlLength ?? null,
-          ignoredDomains: record.ignoredDomains ?? [],
-        });
+          ignoredDomains: record.ignoredDomains ?? []
+        })
       }
 
-      this.cache = nextCache;
-      const appliedEpoch = this.cacheEpoch;
+      this.cache = nextCache
+      const appliedEpoch = this.cacheEpoch
       for (const [guildId, mutation] of this.cacheMutations) {
         if (mutation.epoch > startEpoch && mutation.epoch <= appliedEpoch) {
-          this.cache.set(guildId, mutation.value);
+          this.cache.set(guildId, mutation.value)
         }
       }
 
-      this.pruneCacheMutations(appliedEpoch);
-      logger.info(
-        `Loaded ${records.length} guild config(s) into memory cache.`,
-      );
+      this.pruneCacheMutations(appliedEpoch)
+      logger.info(`Loaded ${records.length} guild config(s) into memory cache.`)
     } catch (error) {
-      logger.error("Failed to load guild configs cache from DB:", error);
-      throw error;
+      logger.error('Failed to load guild configs cache from DB:', error)
+      throw error
     }
   }
 
   private recordCacheMutation(guildId: string, value: GuildConfigData): void {
-    this.cacheEpoch += 1;
-    this.cacheMutations.set(guildId, { epoch: this.cacheEpoch, value });
-    this.cache.set(guildId, value);
+    this.cacheEpoch += 1
+    this.cacheMutations.set(guildId, { epoch: this.cacheEpoch, value })
+    this.cache.set(guildId, value)
   }
 
   private pruneCacheMutations(appliedEpoch: number): void {
     for (const [guildId, mutation] of this.cacheMutations) {
-      if (mutation.epoch <= appliedEpoch) this.cacheMutations.delete(guildId);
+      if (mutation.epoch <= appliedEpoch) this.cacheMutations.delete(guildId)
     }
   }
 
@@ -142,14 +139,14 @@ class GuildConfigService {
    * @returns Guild configuration data.
    */
   getGuildConfig(guildId: string): GuildConfigData {
-    const cached = this.cache.get(guildId);
+    const cached = this.cache.get(guildId)
     if (cached) {
-      return { ...cached };
+      return { ...cached }
     }
     return {
       guildId,
-      ...DEFAULT_GUILD_CONFIG,
-    };
+      ...DEFAULT_GUILD_CONFIG
+    }
   }
 
   /**
@@ -165,178 +162,178 @@ class GuildConfigService {
     updates: Partial<
       Pick<
         GuildConfigData,
-        "autoShortenEnabled" | "autoShortenMinUrlLength" | "ignoredDomains"
+        'autoShortenEnabled' | 'autoShortenMinUrlLength' | 'ignoredDomains'
       >
-    >,
+    >
   ): Promise<{ success: boolean; error?: string; config: GuildConfigData }> {
-    const current = this.getGuildConfig(guildId);
+    const current = this.getGuildConfig(guildId)
 
     const setClause: Record<string, unknown> = {
-      updatedAt: new Date(),
-    };
+      updatedAt: new Date()
+    }
     const insertValues: {
-      guildId: string;
-      autoShortenEnabled?: boolean;
-      autoShortenMinUrlLength?: number | null;
-      ignoredDomains?: string[];
-      updatedAt: Date;
+      guildId: string
+      autoShortenEnabled?: boolean
+      autoShortenMinUrlLength?: number | null
+      ignoredDomains?: string[]
+      updatedAt: Date
     } = {
       guildId,
-      updatedAt: new Date(),
-    };
+      updatedAt: new Date()
+    }
 
     if (updates.autoShortenEnabled !== undefined) {
-      setClause.autoShortenEnabled = updates.autoShortenEnabled;
-      insertValues.autoShortenEnabled = updates.autoShortenEnabled;
+      setClause.autoShortenEnabled = updates.autoShortenEnabled
+      insertValues.autoShortenEnabled = updates.autoShortenEnabled
     }
 
     if (updates.autoShortenMinUrlLength !== undefined) {
       const normalizedLen = normalizeMinUrlLength(
-        updates.autoShortenMinUrlLength,
-      );
+        updates.autoShortenMinUrlLength
+      )
       if (!normalizedLen.valid) {
         return {
           success: false,
           error:
-            "Invalid autoShortenMinUrlLength. Must be -1 (inherit), 0 (all), or an integer between 1 and 2048.",
-          config: current,
-        };
+            'Invalid autoShortenMinUrlLength. Must be -1 (inherit), 0 (all), or an integer between 1 and 2048.',
+          config: current
+        }
       }
-      setClause.autoShortenMinUrlLength = normalizedLen.value;
-      insertValues.autoShortenMinUrlLength = normalizedLen.value;
+      setClause.autoShortenMinUrlLength = normalizedLen.value
+      insertValues.autoShortenMinUrlLength = normalizedLen.value
     }
 
     if (updates.ignoredDomains !== undefined) {
-      const normalizedList: string[] = [];
-      const seen = new Set<string>();
+      const normalizedList: string[] = []
+      const seen = new Set<string>()
       for (const d of updates.ignoredDomains) {
-        const norm = normalizeDomain(d);
+        const norm = normalizeDomain(d)
         if (!norm) {
           return {
             success: false,
             error: `유효하지 않은 도메인 형식입니다: '${d}'`,
-            config: current,
-          };
+            config: current
+          }
         }
         if (!seen.has(norm)) {
-          seen.add(norm);
-          normalizedList.push(norm);
+          seen.add(norm)
+          normalizedList.push(norm)
         }
       }
       if (normalizedList.length > MAX_CUSTOM_IGNORED_DOMAINS) {
         return {
           success: false,
           error: `제외 도메인은 최대 ${MAX_CUSTOM_IGNORED_DOMAINS}개까지 등록할 수 있습니다.`,
-          config: current,
-        };
+          config: current
+        }
       }
-      setClause.ignoredDomains = normalizedList;
-      insertValues.ignoredDomains = normalizedList;
+      setClause.ignoredDomains = normalizedList
+      insertValues.ignoredDomains = normalizedList
     }
 
-    const MAX_RETRIES = 3;
+    const MAX_RETRIES = 3
     for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
       try {
         const result = await keyedMutex.runExclusive(guildId, async () => {
-          return await db.transaction(async (tx) => {
+          return await db.transaction(async tx => {
             const [existing] = await tx
               .select()
               .from(guildConfigs)
-              .where(eq(guildConfigs.guildId, guildId));
+              .where(eq(guildConfigs.guildId, guildId))
 
-            let saved: typeof guildConfigs.$inferSelect | undefined;
+            let saved: typeof guildConfigs.$inferSelect | undefined
 
             if (!existing) {
               const [inserted] = await tx
                 .insert(guildConfigs)
                 .values(insertValues)
                 .onConflictDoNothing()
-                .returning();
+                .returning()
 
               if (!inserted) {
                 // Raced with concurrent insert
-                return { retry: true as const };
+                return { retry: true as const }
               }
-              saved = inserted;
+              saved = inserted
             } else {
               const [updated] = await tx
                 .update(guildConfigs)
                 .set({
                   ...setClause,
-                  version: existing.version + 1,
+                  version: existing.version + 1
                 })
                 .where(
                   and(
                     eq(guildConfigs.guildId, guildId),
-                    eq(guildConfigs.version, existing.version),
-                  ),
+                    eq(guildConfigs.version, existing.version)
+                  )
                 )
-                .returning();
+                .returning()
 
               if (!updated) {
                 // Raced with concurrent update
-                return { retry: true as const };
+                return { retry: true as const }
               }
-              saved = updated;
+              saved = updated
             }
 
             const savedConfig: GuildConfigData = {
               guildId: saved.guildId,
               autoShortenEnabled: saved.autoShortenEnabled,
               autoShortenMinUrlLength: saved.autoShortenMinUrlLength ?? null,
-              ignoredDomains: saved.ignoredDomains ?? [],
-            };
+              ignoredDomains: saved.ignoredDomains ?? []
+            }
 
-            return { success: true, config: savedConfig };
-          });
-        });
+            return { success: true, config: savedConfig }
+          })
+        })
 
-        if ("retry" in result) {
+        if ('retry' in result) {
           if (attempt < MAX_RETRIES) {
-            await new Promise((resolve) => setTimeout(resolve, 25 * attempt));
-            continue;
+            await new Promise(resolve => setTimeout(resolve, 25 * attempt))
+            continue
           }
           logger.warn(
-            `Concurrent mutation conflict on guild ${guildId} exceeded max retries (${MAX_RETRIES}).`,
-          );
+            `Concurrent mutation conflict on guild ${guildId} exceeded max retries (${MAX_RETRIES}).`
+          )
           return {
             success: false,
-            error: "Concurrent update conflict. Please try again.",
-            config: current,
-          };
+            error: 'Concurrent update conflict. Please try again.',
+            config: current
+          }
         }
 
         if (result.success) {
-          this.recordCacheMutation(guildId, result.config);
+          this.recordCacheMutation(guildId, result.config)
           if (!this.isCacheLoaded()) {
-            this.triggerBackgroundReload();
+            this.triggerBackgroundReload()
           }
           logger.info(
-            `Updated guild config for ${guildId}: autoShortenEnabled=${result.config.autoShortenEnabled}, autoShortenMinUrlLength=${result.config.autoShortenMinUrlLength}, ignoredDomains=${result.config.ignoredDomains.length}`,
-          );
+            `Updated guild config for ${guildId}: autoShortenEnabled=${result.config.autoShortenEnabled}, autoShortenMinUrlLength=${result.config.autoShortenMinUrlLength}, ignoredDomains=${result.config.ignoredDomains.length}`
+          )
         }
 
-        return result;
+        return result
       } catch (error) {
         logger.error(
           `Failed to update guild config for ${guildId} (attempt ${attempt}/${MAX_RETRIES}):`,
-          error,
-        );
+          error
+        )
         if (attempt >= MAX_RETRIES) {
           return {
             success: false,
-            error: error instanceof Error ? error.message : "Database error",
-            config: current,
-          };
+            error: error instanceof Error ? error.message : 'Database error',
+            config: current
+          }
         }
       }
     }
 
     return {
       success: false,
-      error: "Database update failed after retries.",
-      config: current,
-    };
+      error: 'Database update failed after retries.',
+      config: current
+    }
   }
 
   /**
@@ -352,40 +349,40 @@ class GuildConfigService {
   private async mutateIgnoredDomains(
     guildId: string,
     mutator: (
-      currentDomains: string[],
-    ) => { ok: true; domains: string[] } | { ok: false; error: string },
+      currentDomains: string[]
+    ) => { ok: true; domains: string[] } | { ok: false; error: string }
   ): Promise<{ success: boolean; error?: string; config: GuildConfigData }> {
-    const fallbackConfig = this.getGuildConfig(guildId);
-    const MAX_RETRIES = 3;
+    const fallbackConfig = this.getGuildConfig(guildId)
+    const MAX_RETRIES = 3
 
     for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
       try {
         const result = await keyedMutex.runExclusive(guildId, async () => {
-          return await db.transaction(async (tx) => {
+          return await db.transaction(async tx => {
             // 1. Ensure a base guild_configs row exists before querying
             await tx
               .insert(guildConfigs)
               .values({
                 guildId,
                 ...DEFAULT_GUILD_CONFIG,
-                updatedAt: new Date(),
+                updatedAt: new Date()
               })
-              .onConflictDoNothing();
+              .onConflictDoNothing()
 
             // 2. Query guaranteed to hit for this guild
             const rows = await tx
               .select()
               .from(guildConfigs)
-              .where(eq(guildConfigs.guildId, guildId));
+              .where(eq(guildConfigs.guildId, guildId))
 
-            const lockedRow = rows[0];
+            const lockedRow = rows[0]
             if (!lockedRow) {
-              throw new Error("Failed to read guild configuration row.");
+              throw new Error('Failed to read guild configuration row.')
             }
 
-            const currentDomains = lockedRow.ignoredDomains ?? [];
+            const currentDomains = lockedRow.ignoredDomains ?? []
 
-            const mutationResult = mutator([...currentDomains]);
+            const mutationResult = mutator([...currentDomains])
             if (!mutationResult.ok) {
               return {
                 success: false,
@@ -395,12 +392,12 @@ class GuildConfigService {
                   autoShortenEnabled: lockedRow.autoShortenEnabled,
                   autoShortenMinUrlLength:
                     lockedRow.autoShortenMinUrlLength ?? null,
-                  ignoredDomains: lockedRow.ignoredDomains ?? [],
-                },
-              };
+                  ignoredDomains: lockedRow.ignoredDomains ?? []
+                }
+              }
             }
 
-            const nextDomains = mutationResult.domains;
+            const nextDomains = mutationResult.domains
 
             // Optimistic concurrency check: only update if monotonic version matches the row we read
             const [saved] = await tx
@@ -408,78 +405,78 @@ class GuildConfigService {
               .set({
                 ignoredDomains: nextDomains,
                 updatedAt: new Date(),
-                version: lockedRow.version + 1,
+                version: lockedRow.version + 1
               })
               .where(
                 and(
                   eq(guildConfigs.guildId, guildId),
-                  eq(guildConfigs.version, lockedRow.version),
-                ),
+                  eq(guildConfigs.version, lockedRow.version)
+                )
               )
-              .returning();
+              .returning()
 
             if (!saved) {
               // Row was modified concurrently by another process; trigger retry
-              return { retry: true as const };
+              return { retry: true as const }
             }
 
             const savedConfig: GuildConfigData = {
               guildId: saved.guildId,
               autoShortenEnabled: saved.autoShortenEnabled,
               autoShortenMinUrlLength: saved.autoShortenMinUrlLength ?? null,
-              ignoredDomains: saved.ignoredDomains ?? [],
-            };
+              ignoredDomains: saved.ignoredDomains ?? []
+            }
 
-            return { success: true, config: savedConfig };
-          });
-        });
+            return { success: true, config: savedConfig }
+          })
+        })
 
-        if ("retry" in result) {
+        if ('retry' in result) {
           if (attempt < MAX_RETRIES) {
-            await new Promise((resolve) => setTimeout(resolve, 25 * attempt));
-            continue;
+            await new Promise(resolve => setTimeout(resolve, 25 * attempt))
+            continue
           }
           logger.warn(
-            `Concurrent mutation conflict on guild ${guildId} exceeded max retries (${MAX_RETRIES}).`,
-          );
+            `Concurrent mutation conflict on guild ${guildId} exceeded max retries (${MAX_RETRIES}).`
+          )
           return {
             success: false,
-            error: "Concurrent update conflict. Please try again.",
-            config: fallbackConfig,
-          };
+            error: 'Concurrent update conflict. Please try again.',
+            config: fallbackConfig
+          }
         }
 
         if (result.success) {
-          this.recordCacheMutation(guildId, result.config);
+          this.recordCacheMutation(guildId, result.config)
           if (!this.isCacheLoaded()) {
-            this.triggerBackgroundReload();
+            this.triggerBackgroundReload()
           }
           logger.info(
-            `Atomically updated ignored domains for ${guildId}: count=${result.config.ignoredDomains.length}`,
-          );
+            `Atomically updated ignored domains for ${guildId}: count=${result.config.ignoredDomains.length}`
+          )
         }
 
-        return result;
+        return result
       } catch (error) {
         logger.error(
           `Failed to atomically mutate guild ignored domains for ${guildId} (attempt ${attempt}/${MAX_RETRIES}):`,
-          error,
-        );
+          error
+        )
         if (attempt >= MAX_RETRIES) {
           return {
             success: false,
-            error: error instanceof Error ? error.message : "Database error",
-            config: fallbackConfig,
-          };
+            error: error instanceof Error ? error.message : 'Database error',
+            config: fallbackConfig
+          }
         }
       }
     }
 
     return {
       success: false,
-      error: "Database mutation failed after retries.",
-      config: fallbackConfig,
-    };
+      error: 'Database mutation failed after retries.',
+      config: fallbackConfig
+    }
   }
 
   /**
@@ -491,37 +488,37 @@ class GuildConfigService {
    */
   async addIgnoredDomain(
     guildId: string,
-    rawDomain: string,
+    rawDomain: string
   ): Promise<{ success: boolean; error?: string; config: GuildConfigData }> {
-    const current = this.getGuildConfig(guildId);
-    const normalized = normalizeDomain(rawDomain);
+    const current = this.getGuildConfig(guildId)
+    const normalized = normalizeDomain(rawDomain)
     if (!normalized) {
       return {
         success: false,
         error: `유효하지 않은 도메인 형식입니다: '${rawDomain}'`,
-        config: current,
-      };
+        config: current
+      }
     }
 
     if (isSystemDefaultDomain(normalized)) {
       return {
         success: false,
-        error: "is_system_default",
-        config: current,
-      };
+        error: 'is_system_default',
+        config: current
+      }
     }
 
-    return this.mutateIgnoredDomains(guildId, (currentDomains) => {
+    return this.mutateIgnoredDomains(guildId, currentDomains => {
       if (currentDomains.includes(normalized)) {
-        return { ok: false, error: "already_exists" };
+        return { ok: false, error: 'already_exists' }
       }
 
       if (currentDomains.length >= MAX_CUSTOM_IGNORED_DOMAINS) {
-        return { ok: false, error: "limit_exceeded" };
+        return { ok: false, error: 'limit_exceeded' }
       }
 
-      return { ok: true, domains: [...currentDomains, normalized] };
-    });
+      return { ok: true, domains: [...currentDomains, normalized] }
+    })
   }
 
   /**
@@ -533,36 +530,36 @@ class GuildConfigService {
    */
   async removeIgnoredDomain(
     guildId: string,
-    rawDomain: string,
+    rawDomain: string
   ): Promise<{ success: boolean; error?: string; config: GuildConfigData }> {
-    const current = this.getGuildConfig(guildId);
-    const normalized = normalizeDomain(rawDomain);
+    const current = this.getGuildConfig(guildId)
+    const normalized = normalizeDomain(rawDomain)
     if (!normalized) {
       return {
         success: false,
         error: `유효하지 않은 도메인 형식입니다: '${rawDomain}'`,
-        config: current,
-      };
+        config: current
+      }
     }
 
     if (isSystemDefaultDomain(normalized)) {
       return {
         success: false,
-        error: "is_system_default",
-        config: current,
-      };
+        error: 'is_system_default',
+        config: current
+      }
     }
 
-    return this.mutateIgnoredDomains(guildId, (currentDomains) => {
+    return this.mutateIgnoredDomains(guildId, currentDomains => {
       if (!currentDomains.includes(normalized)) {
-        return { ok: false, error: "not_found" };
+        return { ok: false, error: 'not_found' }
       }
 
       return {
         ok: true,
-        domains: currentDomains.filter((d) => d !== normalized),
-      };
-    });
+        domains: currentDomains.filter(d => d !== normalized)
+      }
+    })
   }
 
   /**
@@ -572,12 +569,12 @@ class GuildConfigService {
    * @returns Operation status and reset config.
    */
   async resetIgnoredDomains(
-    guildId: string,
+    guildId: string
   ): Promise<{ success: boolean; error?: string; config: GuildConfigData }> {
     return this.mutateIgnoredDomains(guildId, () => ({
       ok: true,
-      domains: [],
-    }));
+      domains: []
+    }))
   }
 
   /**
@@ -590,30 +587,30 @@ class GuildConfigService {
    */
   resolveEffectiveIgnoredDomains(
     guildId: string | null | undefined,
-    userId: string,
+    userId: string
   ): Set<string> {
-    const effective = new Set<string>(getAllSystemDefaultDomains());
+    const effective = new Set<string>(getAllSystemDefaultDomains())
 
     if (guildId) {
       if (!this.isCacheLoaded()) {
-        this.triggerBackgroundReload();
+        this.triggerBackgroundReload()
       }
-      const guildCfg = this.getGuildConfig(guildId);
+      const guildCfg = this.getGuildConfig(guildId)
       if (Array.isArray(guildCfg.ignoredDomains)) {
         for (const d of guildCfg.ignoredDomains) {
-          effective.add(d);
+          effective.add(d)
         }
       }
     }
 
-    const userCfg = userConfigService.getUserConfig(userId);
+    const userCfg = userConfigService.getUserConfig(userId)
     if (Array.isArray(userCfg.ignoredDomains)) {
       for (const d of userCfg.ignoredDomains) {
-        effective.add(d);
+        effective.add(d)
       }
     }
 
-    return effective;
+    return effective
   }
 
   /**
@@ -628,31 +625,31 @@ class GuildConfigService {
    */
   resolveEffectiveMinUrlLength(
     guildId: string | null | undefined,
-    userId: string,
+    userId: string
   ): number {
-    const userCfg = userConfigService.getUserConfig(userId);
+    const userCfg = userConfigService.getUserConfig(userId)
     if (
       userCfg.autoShortenMinUrlLength !== null &&
       userCfg.autoShortenMinUrlLength !== undefined
     ) {
-      return userCfg.autoShortenMinUrlLength;
+      return userCfg.autoShortenMinUrlLength
     }
 
     if (guildId) {
       if (!this.isCacheLoaded()) {
-        this.triggerBackgroundReload();
+        this.triggerBackgroundReload()
       }
-      const guildCfg = this.getGuildConfig(guildId);
+      const guildCfg = this.getGuildConfig(guildId)
       if (
         guildCfg.autoShortenMinUrlLength !== null &&
         guildCfg.autoShortenMinUrlLength !== undefined
       ) {
-        return guildCfg.autoShortenMinUrlLength;
+        return guildCfg.autoShortenMinUrlLength
       }
     }
 
-    return config.AUTO_SHORTEN_MIN_URL_LENGTH;
+    return config.AUTO_SHORTEN_MIN_URL_LENGTH
   }
 }
 
-export const guildConfigService = new GuildConfigService();
+export const guildConfigService = new GuildConfigService()

@@ -9,7 +9,7 @@
  *   on the monotonic `version` column to ensure safe operation even across multiple processes or deploy overlaps.
  */
 export class KeyedMutex {
-  private queues: Map<string, Promise<unknown>> = new Map();
+  private queues: Map<string, Promise<unknown>> = new Map()
 
   /**
    * Executes an asynchronous task exclusively for the given key.
@@ -20,27 +20,27 @@ export class KeyedMutex {
    * @returns The result of the task callback.
    */
   async runExclusive<T>(key: string, task: () => Promise<T>): Promise<T> {
-    const currentQueue = this.queues.get(key) ?? Promise.resolve();
+    const currentQueue = this.queues.get(key) ?? Promise.resolve()
 
-    let resolveNext!: () => void;
-    const nextQueue = new Promise<void>((resolve) => {
-      resolveNext = resolve;
-    });
+    let resolveNext!: () => void
+    const nextQueue = new Promise<void>(resolve => {
+      resolveNext = resolve
+    })
 
     // Chain the next task to the queue for this key
-    this.queues.set(key, nextQueue);
+    this.queues.set(key, nextQueue)
 
     try {
       // Wait for any previous task on this key to finish (whether resolved or rejected)
-      await currentQueue.catch(() => {});
-      return await task();
+      await currentQueue.catch(() => {})
+      return await task()
     } finally {
       // Release next task in queue
-      resolveNext();
+      resolveNext()
 
       // Clean up map entry if this was the last chained task
       if (this.queues.get(key) === nextQueue) {
-        this.queues.delete(key);
+        this.queues.delete(key)
       }
     }
   }
@@ -49,8 +49,8 @@ export class KeyedMutex {
    * Returns the current number of active keys in the mutex.
    */
   get size(): number {
-    return this.queues.size;
+    return this.queues.size
   }
 }
 
-export const keyedMutex = new KeyedMutex();
+export const keyedMutex = new KeyedMutex()

@@ -1,45 +1,45 @@
 import {
   type AutocompleteInteraction,
   ChannelType,
-  ChatInputCommandInteraction,
+  type ChatInputCommandInteraction,
   MessageFlags,
   PermissionFlagsBits,
-  SlashCommandBuilder,
-} from "discord.js";
-import type { Command, UserDashboardStats } from "@/types/bot";
-import { sinkClient } from "@/services/sinkClient";
+  SlashCommandBuilder
+} from 'discord.js'
+import type { Command, UserDashboardStats } from '@/types/bot'
+import { sinkClient } from '@/services/sinkClient'
 import {
   generateSlug,
   getUserHash,
   isAdmin,
   validateCustomSlug,
-  verifyOwnership,
-} from "@/services/slugManager";
-import { watchService } from "@/services/watchService";
+  verifyOwnership
+} from '@/services/slugManager'
+import { watchService } from '@/services/watchService'
 import {
   userConfigService,
   normalizeAutoDmMode,
   normalizeDmFormat,
   normalizeMinUrlLength,
   normalizeIgnoredDomains,
-  normalizeFixupxEnabled,
-} from "@/services/userConfigService";
-import { guildConfigService } from "@/services/guildConfigService";
-import { config } from "@/config";
-import { getAllSystemDefaultDomains, normalizeDomain } from "@/utils/domain";
-import { ui } from "@/utils/ui";
+  normalizeFixupxEnabled
+} from '@/services/userConfigService'
+import { guildConfigService } from '@/services/guildConfigService'
+import { config } from '@/config'
+import { getAllSystemDefaultDomains, normalizeDomain } from '@/utils/domain'
+import { ui } from '@/utils/ui'
 import {
   expirationToUnixSeconds,
   parseExpiration,
-  timestampToMilliseconds,
-} from "@/utils/time";
-import { logger } from "@/utils/logger";
-import { storeDashboardLinkSnapshots } from "@/services/dashboardLinkSnapshot";
-import { parseTagsInput } from "@/utils/tags";
+  timestampToMilliseconds
+} from '@/utils/time'
+import { logger } from '@/utils/logger'
+import { storeDashboardLinkSnapshots } from '@/services/dashboardLinkSnapshot'
+import { parseTagsInput } from '@/utils/tags'
 import {
   attachClickCounts,
-  collectOwnedLinks,
-} from "@/services/ownedLinkCatalog";
+  collectOwnedLinks
+} from '@/services/ownedLinkCatalog'
 
 /**
  * Fetches link statistics and dashboard summary for a specific Discord user.
@@ -48,68 +48,68 @@ import {
  * @returns Aggregated UserDashboardStats object containing link counts and click totals
  */
 export async function fetchUserDashboardStats(
-  userId: string,
+  userId: string
 ): Promise<UserDashboardStats> {
-  const userHash = getUserHash(userId);
+  const userHash = getUserHash(userId)
 
   const [totalCountRes, activeCountRes, expiredCountRes, catalog] =
     await Promise.all([
-      sinkClient.countLinks({ q: userHash, status: "all" }),
-      sinkClient.countLinks({ q: userHash, status: "active" }),
-      sinkClient.countLinks({ q: userHash, status: "expired" }),
-      collectOwnedLinks(userHash),
-    ]);
+      sinkClient.countLinks({ q: userHash, status: 'all' }),
+      sinkClient.countLinks({ q: userHash, status: 'active' }),
+      sinkClient.countLinks({ q: userHash, status: 'expired' }),
+      collectOwnedLinks(userHash)
+    ])
 
-  if (!catalog.success) throw new Error(catalog.error);
-  const clicks = await attachClickCounts(catalog.links);
-  const userLinks = clicks.links;
+  if (!catalog.success) throw new Error(catalog.error)
+  const clicks = await attachClickCounts(catalog.links)
+  const userLinks = clicks.links
 
   // Sort by createdAt descending (most recent first)
   userLinks.sort((a, b) => {
-    const timeA = timestampToMilliseconds(a.createdAt);
-    const timeB = timestampToMilliseconds(b.createdAt);
-    return timeB - timeA;
-  });
+    const timeA = timestampToMilliseconds(a.createdAt)
+    const timeB = timestampToMilliseconds(b.createdAt)
+    return timeB - timeA
+  })
 
-  const now = Date.now();
+  const now = Date.now()
   // Stays undefined when no link returned analytics, so the dashboard can say
   // "unavailable" rather than claim a misleading zero.
-  let totalClicks: number | undefined;
-  let loadedActive = 0;
-  let loadedExpired = 0;
+  let totalClicks: number | undefined
+  let loadedActive = 0
+  let loadedExpired = 0
 
   for (const link of userLinks) {
     if (link.clicks !== undefined) {
-      totalClicks = (totalClicks ?? 0) + link.clicks;
+      totalClicks = (totalClicks ?? 0) + link.clicks
     }
     if (link.expiration !== undefined && link.expiration !== null) {
-      const expTime = expirationToUnixSeconds(link.expiration);
+      const expTime = expirationToUnixSeconds(link.expiration)
       if (expTime !== undefined && expTime * 1000 <= now) {
-        loadedExpired += 1;
-        continue;
+        loadedExpired += 1
+        continue
       }
     }
-    loadedActive += 1;
+    loadedActive += 1
   }
 
   const totalLinks = catalog.complete
     ? userLinks.length
     : Math.max(
         totalCountRes.success ? totalCountRes.count : 0,
-        userLinks.length + 1,
-      );
+        userLinks.length + 1
+      )
   const activeLinks = catalog.complete
     ? loadedActive
     : activeCountRes.success
       ? activeCountRes.count
-      : loadedActive;
+      : loadedActive
   const expiredLinks = catalog.complete
     ? loadedExpired
     : expiredCountRes.success
       ? expiredCountRes.count
-      : loadedExpired;
+      : loadedExpired
 
-  storeDashboardLinkSnapshots(userId, userLinks, now);
+  storeDashboardLinkSnapshots(userId, userLinks, now)
 
   return {
     totalLinks,
@@ -121,286 +121,271 @@ export async function fetchUserDashboardStats(
     // A partial analytics lookup makes totalClicks a floor, not a total, so the
     // dashboard must not present it as a complete "누적 클릭" figure.
     clicksComplete: !clicks.partial,
-    links: userLinks,
-  };
+    links: userLinks
+  }
 }
 
 export const linkCommand: Command = {
   data: new SlashCommandBuilder()
-    .setName("link")
-    .setDescription("Snipsik URL 단축 및 관리 시스템")
+    .setName('link')
+    .setDescription('Snipsik URL 단축 및 관리 시스템')
     // /link dashboard
-    .addSubcommand((sub) =>
+    .addSubcommand(sub =>
       sub
-        .setName("dashboard")
+        .setName('dashboard')
         .setDescription(
-          "유저 개인 전용 일시성(Ephemeral) 인터랙티브 대시보드를 엽니다.",
-        ),
+          '유저 개인 전용 일시성(Ephemeral) 인터랙티브 대시보드를 엽니다.'
+        )
     )
     // /link config
-    .addSubcommand((sub) =>
+    .addSubcommand(sub =>
       sub
-        .setName("config")
+        .setName('config')
         .setDescription(
-          "개인별 URL 감시 및 DM 전송 설정을 확인하거나 변경합니다.",
+          '개인별 URL 감시 및 DM 전송 설정을 확인하거나 변경합니다.'
         )
-        .addStringOption((opt) =>
+        .addStringOption(opt =>
           opt
-            .setName("key")
+            .setName('key')
             .setDescription(
-              "설정 항목 (auto_dm, dm_format, min_length, ignored_domains, fixupx)",
+              '설정 항목 (auto_dm, dm_format, min_length, ignored_domains, fixupx)'
             )
             .setAutocomplete(true)
-            .setRequired(false),
+            .setRequired(false)
         )
-        .addStringOption((opt) =>
+        .addStringOption(opt =>
           opt
-            .setName("value")
-            .setDescription("설정할 값 (자동완성 추천 또는 직접 입력)")
+            .setName('value')
+            .setDescription('설정할 값 (자동완성 추천 또는 직접 입력)')
             .setAutocomplete(true)
-            .setRequired(false),
-        ),
+            .setRequired(false)
+        )
     )
     // /link create
-    .addSubcommand((sub) =>
+    .addSubcommand(sub =>
       sub
-        .setName("create")
-        .setDescription("새로운 일반 단축 링크를 생성합니다.")
-        .addStringOption((opt) =>
-          opt
-            .setName("url")
-            .setDescription("단축할 대상 URL")
-            .setRequired(true),
+        .setName('create')
+        .setDescription('새로운 일반 단축 링크를 생성합니다.')
+        .addStringOption(opt =>
+          opt.setName('url').setDescription('단축할 대상 URL').setRequired(true)
         )
-        .addStringOption((opt) =>
+        .addStringOption(opt =>
           opt
-            .setName("expiration")
-            .setDescription("만료 기간 (예: 10m, 1h, 7d, 24h)")
-            .setRequired(false),
+            .setName('expiration')
+            .setDescription('만료 기간 (예: 10m, 1h, 7d, 24h)')
+            .setRequired(false)
         )
-        .addStringOption((opt) =>
+        .addStringOption(opt =>
           opt
-            .setName("password")
-            .setDescription("비밀번호 보호 설정")
-            .setRequired(false),
+            .setName('password')
+            .setDescription('비밀번호 보호 설정')
+            .setRequired(false)
         )
-        .addStringOption((opt) =>
+        .addStringOption(opt =>
+          opt.setName('tag').setDescription('링크 분류 태그').setRequired(false)
+        )
+        .addStringOption(opt =>
+          opt.setName('title').setDescription('링크 타이틀').setRequired(false)
+        )
+        .addStringOption(opt =>
           opt
-            .setName("tag")
-            .setDescription("링크 분류 태그")
-            .setRequired(false),
+            .setName('description')
+            .setDescription('링크 상세 설명')
+            .setRequired(false)
         )
-        .addStringOption((opt) =>
-          opt.setName("title").setDescription("링크 타이틀").setRequired(false),
-        )
-        .addStringOption((opt) =>
+        .addBooleanOption(opt =>
           opt
-            .setName("description")
-            .setDescription("링크 상세 설명")
-            .setRequired(false),
+            .setName('unsafe')
+            .setDescription('위험/주의 링크 플래그')
+            .setRequired(false)
         )
-        .addBooleanOption((opt) =>
-          opt
-            .setName("unsafe")
-            .setDescription("위험/주의 링크 플래그")
-            .setRequired(false),
-        ),
     )
     // /link custom
-    .addSubcommand((sub) =>
+    .addSubcommand(sub =>
       sub
-        .setName("custom")
-        .setDescription("순수 커스텀 슬러그 링크를 생성합니다 (관리자 전용).")
-        .addStringOption((opt) =>
-          opt
-            .setName("url")
-            .setDescription("단축할 대상 URL")
-            .setRequired(true),
+        .setName('custom')
+        .setDescription('순수 커스텀 슬러그 링크를 생성합니다 (관리자 전용).')
+        .addStringOption(opt =>
+          opt.setName('url').setDescription('단축할 대상 URL').setRequired(true)
         )
-        .addStringOption((opt) =>
+        .addStringOption(opt =>
           opt
-            .setName("custom_slug")
-            .setDescription("원하는 커스텀 슬러그 문자열")
-            .setRequired(true),
+            .setName('custom_slug')
+            .setDescription('원하는 커스텀 슬러그 문자열')
+            .setRequired(true)
         )
-        .addStringOption((opt) =>
+        .addStringOption(opt =>
           opt
-            .setName("expiration")
-            .setDescription("만료 기간 (예: 10m, 1h, 7d)")
-            .setRequired(false),
+            .setName('expiration')
+            .setDescription('만료 기간 (예: 10m, 1h, 7d)')
+            .setRequired(false)
         )
-        .addStringOption((opt) =>
+        .addStringOption(opt =>
           opt
-            .setName("password")
-            .setDescription("비밀번호 보호 설정")
-            .setRequired(false),
+            .setName('password')
+            .setDescription('비밀번호 보호 설정')
+            .setRequired(false)
         )
-        .addStringOption((opt) =>
+        .addStringOption(opt =>
+          opt.setName('tag').setDescription('링크 분류 태그').setRequired(false)
+        )
+        .addStringOption(opt =>
+          opt.setName('title').setDescription('링크 타이틀').setRequired(false)
+        )
+        .addStringOption(opt =>
           opt
-            .setName("tag")
-            .setDescription("링크 분류 태그")
-            .setRequired(false),
+            .setName('description')
+            .setDescription('링크 상세 설명')
+            .setRequired(false)
         )
-        .addStringOption((opt) =>
-          opt.setName("title").setDescription("링크 타이틀").setRequired(false),
-        )
-        .addStringOption((opt) =>
+        .addBooleanOption(opt =>
           opt
-            .setName("description")
-            .setDescription("링크 상세 설명")
-            .setRequired(false),
+            .setName('unsafe')
+            .setDescription('위험/주의 링크 플래그')
+            .setRequired(false)
         )
-        .addBooleanOption((opt) =>
-          opt
-            .setName("unsafe")
-            .setDescription("위험/주의 링크 플래그")
-            .setRequired(false),
-        ),
     )
     // /link list
-    .addSubcommand((sub) =>
+    .addSubcommand(sub =>
       sub
-        .setName("list")
-        .setDescription("내가 생성한 링크 목록을 조회합니다.")
-        .addStringOption((opt) =>
+        .setName('list')
+        .setDescription('내가 생성한 링크 목록을 조회합니다.')
+        .addStringOption(opt =>
           opt
-            .setName("tag")
-            .setDescription("특정 태그로 필터링")
-            .setRequired(false),
+            .setName('tag')
+            .setDescription('특정 태그로 필터링')
+            .setRequired(false)
         )
-        .addIntegerOption((opt) =>
+        .addIntegerOption(opt =>
           opt
-            .setName("page")
-            .setDescription("페이지 번호 (기본 1)")
+            .setName('page')
+            .setDescription('페이지 번호 (기본 1)')
             .setMinValue(1)
-            .setRequired(false),
-        ),
+            .setRequired(false)
+        )
     )
     // /link stats
-    .addSubcommand((sub) =>
+    .addSubcommand(sub =>
       sub
-        .setName("stats")
-        .setDescription("특정 슬러그의 클릭 수 및 방문 통계를 조회합니다.")
-        .addStringOption((opt) =>
+        .setName('stats')
+        .setDescription('특정 슬러그의 클릭 수 및 방문 통계를 조회합니다.')
+        .addStringOption(opt =>
           opt
-            .setName("slug")
-            .setDescription("조회할 링크의 슬러그")
-            .setRequired(true),
-        ),
+            .setName('slug')
+            .setDescription('조회할 링크의 슬러그')
+            .setRequired(true)
+        )
     )
     // /link delete
-    .addSubcommand((sub) =>
+    .addSubcommand(sub =>
       sub
-        .setName("delete")
-        .setDescription("생성한 단축 링크를 삭제합니다.")
-        .addStringOption((opt) =>
+        .setName('delete')
+        .setDescription('생성한 단축 링크를 삭제합니다.')
+        .addStringOption(opt =>
           opt
-            .setName("slug")
-            .setDescription("삭제할 링크의 슬러그")
-            .setRequired(true),
-        ),
+            .setName('slug')
+            .setDescription('삭제할 링크의 슬러그')
+            .setRequired(true)
+        )
     )
     // /link check
-    .addSubcommand((sub) =>
+    .addSubcommand(sub =>
       sub
-        .setName("check")
+        .setName('check')
         .setDescription(
-          "대상 웹사이트의 생존 여부(HTTP 상태코드)를 점검합니다.",
+          '대상 웹사이트의 생존 여부(HTTP 상태코드)를 점검합니다.'
         )
-        .addStringOption((opt) =>
-          opt
-            .setName("url")
-            .setDescription("점검할 대상 URL")
-            .setRequired(true),
-        ),
+        .addStringOption(opt =>
+          opt.setName('url').setDescription('점검할 대상 URL').setRequired(true)
+        )
     )
     // /link admin [list|user|overview|delete] Subcommand Group (Admin only)
-    .addSubcommandGroup((group) =>
+    .addSubcommandGroup(group =>
       group
-        .setName("admin")
-        .setDescription("봇 관리자 전용 링크 관리 기능 (ADMIN_USER_IDS 전용)")
-        .addSubcommand((sub) =>
+        .setName('admin')
+        .setDescription('봇 관리자 전용 링크 관리 기능 (ADMIN_USER_IDS 전용)')
+        .addSubcommand(sub =>
           sub
-            .setName("list")
-            .setDescription("Sink 인스턴스의 전체 단축 링크 목록을 조회합니다.")
-            .addStringOption((opt) =>
+            .setName('list')
+            .setDescription('Sink 인스턴스의 전체 단축 링크 목록을 조회합니다.')
+            .addStringOption(opt =>
               opt
-                .setName("tag")
-                .setDescription("필터링할 태그")
-                .setRequired(false),
+                .setName('tag')
+                .setDescription('필터링할 태그')
+                .setRequired(false)
             )
-            .addStringOption((opt) =>
+            .addStringOption(opt =>
               opt
-                .setName("query")
-                .setDescription("슬러그 또는 URL 검색어")
-                .setRequired(false),
+                .setName('query')
+                .setDescription('슬러그 또는 URL 검색어')
+                .setRequired(false)
             )
-            .addIntegerOption((opt) =>
+            .addIntegerOption(opt =>
               opt
-                .setName("page")
-                .setDescription("조회할 페이지 번호")
+                .setName('page')
+                .setDescription('조회할 페이지 번호')
                 .setMinValue(1)
-                .setRequired(false),
-            ),
+                .setRequired(false)
+            )
         )
-        .addSubcommand((sub) =>
+        .addSubcommand(sub =>
           sub
-            .setName("user")
-            .setDescription("특정 유저가 생성한 단축 링크 목록을 조회합니다.")
-            .addUserOption((opt) =>
+            .setName('user')
+            .setDescription('특정 유저가 생성한 단축 링크 목록을 조회합니다.')
+            .addUserOption(opt =>
               opt
-                .setName("user")
-                .setDescription("조회할 디스코드 유저")
-                .setRequired(true),
+                .setName('user')
+                .setDescription('조회할 디스코드 유저')
+                .setRequired(true)
             )
-            .addStringOption((opt) =>
+            .addStringOption(opt =>
               opt
-                .setName("tag")
-                .setDescription("필터링할 태그")
-                .setRequired(false),
+                .setName('tag')
+                .setDescription('필터링할 태그')
+                .setRequired(false)
             )
-            .addIntegerOption((opt) =>
+            .addIntegerOption(opt =>
               opt
-                .setName("page")
-                .setDescription("조회할 페이지 번호")
+                .setName('page')
+                .setDescription('조회할 페이지 번호')
                 .setMinValue(1)
-                .setRequired(false),
-            ),
-        )
-        .addSubcommand((sub) =>
-          sub
-            .setName("overview")
-            .setDescription(
-              "Sink 인스턴스 전체 링크 및 클릭 통계 현황을 조회합니다.",
-            ),
-        )
-        .addSubcommand((sub) =>
-          sub
-            .setName("delete")
-            .setDescription(
-              "소유권에 관계없이 특정 단축 링크를 강제 영구 삭제합니다.",
+                .setRequired(false)
             )
-            .addStringOption((opt) =>
+        )
+        .addSubcommand(sub =>
+          sub
+            .setName('overview')
+            .setDescription(
+              'Sink 인스턴스 전체 링크 및 클릭 통계 현황을 조회합니다.'
+            )
+        )
+        .addSubcommand(sub =>
+          sub
+            .setName('delete')
+            .setDescription(
+              '소유권에 관계없이 특정 단축 링크를 강제 영구 삭제합니다.'
+            )
+            .addStringOption(opt =>
               opt
-                .setName("slug")
-                .setDescription("삭제할 링크의 슬러그")
-                .setRequired(true),
-            ),
-        ),
+                .setName('slug')
+                .setDescription('삭제할 링크의 슬러그')
+                .setRequired(true)
+            )
+        )
     )
     // /link watch [add|remove|list] Subcommand Group
-    .addSubcommandGroup((group) =>
+    .addSubcommandGroup(group =>
       group
-        .setName("watch")
-        .setDescription("채널 URL 자동 단축 감시 설정 (서버 관리자 전용)")
-        .addSubcommand((sub) =>
+        .setName('watch')
+        .setDescription('채널 URL 자동 단축 감시 설정 (서버 관리자 전용)')
+        .addSubcommand(sub =>
           sub
-            .setName("add")
-            .setDescription("해당 채널을 URL 감시 대상에 등록합니다.")
-            .addChannelOption((opt) =>
+            .setName('add')
+            .setDescription('해당 채널을 URL 감시 대상에 등록합니다.')
+            .addChannelOption(opt =>
               opt
-                .setName("channel")
-                .setDescription("감시할 채널 또는 카테고리")
+                .setName('channel')
+                .setDescription('감시할 채널 또는 카테고리')
                 .addChannelTypes(
                   ChannelType.GuildText,
                   ChannelType.GuildAnnouncement,
@@ -411,462 +396,462 @@ export const linkCommand: Command = {
                   ChannelType.PublicThread,
                   ChannelType.PrivateThread,
                   ChannelType.AnnouncementThread,
-                  ChannelType.GuildCategory,
+                  ChannelType.GuildCategory
                 )
-                .setRequired(true),
-            ),
-        )
-        .addSubcommand((sub) =>
-          sub
-            .setName("remove")
-            .setDescription("해당 채널을 URL 감시 대상에서 해제합니다.")
-            .addChannelOption((opt) =>
-              opt
-                .setName("channel")
-                .setDescription("해제할 채널 또는 카테고리")
-                .addChannelTypes(
-                  ChannelType.GuildText,
-                  ChannelType.GuildAnnouncement,
-                  ChannelType.GuildForum,
-                  ChannelType.GuildMedia,
-                  ChannelType.GuildVoice,
-                  ChannelType.GuildStageVoice,
-                  ChannelType.PublicThread,
-                  ChannelType.PrivateThread,
-                  ChannelType.AnnouncementThread,
-                  ChannelType.GuildCategory,
-                )
-                .setRequired(true),
-            ),
-        )
-        .addSubcommand((sub) =>
-          sub
-            .setName("list")
-            .setDescription("현재 서버의 감시 대상 채널 목록을 조회합니다."),
-        )
-        .addSubcommand((sub) =>
-          sub
-            .setName("min-length")
-            .setDescription(
-              "이 서버에서 자동 단축할 최소 URL 길이를 설정합니다 (-1: 초기화, 0: 전체, 1~2048: 지정 길이).",
+                .setRequired(true)
             )
-            .addIntegerOption((opt) =>
+        )
+        .addSubcommand(sub =>
+          sub
+            .setName('remove')
+            .setDescription('해당 채널을 URL 감시 대상에서 해제합니다.')
+            .addChannelOption(opt =>
               opt
-                .setName("length")
+                .setName('channel')
+                .setDescription('해제할 채널 또는 카테고리')
+                .addChannelTypes(
+                  ChannelType.GuildText,
+                  ChannelType.GuildAnnouncement,
+                  ChannelType.GuildForum,
+                  ChannelType.GuildMedia,
+                  ChannelType.GuildVoice,
+                  ChannelType.GuildStageVoice,
+                  ChannelType.PublicThread,
+                  ChannelType.PrivateThread,
+                  ChannelType.AnnouncementThread,
+                  ChannelType.GuildCategory
+                )
+                .setRequired(true)
+            )
+        )
+        .addSubcommand(sub =>
+          sub
+            .setName('list')
+            .setDescription('현재 서버의 감시 대상 채널 목록을 조회합니다.')
+        )
+        .addSubcommand(sub =>
+          sub
+            .setName('min-length')
+            .setDescription(
+              '이 서버에서 자동 단축할 최소 URL 길이를 설정합니다 (-1: 초기화, 0: 전체, 1~2048: 지정 길이).'
+            )
+            .addIntegerOption(opt =>
+              opt
+                .setName('length')
                 .setDescription(
-                  "최소 URL 길이 (-1: ENV 기본값 상속, 0: 전체, 1~2048: 길이)",
+                  '최소 URL 길이 (-1: ENV 기본값 상속, 0: 전체, 1~2048: 길이)'
                 )
                 .setMinValue(-1)
                 .setMaxValue(2048)
-                .setRequired(false),
-            ),
-        )
-        .addSubcommand((sub) =>
-          sub
-            .setName("ignored-domains")
-            .setDescription(
-              "이 서버의 자동 단축 제외 도메인을 관리합니다 (Tenor, Discord CDN 등 기본 제외).",
+                .setRequired(false)
             )
-            .addStringOption((opt) =>
+        )
+        .addSubcommand(sub =>
+          sub
+            .setName('ignored-domains')
+            .setDescription(
+              '이 서버의 자동 단축 제외 도메인을 관리합니다 (Tenor, Discord CDN 등 기본 제외).'
+            )
+            .addStringOption(opt =>
               opt
-                .setName("action")
-                .setDescription("수행할 작업 (list, add, remove, reset)")
+                .setName('action')
+                .setDescription('수행할 작업 (list, add, remove, reset)')
                 .setRequired(true)
                 .addChoices(
-                  { name: "목록 조회 (list)", value: "list" },
-                  { name: "도메인 추가 (add)", value: "add" },
-                  { name: "도메인 삭제 (remove)", value: "remove" },
-                  { name: "추가 목록 초기화 (reset)", value: "reset" },
-                ),
-            )
-            .addStringOption((opt) =>
-              opt
-                .setName("domain")
-                .setDescription(
-                  "추가/삭제할 도메인 (예: twitter.com) - add/remove 시 필수",
+                  { name: '목록 조회 (list)', value: 'list' },
+                  { name: '도메인 추가 (add)', value: 'add' },
+                  { name: '도메인 삭제 (remove)', value: 'remove' },
+                  { name: '추가 목록 초기화 (reset)', value: 'reset' }
                 )
-                .setRequired(false),
-            ),
-        ),
+            )
+            .addStringOption(opt =>
+              opt
+                .setName('domain')
+                .setDescription(
+                  '추가/삭제할 도메인 (예: twitter.com) - add/remove 시 필수'
+                )
+                .setRequired(false)
+            )
+        )
     ),
 
   async execute(interaction: ChatInputCommandInteraction): Promise<void> {
-    const group = interaction.options.getSubcommandGroup(false);
-    const subcommand = interaction.options.getSubcommand();
+    const group = interaction.options.getSubcommandGroup(false)
+    const subcommand = interaction.options.getSubcommand()
 
     try {
       // 1. /link admin [list|user|overview|delete]
-      if (group === "admin") {
-        await handleAdminCommand(interaction, subcommand);
-        return;
+      if (group === 'admin') {
+        await handleAdminCommand(interaction, subcommand)
+        return
       }
 
       // 2. /link watch [add|remove|list]
-      if (group === "watch") {
-        await handleWatchCommand(interaction, subcommand);
-        return;
+      if (group === 'watch') {
+        await handleWatchCommand(interaction, subcommand)
+        return
       }
 
       // 3. /link dashboard
-      if (subcommand === "dashboard") {
+      if (subcommand === 'dashboard') {
         await interaction.deferReply({
-          flags: MessageFlags.Ephemeral,
-        });
-        const stats = await fetchUserDashboardStats(interaction.user.id);
-        const view = ui.createDashboardView(interaction.user, stats);
-        await interaction.editReply(view);
-        return;
+          flags: MessageFlags.Ephemeral
+        })
+        const stats = await fetchUserDashboardStats(interaction.user.id)
+        const view = ui.createDashboardView(interaction.user, stats)
+        await interaction.editReply(view)
+        return
       }
 
       // 4. /link config
-      if (subcommand === "config") {
-        await handleConfigCommand(interaction);
-        return;
+      if (subcommand === 'config') {
+        await handleConfigCommand(interaction)
+        return
       }
 
       // 5. /link create
-      if (subcommand === "create") {
+      if (subcommand === 'create') {
         await interaction.deferReply({
-          flags: MessageFlags.Ephemeral,
-        });
-        const targetUrl = interaction.options.getString("url", true);
-        const expStr = interaction.options.getString("expiration");
-        const password = interaction.options.getString("password");
-        const tag = interaction.options.getString("tag");
-        const title = interaction.options.getString("title");
-        const description = interaction.options.getString("description");
-        const unsafe = interaction.options.getBoolean("unsafe") || false;
+          flags: MessageFlags.Ephemeral
+        })
+        const targetUrl = interaction.options.getString('url', true)
+        const expStr = interaction.options.getString('expiration')
+        const password = interaction.options.getString('password')
+        const tag = interaction.options.getString('tag')
+        const title = interaction.options.getString('title')
+        const description = interaction.options.getString('description')
+        const unsafe = interaction.options.getBoolean('unsafe') || false
 
         if (targetUrl.length > 2048) {
           const errEmbed = ui.createErrorMessage(
-            "URL 길이 초과",
-            "URL 길이는 최대 2,048자까지 허용됩니다.",
-          );
-          await interaction.editReply(errEmbed);
-          return;
+            'URL 길이 초과',
+            'URL 길이는 최대 2,048자까지 허용됩니다.'
+          )
+          await interaction.editReply(errEmbed)
+          return
         }
 
-        const expirationResult = parseExpiration(expStr);
-        if (expirationResult.kind === "invalid") {
+        const expirationResult = parseExpiration(expStr)
+        if (expirationResult.kind === 'invalid') {
           await interaction.editReply(
-            ui.createErrorMessage("잘못된 만료 기간", expirationResult.error),
-          );
-          return;
+            ui.createErrorMessage('잘못된 만료 기간', expirationResult.error)
+          )
+          return
         }
-        const tagsResult = parseTagsInput(tag);
+        const tagsResult = parseTagsInput(tag)
         if (!tagsResult.valid) {
           await interaction.editReply(
-            ui.createErrorMessage("잘못된 태그", tagsResult.error),
-          );
-          return;
+            ui.createErrorMessage('잘못된 태그', tagsResult.error)
+          )
+          return
         }
 
-        const slug = generateSlug(interaction.user.id);
+        const slug = generateSlug(interaction.user.id)
 
         const res = await sinkClient.createLink({
           url: targetUrl,
           slug,
           expiration:
-            expirationResult.kind === "valid"
+            expirationResult.kind === 'valid'
               ? expirationResult.value
               : undefined,
           password: password || undefined,
           tags: tagsResult.value.length ? tagsResult.value : undefined,
           title: title || undefined,
           description: description || undefined,
-          unsafe,
-        });
+          unsafe
+        })
 
         if (!res.success || !res.link) {
           const errEmbed = ui.createErrorMessage(
-            "단축 링크 생성 실패",
-            res.error || "알 수 없는 오류가 발생했습니다.",
-          );
-          await interaction.editReply(errEmbed);
-          return;
+            '단축 링크 생성 실패',
+            res.error || '알 수 없는 오류가 발생했습니다.'
+          )
+          await interaction.editReply(errEmbed)
+          return
         }
 
-        const linkCard = ui.createLinkCard(res.link);
-        await interaction.editReply(linkCard);
-        return;
+        const linkCard = ui.createLinkCard(res.link)
+        await interaction.editReply(linkCard)
+        return
       }
 
       // 4. /link custom
-      if (subcommand === "custom") {
+      if (subcommand === 'custom') {
         await interaction.deferReply({
-          flags: MessageFlags.Ephemeral,
-        });
-        const targetUrl = interaction.options.getString("url", true);
-        const customSlug = interaction.options.getString("custom_slug", true);
-        const expStr = interaction.options.getString("expiration");
-        const password = interaction.options.getString("password");
-        const tag = interaction.options.getString("tag");
-        const title = interaction.options.getString("title");
-        const description = interaction.options.getString("description");
-        const unsafe = interaction.options.getBoolean("unsafe") || false;
+          flags: MessageFlags.Ephemeral
+        })
+        const targetUrl = interaction.options.getString('url', true)
+        const customSlug = interaction.options.getString('custom_slug', true)
+        const expStr = interaction.options.getString('expiration')
+        const password = interaction.options.getString('password')
+        const tag = interaction.options.getString('tag')
+        const title = interaction.options.getString('title')
+        const description = interaction.options.getString('description')
+        const unsafe = interaction.options.getBoolean('unsafe') || false
 
         if (targetUrl.length > 2048) {
           const errEmbed = ui.createErrorMessage(
-            "URL 길이 초과",
-            "URL 길이는 최대 2,048자까지 허용됩니다.",
-          );
-          await interaction.editReply(errEmbed);
-          return;
+            'URL 길이 초과',
+            'URL 길이는 최대 2,048자까지 허용됩니다.'
+          )
+          await interaction.editReply(errEmbed)
+          return
         }
 
         if (customSlug.length > 2048) {
           const errEmbed = ui.createErrorMessage(
-            "슬러그 길이 초과",
-            "슬러그 길이는 최대 2,048자까지 허용됩니다.",
-          );
-          await interaction.editReply(errEmbed);
-          return;
+            '슬러그 길이 초과',
+            '슬러그 길이는 최대 2,048자까지 허용됩니다.'
+          )
+          await interaction.editReply(errEmbed)
+          return
         }
 
-        const validation = validateCustomSlug(customSlug, interaction.user.id);
+        const validation = validateCustomSlug(customSlug, interaction.user.id)
         if (!validation.valid) {
           const errEmbed = ui.createErrorMessage(
-            "커스텀 슬러그 생성 권한 없음",
-            validation.error || "커스텀 슬러그를 생성할 수 없습니다.",
-          );
-          await interaction.editReply(errEmbed);
-          return;
+            '커스텀 슬러그 생성 권한 없음',
+            validation.error || '커스텀 슬러그를 생성할 수 없습니다.'
+          )
+          await interaction.editReply(errEmbed)
+          return
         }
 
-        const expirationResult = parseExpiration(expStr);
-        if (expirationResult.kind === "invalid") {
+        const expirationResult = parseExpiration(expStr)
+        if (expirationResult.kind === 'invalid') {
           await interaction.editReply(
-            ui.createErrorMessage("잘못된 만료 기간", expirationResult.error),
-          );
-          return;
+            ui.createErrorMessage('잘못된 만료 기간', expirationResult.error)
+          )
+          return
         }
-        const tagsResult = parseTagsInput(tag);
+        const tagsResult = parseTagsInput(tag)
         if (!tagsResult.valid) {
           await interaction.editReply(
-            ui.createErrorMessage("잘못된 태그", tagsResult.error),
-          );
-          return;
+            ui.createErrorMessage('잘못된 태그', tagsResult.error)
+          )
+          return
         }
         const res = await sinkClient.createLink({
           url: targetUrl,
           slug: customSlug,
           expiration:
-            expirationResult.kind === "valid"
+            expirationResult.kind === 'valid'
               ? expirationResult.value
               : undefined,
           password: password || undefined,
           tags: tagsResult.value.length ? tagsResult.value : undefined,
           title: title || undefined,
           description: description || undefined,
-          unsafe,
-        });
+          unsafe
+        })
 
         if (!res.success || !res.link) {
           const errEmbed = ui.createErrorMessage(
-            "커스텀 단축 링크 생성 실패",
-            res.error || "이미 사용 중인 슬러그이거나 오류가 발생했습니다.",
-          );
-          await interaction.editReply(errEmbed);
-          return;
+            '커스텀 단축 링크 생성 실패',
+            res.error || '이미 사용 중인 슬러그이거나 오류가 발생했습니다.'
+          )
+          await interaction.editReply(errEmbed)
+          return
         }
 
-        const linkCard = ui.createLinkCard(res.link);
-        await interaction.editReply(linkCard);
-        return;
+        const linkCard = ui.createLinkCard(res.link)
+        await interaction.editReply(linkCard)
+        return
       }
 
       // 5. /link list
-      if (subcommand === "list") {
+      if (subcommand === 'list') {
         await interaction.deferReply({
-          flags: MessageFlags.Ephemeral,
-        });
-        const inputTag = interaction.options.getString("tag")?.trim();
-        const page = interaction.options.getInteger("page") || 1;
-        const userHash = getUserHash(interaction.user.id);
+          flags: MessageFlags.Ephemeral
+        })
+        const inputTag = interaction.options.getString('tag')?.trim()
+        const page = interaction.options.getInteger('page') || 1
+        const userHash = getUserHash(interaction.user.id)
         const cleanTag = inputTag
-          ? inputTag.replace(/^#/, "").trim()
-          : undefined;
+          ? inputTag.replace(/^#/, '').trim()
+          : undefined
 
         const [catalog, countRes] = await Promise.all([
           collectOwnedLinks(userHash, { tag: cleanTag || undefined }),
           sinkClient.countLinks({
             q: userHash,
             tag: cleanTag || undefined,
-            status: "all",
-          }),
-        ]);
+            status: 'all'
+          })
+        ])
 
         if (!catalog.success) {
           const errEmbed = ui.createErrorMessage(
-            "목록 조회 실패",
-            catalog.error,
-          );
-          await interaction.editReply(errEmbed);
-          return;
+            '목록 조회 실패',
+            catalog.error
+          )
+          await interaction.editReply(errEmbed)
+          return
         }
 
-        const userLinks = catalog.links;
+        const userLinks = catalog.links
 
         if (userLinks.length === 0) {
           if (!catalog.complete) {
             const infoEmbed = ui.createInfoMessage(
-              "링크 조회 범위 제한",
+              '링크 조회 범위 제한',
               ui.formatPartialOwnedLinksNotice(
                 catalog.scannedRecords,
-                countRes.success ? countRes.count : undefined,
-              ),
-            );
-            await interaction.editReply(infoEmbed);
-            return;
+                countRes.success ? countRes.count : undefined
+              )
+            )
+            await interaction.editReply(infoEmbed)
+            return
           }
           const infoEmbed = ui.createInfoMessage(
-            "생성된 링크 없음",
+            '생성된 링크 없음',
             inputTag
-              ? `태그 \`#${inputTag.replace(/^#/, "")}\`에 해당하는 내 단축 링크가 없습니다.`
-              : "아직 생성한 단축 링크가 없습니다. `/link create` 또는 `/link dashboard`로 생성해보세요!",
-          );
-          await interaction.editReply(infoEmbed);
-          return;
+              ? `태그 \`#${inputTag.replace(/^#/, '')}\`에 해당하는 내 단축 링크가 없습니다.`
+              : '아직 생성한 단축 링크가 없습니다. `/link create` 또는 `/link dashboard`로 생성해보세요!'
+          )
+          await interaction.editReply(infoEmbed)
+          return
         }
 
-        const pageSize = 5;
-        const totalPages = Math.ceil(userLinks.length / pageSize) || 1;
-        const currentPage = Math.max(1, Math.min(page, totalPages));
-        const startIndex = (currentPage - 1) * pageSize;
+        const pageSize = 5
+        const totalPages = Math.ceil(userLinks.length / pageSize) || 1
+        const currentPage = Math.max(1, Math.min(page, totalPages))
+        const startIndex = (currentPage - 1) * pageSize
         // Only the rendered page needs click counts, so this is a single request.
         const paginated = (
           await attachClickCounts(
-            userLinks.slice(startIndex, startIndex + pageSize),
+            userLinks.slice(startIndex, startIndex + pageSize)
           )
-        ).links;
+        ).links
 
         const lines = paginated.map((l, idx) => {
-          const full = sinkClient.getFullShortUrl(l.slug);
-          const clickPart = `(${ui.formatClicks(l.clicks, " clicks")})`;
+          const full = sinkClient.getFullShortUrl(l.slug)
+          const clickPart = `(${ui.formatClicks(l.clicks, ' clicks')})`
           const truncated =
-            l.url.length > 50 ? `${l.url.substring(0, 47)}...` : l.url;
-          return `**${startIndex + idx + 1}.** [/${l.slug}](${full}) ${clickPart}\n   ↳ [🌐 원본 열기 ↗](${l.url}) • \`${truncated}\``;
-        });
+            l.url.length > 50 ? `${l.url.substring(0, 47)}...` : l.url
+          return `**${startIndex + idx + 1}.** [/${l.slug}](${full}) ${clickPart}\n   ↳ [🌐 원본 열기 ↗](${l.url}) • \`${truncated}\``
+        })
 
         const totalLabel = catalog.complete
           ? `총 ${userLinks.length.toLocaleString()}개`
-          : `검색 기준 ${Math.max(countRes.success ? countRes.count : 0, userLinks.length + 1).toLocaleString()}개 중 최신 ${userLinks.length.toLocaleString()}개`;
+          : `검색 기준 ${Math.max(countRes.success ? countRes.count : 0, userLinks.length + 1).toLocaleString()}개 중 최신 ${userLinks.length.toLocaleString()}개`
         const listEmbed = ui.createSuccessMessage(
           `내 링크 목록 (${totalLabel} / 페이지 ${currentPage}/${totalPages})`,
-          lines.join("\n\n"),
-        );
+          lines.join('\n\n')
+        )
 
-        await interaction.editReply(listEmbed);
-        return;
+        await interaction.editReply(listEmbed)
+        return
       }
 
       // 6. /link stats
-      if (subcommand === "stats") {
+      if (subcommand === 'stats') {
         await interaction.deferReply({
-          flags: MessageFlags.Ephemeral,
-        });
-        const slug = interaction.options.getString("slug", true).trim();
+          flags: MessageFlags.Ephemeral
+        })
+        const slug = interaction.options.getString('slug', true).trim()
 
         if (!verifyOwnership(slug, interaction.user.id)) {
           const errEmbed = ui.createErrorMessage(
-            "접근 권한 없음",
-            `\`/${slug}\` 링크의 통계를 조회할 권한이 없습니다. 본인이 생성한 링크만 조회할 수 있습니다.`,
-          );
-          await interaction.editReply(errEmbed);
-          return;
+            '접근 권한 없음',
+            `\`/${slug}\` 링크의 통계를 조회할 권한이 없습니다. 본인이 생성한 링크만 조회할 수 있습니다.`
+          )
+          await interaction.editReply(errEmbed)
+          return
         }
 
-        const res = await sinkClient.getStats(slug);
+        const res = await sinkClient.getStats(slug)
         if (!res.success || !res.stats) {
           const errEmbed = ui.createErrorMessage(
-            "통계 조회 실패",
-            res.error || "해당 링크의 통계 정보를 찾을 수 없습니다.",
-          );
-          await interaction.editReply(errEmbed);
-          return;
+            '통계 조회 실패',
+            res.error || '해당 링크의 통계 정보를 찾을 수 없습니다.'
+          )
+          await interaction.editReply(errEmbed)
+          return
         }
 
-        const statsCard = ui.createStatsCard(res.stats);
-        await interaction.editReply(statsCard);
-        return;
+        const statsCard = ui.createStatsCard(res.stats)
+        await interaction.editReply(statsCard)
+        return
       }
 
       // 7. /link delete
-      if (subcommand === "delete") {
+      if (subcommand === 'delete') {
         await interaction.deferReply({
-          flags: MessageFlags.Ephemeral,
-        });
-        const slug = interaction.options.getString("slug", true).trim();
+          flags: MessageFlags.Ephemeral
+        })
+        const slug = interaction.options.getString('slug', true).trim()
 
         if (!verifyOwnership(slug, interaction.user.id)) {
           const errEmbed = ui.createErrorMessage(
-            "삭제 권한 없음",
-            `\`/${slug}\` 링크를 삭제할 권한이 없습니다. 본인이 생성한 링크만 삭제할 수 있습니다.`,
-          );
-          await interaction.editReply(errEmbed);
-          return;
+            '삭제 권한 없음',
+            `\`/${slug}\` 링크를 삭제할 권한이 없습니다. 본인이 생성한 링크만 삭제할 수 있습니다.`
+          )
+          await interaction.editReply(errEmbed)
+          return
         }
 
-        const res = await sinkClient.deleteLink(slug);
+        const res = await sinkClient.deleteLink(slug)
         if (!res.success) {
           logger.warn(
-            `User ${interaction.user.tag} (${interaction.user.id}) failed to delete link '/${slug}': ${res.error}`,
-          );
+            `User ${interaction.user.tag} (${interaction.user.id}) failed to delete link '/${slug}': ${res.error}`
+          )
           const errEmbed = ui.createErrorMessage(
-            "삭제 실패",
-            res.error || "링크 삭제 중 오류가 발생했습니다.",
-          );
-          await interaction.editReply(errEmbed);
-          return;
+            '삭제 실패',
+            res.error || '링크 삭제 중 오류가 발생했습니다.'
+          )
+          await interaction.editReply(errEmbed)
+          return
         }
 
         const successEmbed = ui.createSuccessMessage(
-          "링크 삭제 완료",
-          `단축 링크 \`/${slug}\`이(가) 성공적으로 영구 삭제되었습니다.`,
-        );
-        await interaction.editReply(successEmbed);
-        return;
+          '링크 삭제 완료',
+          `단축 링크 \`/${slug}\`이(가) 성공적으로 영구 삭제되었습니다.`
+        )
+        await interaction.editReply(successEmbed)
+        return
       }
 
       // 8. /link check
-      if (subcommand === "check") {
+      if (subcommand === 'check') {
         await interaction.deferReply({
-          flags: MessageFlags.Ephemeral,
-        });
-        const targetUrl = interaction.options.getString("url", true).trim();
+          flags: MessageFlags.Ephemeral
+        })
+        const targetUrl = interaction.options.getString('url', true).trim()
 
-        const checkResult = await sinkClient.checkUrlHealth(targetUrl);
+        const checkResult = await sinkClient.checkUrlHealth(targetUrl)
         if (checkResult.isAlive) {
           const successEmbed = ui.createSuccessMessage(
-            "웹사이트 정상 작동",
-            `**타겟 URL:** ${checkResult.url}\n**HTTP 상태:** \`${checkResult.status} ${checkResult.statusText}\`\n**응답 속도:** \`${checkResult.responseTimeMs}ms\`\n**콘텐츠 타입:** \`${checkResult.contentType || "알 수 없음"}\``,
-          );
-          await interaction.editReply(successEmbed);
+            '웹사이트 정상 작동',
+            `**타겟 URL:** ${checkResult.url}\n**HTTP 상태:** \`${checkResult.status} ${checkResult.statusText}\`\n**응답 속도:** \`${checkResult.responseTimeMs}ms\`\n**콘텐츠 타입:** \`${checkResult.contentType || '알 수 없음'}\``
+          )
+          await interaction.editReply(successEmbed)
         } else {
           const errEmbed = ui.createErrorMessage(
-            "웹사이트 연결 불가 또는 오류",
-            `**타겟 URL:** ${checkResult.url}\n**상태:** \`${checkResult.status !== null ? checkResult.status : "연결 실패"}\` (${checkResult.statusText})\n**경과 시간:** \`${checkResult.responseTimeMs}ms\``,
-          );
-          await interaction.editReply(errEmbed);
+            '웹사이트 연결 불가 또는 오류',
+            `**타겟 URL:** ${checkResult.url}\n**상태:** \`${checkResult.status !== null ? checkResult.status : '연결 실패'}\` (${checkResult.statusText})\n**경과 시간:** \`${checkResult.responseTimeMs}ms\``
+          )
+          await interaction.editReply(errEmbed)
         }
-        return;
+        return
       }
     } catch (error) {
-      logger.error("Error executing /link command:", error);
+      logger.error('Error executing /link command:', error)
       const errEmbed = ui.createErrorMessage(
-        "명령어 실행 중 오류 발생",
+        '명령어 실행 중 오류 발생',
         error instanceof Error
           ? error.message
-          : "알 수 없는 오류가 발생했습니다.",
-      );
+          : '알 수 없는 오류가 발생했습니다.'
+      )
       if (interaction.deferred || interaction.replied) {
-        await interaction.editReply(errEmbed);
+        await interaction.editReply(errEmbed)
       } else {
-        await interaction.reply({ ...errEmbed, ephemeral: true });
+        await interaction.reply({ ...errEmbed, ephemeral: true })
       }
     }
-  },
-};
+  }
+}
 
 /**
  * Validates whether the bot has required access to monitor messages in the given channel or thread.
@@ -875,44 +860,44 @@ export const linkCommand: Command = {
  */
 export async function validateBotChannelAccess(
   channel: {
-    id: string;
-    type?: ChannelType | number;
-    permissionsFor?: (member: any) => { has: (perm: bigint) => boolean } | null;
+    id: string
+    type?: ChannelType | number
+    permissionsFor?: (member: any) => { has: (perm: bigint) => boolean } | null
     members?: {
-      cache: { has: (id: string) => boolean };
-      fetchMe?: () => Promise<any>;
-    };
+      cache: { has: (id: string) => boolean }
+      fetchMe?: () => Promise<any>
+    }
   },
-  botMember: { id: string } | null,
+  botMember: { id: string } | null
 ): Promise<{ canAccess: boolean; errorTitle?: string; errorMessage?: string }> {
   if (!botMember || !channel.permissionsFor) {
-    return { canAccess: true };
+    return { canAccess: true }
   }
 
-  const perms = channel.permissionsFor(botMember);
+  const perms = channel.permissionsFor(botMember)
   if (perms && !perms.has(PermissionFlagsBits.ViewChannel)) {
     return {
       canAccess: false,
-      errorTitle: "봇 권한 부족",
-      errorMessage: `<#${channel.id}> 대상에 대해 봇에게 \`채널 보기(ViewChannel)\` 권한이 없습니다.\n봇이 메시지를 감지할 수 있도록 해당 채널 또는 카테고리의 권한을 먼저 허용해주세요.`,
-    };
+      errorTitle: '봇 권한 부족',
+      errorMessage: `<#${channel.id}> 대상에 대해 봇에게 \`채널 보기(ViewChannel)\` 권한이 없습니다.\n봇이 메시지를 감지할 수 있도록 해당 채널 또는 카테고리의 권한을 먼저 허용해주세요.`
+    }
   }
 
   // PrivateThread access check: bot must have ManageThreads OR confirmed membership
   if (channel.type === ChannelType.PrivateThread) {
     const hasManageThreads =
-      perms?.has(PermissionFlagsBits.ManageThreads) ?? false;
-    let isThreadMember = false;
+      perms?.has(PermissionFlagsBits.ManageThreads) ?? false
+    let isThreadMember = false
 
     if (!hasManageThreads && channel.members) {
       if (channel.members.cache.has(botMember.id)) {
-        isThreadMember = true;
-      } else if (typeof channel.members.fetchMe === "function") {
+        isThreadMember = true
+      } else if (typeof channel.members.fetchMe === 'function') {
         try {
-          const member = await channel.members.fetchMe();
-          isThreadMember = Boolean(member);
+          const member = await channel.members.fetchMe()
+          isThreadMember = Boolean(member)
         } catch {
-          isThreadMember = false;
+          isThreadMember = false
         }
       }
     }
@@ -920,13 +905,13 @@ export async function validateBotChannelAccess(
     if (!hasManageThreads && !isThreadMember) {
       return {
         canAccess: false,
-        errorTitle: "비공개 스레드 접근 불가",
-        errorMessage: `<#${channel.id}> 비공개 스레드의 메시지를 감지하려면 봇에게 \`스레드 관리(ManageThreads)\` 권한이 있거나, 봇이 해당 스레드에 멤버로 추가되어 있어야 합니다.`,
-      };
+        errorTitle: '비공개 스레드 접근 불가',
+        errorMessage: `<#${channel.id}> 비공개 스레드의 메시지를 감지하려면 봇에게 \`스레드 관리(ManageThreads)\` 권한이 있거나, 봇이 해당 스레드에 멤버로 추가되어 있어야 합니다.`
+      }
     }
   }
 
-  return { canAccess: true };
+  return { canAccess: true }
 }
 
 /**
@@ -937,364 +922,363 @@ export async function validateBotChannelAccess(
  */
 async function handleWatchCommand(
   interaction: ChatInputCommandInteraction,
-  subcommand: string,
+  subcommand: string
 ): Promise<void> {
   if (!interaction.guildId || !interaction.guild) {
     const errEmbed = ui.createErrorMessage(
-      "서버 전용 명령어",
-      "감시 명령어는 디스코드 서버 내에서만 실행할 수 있습니다.",
-    );
-    await interaction.reply({ ...errEmbed, ephemeral: true });
-    return;
+      '서버 전용 명령어',
+      '감시 명령어는 디스코드 서버 내에서만 실행할 수 있습니다.'
+    )
+    await interaction.reply({ ...errEmbed, ephemeral: true })
+    return
   }
 
-  const guild = interaction.guild;
+  const guild = interaction.guild
 
   // Permission Check: ManageGuild
-  const member = interaction.member;
+  const member = interaction.member
   if (
     !member ||
     !interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild)
   ) {
     const errEmbed = ui.createErrorMessage(
-      "권한 부족",
-      "이 명령어를 실행하려면 `서버 관리(ManageGuild)` 권한이 필요합니다.",
-    );
-    await interaction.reply({ ...errEmbed, ephemeral: true });
-    return;
+      '권한 부족',
+      '이 명령어를 실행하려면 `서버 관리(ManageGuild)` 권한이 필요합니다.'
+    )
+    await interaction.reply({ ...errEmbed, ephemeral: true })
+    return
   }
 
   await interaction.deferReply({
-    flags: MessageFlags.Ephemeral,
-  });
+    flags: MessageFlags.Ephemeral
+  })
 
-  if (subcommand === "add") {
-    const channel = interaction.options.getChannel("channel", true);
+  if (subcommand === 'add') {
+    const channel = interaction.options.getChannel('channel', true)
 
     // Bot channel/thread access check (strict mode)
     const botMember =
-      guild.members.me ?? (await guild.members.fetchMe().catch(() => null));
+      guild.members.me ?? (await guild.members.fetchMe().catch(() => null))
     const accessCheck = await validateBotChannelAccess(
       channel as any,
-      botMember,
-    );
+      botMember
+    )
     if (!accessCheck.canAccess) {
       const errEmbed = ui.createErrorMessage(
-        accessCheck.errorTitle ?? "봇 권한 부족",
-        accessCheck.errorMessage ?? "채널에 접근할 수 없습니다.",
-      );
-      await interaction.editReply(errEmbed);
-      return;
+        accessCheck.errorTitle ?? '봇 권한 부족',
+        accessCheck.errorMessage ?? '채널에 접근할 수 없습니다.'
+      )
+      await interaction.editReply(errEmbed)
+      return
     }
 
     const res = await watchService.addWatchChannel(
       interaction.guildId,
       channel.id,
-      interaction.user.id,
-    );
+      interaction.user.id
+    )
 
     if (!res.success) {
       const errEmbed = ui.createErrorMessage(
-        "감시 채널 등록 실패",
-        res.error || "오류가 발생했습니다.",
-      );
-      await interaction.editReply(errEmbed);
-      return;
+        '감시 채널 등록 실패',
+        res.error || '오류가 발생했습니다.'
+      )
+      await interaction.editReply(errEmbed)
+      return
     }
 
-    const isCategory = channel.type === ChannelType.GuildCategory;
+    const isCategory = channel.type === ChannelType.GuildCategory
     const isForum =
       channel.type === ChannelType.GuildForum ||
-      channel.type === ChannelType.GuildMedia;
-    let successDetail = `<#${channel.id}> 채널이 URL 자동 단축 감시 대상에 등록되었습니다.\n이제 해당 채널에 긴 URL이 올라오면 작성자의 DM으로 즉시 단축 URL이 전송됩니다.`;
+      channel.type === ChannelType.GuildMedia
+    let successDetail = `<#${channel.id}> 채널이 URL 자동 단축 감시 대상에 등록되었습니다.\n이제 해당 채널에 긴 URL이 올라오면 작성자의 DM으로 즉시 단축 URL이 전송됩니다.`
 
     if (isCategory) {
-      successDetail = `<#${channel.id}> 카테고리가 URL 자동 단축 감시 대상에 등록되었습니다.\n해당 카테고리 내의 모든 하위 채널과 스레드(향후 생성 채널 포함)의 URL이 자동 감시됩니다.`;
+      successDetail = `<#${channel.id}> 카테고리가 URL 자동 단축 감시 대상에 등록되었습니다.\n해당 카테고리 내의 모든 하위 채널과 스레드(향후 생성 채널 포함)의 URL이 자동 감시됩니다.`
     } else if (isForum) {
-      successDetail = `<#${channel.id}> 포럼이 URL 자동 단축 감시 대상에 등록되었습니다.\n포럼 내 모든 게시글 및 댓글의 URL이 자동 감시됩니다.`;
+      successDetail = `<#${channel.id}> 포럼이 URL 자동 단축 감시 대상에 등록되었습니다.\n포럼 내 모든 게시글 및 댓글의 URL이 자동 감시됩니다.`
     }
 
     const successEmbed = ui.createSuccessMessage(
-      "감시 대상 등록 완료",
-      successDetail,
-    );
-    await interaction.editReply(successEmbed);
-    return;
+      '감시 대상 등록 완료',
+      successDetail
+    )
+    await interaction.editReply(successEmbed)
+    return
   }
 
-  if (subcommand === "remove") {
-    const channel = interaction.options.getChannel("channel", true);
+  if (subcommand === 'remove') {
+    const channel = interaction.options.getChannel('channel', true)
     const res = await watchService.removeWatchChannel(
       interaction.guildId,
-      channel.id,
-    );
+      channel.id
+    )
 
     if (!res.success) {
       const watchingParentId = watchService.findWatchingParent(
         interaction.guildId,
-        channel,
-      );
+        channel
+      )
 
-      let errorMsg = res.error || "오류가 발생했습니다.";
+      let errorMsg = res.error || '오류가 발생했습니다.'
       if (watchingParentId) {
-        errorMsg = `<#${channel.id}> 대상은 직접 등록되어 있지 않지만, 상위 대상(<#${watchingParentId}>)을 통해 상속 감시 중입니다.\n감시를 해제하려면 상위 대상(<#${watchingParentId}>)을 지정하여 삭제해주세요.`;
+        errorMsg = `<#${channel.id}> 대상은 직접 등록되어 있지 않지만, 상위 대상(<#${watchingParentId}>)을 통해 상속 감시 중입니다.\n감시를 해제하려면 상위 대상(<#${watchingParentId}>)을 지정하여 삭제해주세요.`
       }
 
-      const errEmbed = ui.createErrorMessage("감시 채널 해제 실패", errorMsg);
-      await interaction.editReply(errEmbed);
-      return;
+      const errEmbed = ui.createErrorMessage('감시 채널 해제 실패', errorMsg)
+      await interaction.editReply(errEmbed)
+      return
     }
 
     const successEmbed = ui.createSuccessMessage(
-      "감시 채널 해제 완료",
-      `<#${channel.id}> 대상이 URL 감시 대상에서 해제되었습니다.`,
-    );
-    await interaction.editReply(successEmbed);
-    return;
+      '감시 채널 해제 완료',
+      `<#${channel.id}> 대상이 URL 감시 대상에서 해제되었습니다.`
+    )
+    await interaction.editReply(successEmbed)
+    return
   }
 
-  if (subcommand === "list") {
-    const channels = await watchService.getWatchedChannels(interaction.guildId);
+  if (subcommand === 'list') {
+    const channels = await watchService.getWatchedChannels(interaction.guildId)
 
     if (channels.length === 0) {
       const infoEmbed = ui.createInfoMessage(
-        "감시 대상 채널 없음",
-        "현재 서버에 등록된 URL 감시 채널이 없습니다.\n`/link watch add <channel>`로 등록할 수 있습니다.",
-      );
-      await interaction.editReply(infoEmbed);
-      return;
+        '감시 대상 채널 없음',
+        '현재 서버에 등록된 URL 감시 채널이 없습니다.\n`/link watch add <channel>`로 등록할 수 있습니다.'
+      )
+      await interaction.editReply(infoEmbed)
+      return
     }
 
     const getBadge = (channelId: string) => {
-      const ch = guild.channels.cache.get(channelId);
+      const ch = guild.channels.cache.get(channelId)
       if (!ch) {
-        return { icon: "❓", label: "알 수 없음/삭제됨" };
+        return { icon: '❓', label: '알 수 없음/삭제됨' }
       }
       switch (ch.type) {
         case ChannelType.GuildCategory:
-          return { icon: "📁", label: "카테고리" };
+          return { icon: '📁', label: '카테고리' }
         case ChannelType.GuildForum:
-          return { icon: "📌", label: "포럼" };
+          return { icon: '📌', label: '포럼' }
         case ChannelType.GuildMedia:
-          return { icon: "🖼️", label: "미디어" };
+          return { icon: '🖼️', label: '미디어' }
         case ChannelType.GuildVoice:
-          return { icon: "🗣️", label: "음성 채팅" };
+          return { icon: '🗣️', label: '음성 채팅' }
         case ChannelType.GuildStageVoice:
-          return { icon: "🎭", label: "스테이지" };
+          return { icon: '🎭', label: '스테이지' }
         case ChannelType.GuildAnnouncement:
-          return { icon: "📢", label: "공지" };
+          return { icon: '📢', label: '공지' }
         case ChannelType.AnnouncementThread:
         case ChannelType.PublicThread:
         case ChannelType.PrivateThread:
-          return { icon: "🧵", label: "스레드" };
-        case ChannelType.GuildText:
+          return { icon: '🧵', label: '스레드' }
         default:
-          return { icon: "💬", label: "텍스트" };
+          return { icon: '💬', label: '텍스트' }
       }
-    };
+    }
 
     const channelListStr = channels
       .map((c, i) => {
-        const badge = getBadge(c.channelId);
-        return `${i + 1}. ${badge.icon} **[${badge.label}]** <#${c.channelId}> (등록자: <@${c.createdBy}>, 등록일: <t:${Math.floor(new Date(c.createdAt).getTime() / 1000)}:d>)`;
+        const badge = getBadge(c.channelId)
+        return `${i + 1}. ${badge.icon} **[${badge.label}]** <#${c.channelId}> (등록자: <@${c.createdBy}>, 등록일: <t:${Math.floor(new Date(c.createdAt).getTime() / 1000)}:d>)`
       })
-      .join("\n");
+      .join('\n')
 
     const listEmbed = ui.createSuccessMessage(
       `현재 서버의 감시 대상 목록 (${channels.length}개)`,
-      channelListStr,
-    );
-    await interaction.editReply(listEmbed);
-    return;
+      channelListStr
+    )
+    await interaction.editReply(listEmbed)
+    return
   }
 
-  if (subcommand === "min-length") {
-    const lengthOpt = interaction.options.getInteger("length");
+  if (subcommand === 'min-length') {
+    const lengthOpt = interaction.options.getInteger('length')
 
     // 1. If length is omitted: show current status
     if (lengthOpt === null) {
-      const guildCfg = guildConfigService.getGuildConfig(interaction.guildId);
+      const guildCfg = guildConfigService.getGuildConfig(interaction.guildId)
 
       const statusDesc =
         guildCfg.autoShortenMinUrlLength === null
           ? `🔄 **전역 기본값 상속 (\`${config.AUTO_SHORTEN_MIN_URL_LENGTH}자\`)** — 서버 개별 설정이 없어 ENV 전역 기본값을 따릅니다.`
           : guildCfg.autoShortenMinUrlLength === 0
             ? `⚡ **전체 단축 (제한 없음)** — 이 서버의 감시 채널에서는 모든 유효 URL이 단축됩니다.`
-            : `🎯 **최소 \`${guildCfg.autoShortenMinUrlLength}자\` 이상** — ${guildCfg.autoShortenMinUrlLength}자 이상의 URL만 단축됩니다.`;
+            : `🎯 **최소 \`${guildCfg.autoShortenMinUrlLength}자\` 이상** — ${guildCfg.autoShortenMinUrlLength}자 이상의 URL만 단축됩니다.`
 
       const infoEmbed = ui.createInfoMessage(
-        "서버 URL 최소 길이 설정 조회",
+        '서버 URL 최소 길이 설정 조회',
         `**서버 설정:** ${statusDesc}\n` +
           `**전역 ENV 기본값:** \`${config.AUTO_SHORTEN_MIN_URL_LENGTH}자\`\n\n` +
           `💡 **설정 변경 방법:**\n` +
           `• \`/link watch min-length length:50\` → 50자 이상만 단축\n` +
           `• \`/link watch min-length length:0\` → 모든 URL 단축 (제한 해제)\n` +
-          `• \`/link watch min-length length:-1\` → 초기화 (전역 기본값 상속)`,
-      );
-      await interaction.editReply(infoEmbed);
-      return;
+          `• \`/link watch min-length length:-1\` → 초기화 (전역 기본값 상속)`
+      )
+      await interaction.editReply(infoEmbed)
+      return
     }
 
     // 2. If length is provided: update guild config
-    const targetVal = lengthOpt === -1 ? null : lengthOpt;
+    const targetVal = lengthOpt === -1 ? null : lengthOpt
     const res = await guildConfigService.setGuildConfig(interaction.guildId, {
-      autoShortenMinUrlLength: targetVal,
-    });
+      autoShortenMinUrlLength: targetVal
+    })
 
     if (!res.success) {
       const errEmbed = ui.createErrorMessage(
-        "서버 설정 변경 실패",
-        res.error || "오류가 발생했습니다.",
-      );
-      await interaction.editReply(errEmbed);
-      return;
+        '서버 설정 변경 실패',
+        res.error || '오류가 발생했습니다.'
+      )
+      await interaction.editReply(errEmbed)
+      return
     }
 
     const resultDesc =
       targetVal === null
         ? `서버 설정이 초기화되어 **전역 기본값(\`${config.AUTO_SHORTEN_MIN_URL_LENGTH}자\`)**을 상속받습니다.`
         : targetVal === 0
-          ? "이 서버의 감시 채널에서 **길이 제한 없이 모든 URL**을 단축하도록 설정되었습니다."
-          : `이 서버의 감시 채널에서 **최소 \`${targetVal}자\` 이상인 URL**만 단축하도록 설정되었습니다.`;
+          ? '이 서버의 감시 채널에서 **길이 제한 없이 모든 URL**을 단축하도록 설정되었습니다.'
+          : `이 서버의 감시 채널에서 **최소 \`${targetVal}자\` 이상인 URL**만 단축하도록 설정되었습니다.`
 
     const successEmbed = ui.createSuccessMessage(
-      "서버 URL 최소 길이 설정 완료",
-      resultDesc,
-    );
-    await interaction.editReply(successEmbed);
-    return;
+      '서버 URL 최소 길이 설정 완료',
+      resultDesc
+    )
+    await interaction.editReply(successEmbed)
+    return
   }
 
-  if (subcommand === "ignored-domains") {
-    const action = interaction.options.getString("action", true);
-    const rawDomain = interaction.options.getString("domain")?.trim();
+  if (subcommand === 'ignored-domains') {
+    const action = interaction.options.getString('action', true)
+    const rawDomain = interaction.options.getString('domain')?.trim()
 
-    if (action === "list") {
-      const guildCfg = guildConfigService.getGuildConfig(interaction.guildId);
-      const systemDefaults = getAllSystemDefaultDomains();
-      const customDomains = guildCfg.ignoredDomains || [];
+    if (action === 'list') {
+      const guildCfg = guildConfigService.getGuildConfig(interaction.guildId)
+      const systemDefaults = getAllSystemDefaultDomains()
+      const customDomains = guildCfg.ignoredDomains || []
 
-      const systemListStr = systemDefaults.map((d) => `• \`${d}\``).join("\n");
+      const systemListStr = systemDefaults.map(d => `• \`${d}\``).join('\n')
       const customListStr =
         customDomains.length > 0
-          ? customDomains.map((d) => `• \`${d}\``).join("\n")
-          : "*이 서버에 추가 등록된 제외 도메인이 없습니다.*";
+          ? customDomains.map(d => `• \`${d}\``).join('\n')
+          : '*이 서버에 추가 등록된 제외 도메인이 없습니다.*'
 
       const listEmbed = ui.createInfoMessage(
-        "제외 도메인 목록 조회",
+        '제외 도메인 목록 조회',
         `**🛡️ 시스템 기본 제외 도메인 (${systemDefaults.length}개):**\n${systemListStr}\n*(하위 서브도메인 자동 포함)*\n\n` +
           `**⚙️ 이 서버의 추가 제외 도메인 (${customDomains.length}/50개):**\n${customListStr}\n\n` +
           `💡 **도메인 관리 방법:**\n` +
           `• \`/link watch ignored-domains action:add domain:도메인\` → 서버 제외 도메인 추가\n` +
           `• \`/link watch ignored-domains action:remove domain:도메인\` → 서버 제외 도메인 삭제\n` +
-          `• \`/link watch ignored-domains action:reset\` → 추가 제외 도메인 초기화`,
-      );
-      await interaction.editReply(listEmbed);
-      return;
+          `• \`/link watch ignored-domains action:reset\` → 추가 제외 도메인 초기화`
+      )
+      await interaction.editReply(listEmbed)
+      return
     }
 
-    if (action === "reset") {
+    if (action === 'reset') {
       const res = await guildConfigService.resetIgnoredDomains(
-        interaction.guildId,
-      );
+        interaction.guildId
+      )
       if (!res.success) {
         const errEmbed = ui.createErrorMessage(
-          "제외 도메인 초기화 실패",
-          res.error || "오류가 발생했습니다.",
-        );
-        await interaction.editReply(errEmbed);
-        return;
+          '제외 도메인 초기화 실패',
+          res.error || '오류가 발생했습니다.'
+        )
+        await interaction.editReply(errEmbed)
+        return
       }
 
       const successEmbed = ui.createSuccessMessage(
-        "제외 도메인 초기화 완료",
-        "이 서버의 추가 제외 도메인 목록이 초기화되었습니다.\n이제 시스템 기본 도메인만 제외 적용됩니다.",
-      );
-      await interaction.editReply(successEmbed);
-      return;
+        '제외 도메인 초기화 완료',
+        '이 서버의 추가 제외 도메인 목록이 초기화되었습니다.\n이제 시스템 기본 도메인만 제외 적용됩니다.'
+      )
+      await interaction.editReply(successEmbed)
+      return
     }
 
-    if (action === "add") {
+    if (action === 'add') {
       if (!rawDomain) {
         const errEmbed = ui.createErrorMessage(
-          "도메인 미입력",
-          "추가할 도메인을 입력해주세요. (예: `domain: twitter.com`)",
-        );
-        await interaction.editReply(errEmbed);
-        return;
+          '도메인 미입력',
+          '추가할 도메인을 입력해주세요. (예: `domain: twitter.com`)'
+        )
+        await interaction.editReply(errEmbed)
+        return
       }
 
       const res = await guildConfigService.addIgnoredDomain(
         interaction.guildId,
-        rawDomain,
-      );
+        rawDomain
+      )
 
       if (!res.success) {
-        let errTitle = "도메인 추가 실패";
-        let errMsg = res.error || "오류가 발생했습니다.";
-        if (res.error === "is_system_default") {
-          errTitle = "기본 제외 도메인 안내";
-          errMsg = `\`${rawDomain}\` 은(는) 이미 시스템 기본 제외 도메인에 포함되어 있습니다.\nTenor, Giphy, Discord CDN, Imgur 등은 별도 등록 없이 항상 자동 제외됩니다.`;
-        } else if (res.error === "already_exists") {
-          errTitle = "중복 등록 안내";
-          errMsg = `\`${rawDomain}\` 은(는) 이미 이 서버의 제외 목록에 등록되어 있습니다.`;
-        } else if (res.error === "limit_exceeded") {
-          errTitle = "등록 개수 초과";
-          errMsg = `서버당 추가 제외 도메인은 최대 50개까지만 등록할 수 있습니다.`;
+        let errTitle = '도메인 추가 실패'
+        let errMsg = res.error || '오류가 발생했습니다.'
+        if (res.error === 'is_system_default') {
+          errTitle = '기본 제외 도메인 안내'
+          errMsg = `\`${rawDomain}\` 은(는) 이미 시스템 기본 제외 도메인에 포함되어 있습니다.\nTenor, Giphy, Discord CDN, Imgur 등은 별도 등록 없이 항상 자동 제외됩니다.`
+        } else if (res.error === 'already_exists') {
+          errTitle = '중복 등록 안내'
+          errMsg = `\`${rawDomain}\` 은(는) 이미 이 서버의 제외 목록에 등록되어 있습니다.`
+        } else if (res.error === 'limit_exceeded') {
+          errTitle = '등록 개수 초과'
+          errMsg = `서버당 추가 제외 도메인은 최대 50개까지만 등록할 수 있습니다.`
         }
 
-        const errEmbed = ui.createErrorMessage(errTitle, errMsg);
-        await interaction.editReply(errEmbed);
-        return;
+        const errEmbed = ui.createErrorMessage(errTitle, errMsg)
+        await interaction.editReply(errEmbed)
+        return
       }
 
-      const normalized = normalizeDomain(rawDomain);
+      const normalized = normalizeDomain(rawDomain)
       const successEmbed = ui.createSuccessMessage(
-        "제외 도메인 추가 완료",
-        `도메인 **\`${normalized}\`** 및 하위 서브도메인이 이 서버의 단축 제외 목록에 추가되었습니다.\n(현재 서버 등록 도메인: ${res.config.ignoredDomains.length}/50개)`,
-      );
-      await interaction.editReply(successEmbed);
-      return;
+        '제외 도메인 추가 완료',
+        `도메인 **\`${normalized}\`** 및 하위 서브도메인이 이 서버의 단축 제외 목록에 추가되었습니다.\n(현재 서버 등록 도메인: ${res.config.ignoredDomains.length}/50개)`
+      )
+      await interaction.editReply(successEmbed)
+      return
     }
 
-    if (action === "remove") {
+    if (action === 'remove') {
       if (!rawDomain) {
         const errEmbed = ui.createErrorMessage(
-          "도메인 미입력",
-          "삭제할 도메인을 입력해주세요. (예: `domain: twitter.com`)",
-        );
-        await interaction.editReply(errEmbed);
-        return;
+          '도메인 미입력',
+          '삭제할 도메인을 입력해주세요. (예: `domain: twitter.com`)'
+        )
+        await interaction.editReply(errEmbed)
+        return
       }
 
       const res = await guildConfigService.removeIgnoredDomain(
         interaction.guildId,
-        rawDomain,
-      );
+        rawDomain
+      )
 
       if (!res.success) {
-        let errTitle = "도메인 삭제 실패";
-        let errMsg = res.error || "오류가 발생했습니다.";
-        if (res.error === "is_system_default") {
-          errTitle = "기본 도메인 삭제 불가";
-          errMsg = `\`${rawDomain}\` 은(는) 시스템 기본 제외 도메인이므로 서버 설정에서 삭제할 수 없습니다.`;
-        } else if (res.error === "not_found") {
-          errTitle = "미등록 도메인 안내";
-          errMsg = `\`${rawDomain}\` 은(는) 이 서버의 추가 제외 목록에 등록되어 있지 않습니다.`;
+        let errTitle = '도메인 삭제 실패'
+        let errMsg = res.error || '오류가 발생했습니다.'
+        if (res.error === 'is_system_default') {
+          errTitle = '기본 도메인 삭제 불가'
+          errMsg = `\`${rawDomain}\` 은(는) 시스템 기본 제외 도메인이므로 서버 설정에서 삭제할 수 없습니다.`
+        } else if (res.error === 'not_found') {
+          errTitle = '미등록 도메인 안내'
+          errMsg = `\`${rawDomain}\` 은(는) 이 서버의 추가 제외 목록에 등록되어 있지 않습니다.`
         }
 
-        const errEmbed = ui.createErrorMessage(errTitle, errMsg);
-        await interaction.editReply(errEmbed);
-        return;
+        const errEmbed = ui.createErrorMessage(errTitle, errMsg)
+        await interaction.editReply(errEmbed)
+        return
       }
 
-      const normalized = normalizeDomain(rawDomain);
+      const normalized = normalizeDomain(rawDomain)
       const successEmbed = ui.createSuccessMessage(
-        "제외 도메인 삭제 완료",
-        `도메인 **\`${normalized}\`** 이(가) 이 서버의 단축 제외 목록에서 삭제되었습니다.\n(현재 서버 등록 도메인: ${res.config.ignoredDomains.length}/50개)`,
-      );
-      await interaction.editReply(successEmbed);
-      return;
+        '제외 도메인 삭제 완료',
+        `도메인 **\`${normalized}\`** 이(가) 이 서버의 단축 제외 목록에서 삭제되었습니다.\n(현재 서버 등록 도메인: ${res.config.ignoredDomains.length}/50개)`
+      )
+      await interaction.editReply(successEmbed)
+      return
     }
   }
 }
@@ -1304,299 +1288,299 @@ async function handleWatchCommand(
  */
 async function handleAdminCommand(
   interaction: ChatInputCommandInteraction,
-  subcommand: string,
+  subcommand: string
 ): Promise<void> {
   if (!isAdmin(interaction.user.id)) {
     const errEmbed = ui.createErrorMessage(
-      "관리자 권한 필요",
-      "이 명령어는 `.env`의 `ADMIN_USER_IDS`에 등록된 봇 관리자만 실행할 수 있습니다.",
-    );
-    await interaction.reply({ ...errEmbed, ephemeral: true });
-    return;
+      '관리자 권한 필요',
+      '이 명령어는 `.env`의 `ADMIN_USER_IDS`에 등록된 봇 관리자만 실행할 수 있습니다.'
+    )
+    await interaction.reply({ ...errEmbed, ephemeral: true })
+    return
   }
 
   await interaction.deferReply({
-    flags: MessageFlags.Ephemeral,
-  });
+    flags: MessageFlags.Ephemeral
+  })
 
   // 1. /link admin overview
-  if (subcommand === "overview") {
+  if (subcommand === 'overview') {
     const [totalCountRes, activeCountRes, expiredCountRes, topLinksRes] =
       await Promise.all([
-        sinkClient.countLinks({ status: "all" }),
-        sinkClient.countLinks({ status: "active" }),
-        sinkClient.countLinks({ status: "expired" }),
-        sinkClient.listLinks(undefined, 1, 100),
-      ]);
+        sinkClient.countLinks({ status: 'all' }),
+        sinkClient.countLinks({ status: 'active' }),
+        sinkClient.countLinks({ status: 'expired' }),
+        sinkClient.listLinks(undefined, 1, 100)
+      ])
 
     const totalLinks = totalCountRes.success
       ? totalCountRes.count
-      : topLinksRes.list?.length || 0;
+      : topLinksRes.list?.length || 0
     const activeLinks = activeCountRes.success
       ? activeCountRes.count
-      : totalLinks;
-    const expiredLinks = expiredCountRes.success ? expiredCountRes.count : 0;
+      : totalLinks
+    const expiredLinks = expiredCountRes.success ? expiredCountRes.count : 0
 
-    const clickRes = await attachClickCounts(topLinksRes.list || []);
-    const sampleLinks = clickRes.links;
+    const clickRes = await attachClickCounts(topLinksRes.list || [])
+    const sampleLinks = clickRes.links
     // Unresolved clicks are unknown, not zero, so they must not be summed into
     // a settled figure: `partial` keeps the total and the ranking honest.
-    let totalClicks: number | undefined;
+    let totalClicks: number | undefined
     for (const l of sampleLinks) {
-      if (l.clicks !== undefined) totalClicks = (totalClicks ?? 0) + l.clicks;
+      if (l.clicks !== undefined) totalClicks = (totalClicks ?? 0) + l.clicks
     }
-    if (clickRes.partial) totalClicks = undefined;
+    if (clickRes.partial) totalClicks = undefined
 
     // Ranking by clicks is only meaningful when every sample resolved.
     const rankable = clickRes.partial
       ? []
       : [...sampleLinks]
           .sort((a, b) => (b.clicks ?? 0) - (a.clicks ?? 0))
-          .slice(0, 5);
+          .slice(0, 5)
 
     const topLines = rankable.map((l, i) => {
-      const full = sinkClient.getFullShortUrl(l.slug);
+      const full = sinkClient.getFullShortUrl(l.slug)
       const truncated =
-        l.url.length > 45 ? `${l.url.substring(0, 42)}...` : l.url;
-      return `**${i + 1}.** [/${l.slug}](${full}) - ${ui.formatClicks(l.clicks, " clicks")}\n   ↳ [🌐 원본 열기 ↗](${l.url}) • \`${truncated}\``;
-    });
+        l.url.length > 45 ? `${l.url.substring(0, 42)}...` : l.url
+      return `**${i + 1}.** [/${l.slug}](${full}) - ${ui.formatClicks(l.clicks, ' clicks')}\n   ↳ [🌐 원본 열기 ↗](${l.url}) • \`${truncated}\``
+    })
 
     const desc = [
       `📊 **총 등록 링크 수:** \`${totalLinks.toLocaleString()}\`개`,
       `🟢 **활성 링크 수:** \`${activeLinks.toLocaleString()}\`개`,
       `🔴 **만료된 링크 수:** \`${expiredLinks.toLocaleString()}\`개`,
-      `🖱️ **상위 링크 샘플 클릭 수:** ${ui.formatClicks(totalClicks, "회")}`,
-      "",
-      "🏆 **최다 클릭 TOP 5 링크 (상위 샘플 기준):**",
+      `🖱️ **상위 링크 샘플 클릭 수:** ${ui.formatClicks(totalClicks, '회')}`,
+      '',
+      '🏆 **최다 클릭 TOP 5 링크 (상위 샘플 기준):**',
       clickRes.partial
-        ? "_클릭 통계를 완전하게 조회하지 못해 순위를 산출할 수 없습니다._"
+        ? '_클릭 통계를 완전하게 조회하지 못해 순위를 산출할 수 없습니다._'
         : topLines.length > 0
-          ? topLines.join("\n")
-          : "_등록된 링크가 없습니다._",
-    ].join("\n");
+          ? topLines.join('\n')
+          : '_등록된 링크가 없습니다._'
+    ].join('\n')
 
     const overviewEmbed = ui.createSuccessMessage(
-      "Sink 인스턴스 전체 통계 현황",
-      desc,
-    );
-    await interaction.editReply(overviewEmbed);
-    return;
+      'Sink 인스턴스 전체 통계 현황',
+      desc
+    )
+    await interaction.editReply(overviewEmbed)
+    return
   }
 
   // 2. /link admin list
-  if (subcommand === "list") {
-    const inputTag = interaction.options.getString("tag")?.trim();
+  if (subcommand === 'list') {
+    const inputTag = interaction.options.getString('tag')?.trim()
     const query =
-      interaction.options.getString("query")?.toLowerCase().trim() || undefined;
-    const page = interaction.options.getInteger("page") || 1;
-    const cleanTag = inputTag ? inputTag.replace(/^#/, "").trim() : undefined;
+      interaction.options.getString('query')?.toLowerCase().trim() || undefined
+    const page = interaction.options.getInteger('page') || 1
+    const cleanTag = inputTag ? inputTag.replace(/^#/, '').trim() : undefined
 
     const [countRes, res] = await Promise.all([
       sinkClient.countLinks({
         q: query,
         tag: cleanTag || undefined,
-        status: "all",
+        status: 'all'
       }),
       query
         ? sinkClient.searchLinks({
             q: query,
             tag: cleanTag || undefined,
-            status: "all",
-            limit: 1000,
+            status: 'all',
+            limit: 1000
           })
         : sinkClient.listLinks(
             cleanTag
-              ? { tag: cleanTag, status: "all", limit: 1000 }
+              ? { tag: cleanTag, status: 'all', limit: 1000 }
               : undefined,
             1,
-            1000,
-          ),
-    ]);
+            1000
+          )
+    ])
 
     if (!res.success) {
       const errEmbed = ui.createErrorMessage(
-        "목록 조회 실패",
-        res.error || "오류가 발생했습니다.",
-      );
-      await interaction.editReply(errEmbed);
-      return;
+        '목록 조회 실패',
+        res.error || '오류가 발생했습니다.'
+      )
+      await interaction.editReply(errEmbed)
+      return
     }
 
-    let links = res.list || [];
+    let links = res.list || []
 
     // Filter by tag (client-side guarantee)
     if (cleanTag) {
-      const lowerTag = cleanTag.toLowerCase();
-      links = links.filter((l) =>
+      const lowerTag = cleanTag.toLowerCase()
+      links = links.filter(l =>
         (l.tags || []).some(
-          (tag) =>
+          tag =>
             tag.toLowerCase() === lowerTag ||
-            tag.toLowerCase().includes(lowerTag),
-        ),
-      );
+            tag.toLowerCase().includes(lowerTag)
+        )
+      )
     }
 
     // Filter by query (if any client-side extra match needed)
     if (query) {
       links = links.filter(
-        (l) =>
+        l =>
           l.slug.toLowerCase().includes(query) ||
           l.url.toLowerCase().includes(query) ||
-          (l.title && l.title.toLowerCase().includes(query)),
-      );
+          l.title?.toLowerCase().includes(query)
+      )
     }
 
     if (links.length === 0) {
       const infoEmbed = ui.createInfoMessage(
-        "링크 없음",
+        '링크 없음',
         query
           ? `검색어 \`${query}\`에 일치하는 링크가 없습니다.`
           : inputTag
-            ? `태그 \`#${inputTag.replace(/^#/, "")}\`에 해당하는 링크가 없습니다.`
-            : "인스턴스에 등록된 링크가 없습니다.",
-      );
-      await interaction.editReply(infoEmbed);
-      return;
+            ? `태그 \`#${inputTag.replace(/^#/, '')}\`에 해당하는 링크가 없습니다.`
+            : '인스턴스에 등록된 링크가 없습니다.'
+      )
+      await interaction.editReply(infoEmbed)
+      return
     }
 
-    const pageSize = 5;
-    const totalPages = Math.ceil(links.length / pageSize) || 1;
-    const currentPage = Math.max(1, Math.min(page, totalPages));
-    const startIndex = (currentPage - 1) * pageSize;
+    const pageSize = 5
+    const totalPages = Math.ceil(links.length / pageSize) || 1
+    const currentPage = Math.max(1, Math.min(page, totalPages))
+    const startIndex = (currentPage - 1) * pageSize
     const paginated = (
       await attachClickCounts(links.slice(startIndex, startIndex + pageSize))
-    ).links;
+    ).links
 
     const lines = paginated.map((l, idx) => {
-      const full = sinkClient.getFullShortUrl(l.slug);
-      const titlePart = l.title ? ` - **${l.title}**` : "";
-      const clickPart = `(${ui.formatClicks(l.clicks, " clicks")})`;
+      const full = sinkClient.getFullShortUrl(l.slug)
+      const titlePart = l.title ? ` - **${l.title}**` : ''
+      const clickPart = `(${ui.formatClicks(l.clicks, ' clicks')})`
       const truncated =
-        l.url.length > 50 ? `${l.url.substring(0, 47)}...` : l.url;
-      return `**${startIndex + idx + 1}.** [/${l.slug}](${full})${titlePart} ${clickPart}\n   ↳ [🌐 원본 열기 ↗](${l.url}) • \`${truncated}\``;
-    });
+        l.url.length > 50 ? `${l.url.substring(0, 47)}...` : l.url
+      return `**${startIndex + idx + 1}.** [/${l.slug}](${full})${titlePart} ${clickPart}\n   ↳ [🌐 원본 열기 ↗](${l.url}) • \`${truncated}\``
+    })
 
-    const totalCount = countRes.success ? countRes.count : links.length;
-    const isCapped = totalCount > links.length;
+    const totalCount = countRes.success ? countRes.count : links.length
+    const isCapped = totalCount > links.length
     const totalCountLabel = isCapped
       ? `${totalCount.toLocaleString()}개 중 상위 ${links.length.toLocaleString()}개`
-      : `${links.length.toLocaleString()}개`;
+      : `${links.length.toLocaleString()}개`
 
     const listEmbed = ui.createSuccessMessage(
       `전체 링크 목록 (총 ${totalCountLabel} / 페이지 ${currentPage}/${totalPages})`,
-      lines.join("\n\n"),
-    );
-    await interaction.editReply(listEmbed);
-    return;
+      lines.join('\n\n')
+    )
+    await interaction.editReply(listEmbed)
+    return
   }
 
   // 3. /link admin user
-  if (subcommand === "user") {
-    const targetUser = interaction.options.getUser("user", true);
-    const inputTag = interaction.options.getString("tag")?.trim();
-    const page = interaction.options.getInteger("page") || 1;
-    const userHash = getUserHash(targetUser.id);
-    const cleanTag = inputTag ? inputTag.replace(/^#/, "").trim() : undefined;
+  if (subcommand === 'user') {
+    const targetUser = interaction.options.getUser('user', true)
+    const inputTag = interaction.options.getString('tag')?.trim()
+    const page = interaction.options.getInteger('page') || 1
+    const userHash = getUserHash(targetUser.id)
+    const cleanTag = inputTag ? inputTag.replace(/^#/, '').trim() : undefined
 
     const [catalog, countRes] = await Promise.all([
       collectOwnedLinks(userHash, { tag: cleanTag || undefined }),
       sinkClient.countLinks({
         q: userHash,
         tag: cleanTag || undefined,
-        status: "all",
-      }),
-    ]);
+        status: 'all'
+      })
+    ])
 
     if (!catalog.success) {
       const errEmbed = ui.createErrorMessage(
-        "유저 링크 조회 실패",
-        catalog.error,
-      );
-      await interaction.editReply(errEmbed);
-      return;
+        '유저 링크 조회 실패',
+        catalog.error
+      )
+      await interaction.editReply(errEmbed)
+      return
     }
 
-    const userLinks = catalog.links;
+    const userLinks = catalog.links
 
     if (userLinks.length === 0) {
       if (!catalog.complete) {
         const infoEmbed = ui.createInfoMessage(
-          "유저 링크 조회 범위 제한",
+          '유저 링크 조회 범위 제한',
           `<@${targetUser.id}> 님의 ${ui.formatPartialOwnedLinksNotice(
             catalog.scannedRecords,
-            countRes.success ? countRes.count : undefined,
-          )}`,
-        );
-        await interaction.editReply(infoEmbed);
-        return;
+            countRes.success ? countRes.count : undefined
+          )}`
+        )
+        await interaction.editReply(infoEmbed)
+        return
       }
       const infoEmbed = ui.createInfoMessage(
-        "유저 링크 없음",
+        '유저 링크 없음',
         inputTag
-          ? `<@${targetUser.id}> 님이 생성한 링크 중 태그 \`#${inputTag.replace(/^#/, "")}\`에 해당하는 링크가 없습니다.`
-          : `<@${targetUser.id}> (\`userHash: ${userHash}\`) 유저가 생성한 링크가 없습니다.`,
-      );
-      await interaction.editReply(infoEmbed);
-      return;
+          ? `<@${targetUser.id}> 님이 생성한 링크 중 태그 \`#${inputTag.replace(/^#/, '')}\`에 해당하는 링크가 없습니다.`
+          : `<@${targetUser.id}> (\`userHash: ${userHash}\`) 유저가 생성한 링크가 없습니다.`
+      )
+      await interaction.editReply(infoEmbed)
+      return
     }
 
-    const pageSize = 5;
-    const totalPages = Math.ceil(userLinks.length / pageSize) || 1;
-    const currentPage = Math.max(1, Math.min(page, totalPages));
-    const startIndex = (currentPage - 1) * pageSize;
+    const pageSize = 5
+    const totalPages = Math.ceil(userLinks.length / pageSize) || 1
+    const currentPage = Math.max(1, Math.min(page, totalPages))
+    const startIndex = (currentPage - 1) * pageSize
     const paginated = (
       await attachClickCounts(
-        userLinks.slice(startIndex, startIndex + pageSize),
+        userLinks.slice(startIndex, startIndex + pageSize)
       )
-    ).links;
+    ).links
 
     const lines = paginated.map((l, idx) => {
-      const full = sinkClient.getFullShortUrl(l.slug);
-      const titlePart = l.title ? ` - **${l.title}**` : "";
-      const clickPart = `(${ui.formatClicks(l.clicks, " clicks")})`;
+      const full = sinkClient.getFullShortUrl(l.slug)
+      const titlePart = l.title ? ` - **${l.title}**` : ''
+      const clickPart = `(${ui.formatClicks(l.clicks, ' clicks')})`
       const truncated =
-        l.url.length > 50 ? `${l.url.substring(0, 47)}...` : l.url;
-      return `**${startIndex + idx + 1}.** [/${l.slug}](${full})${titlePart} ${clickPart}\n   ↳ [🌐 원본 열기 ↗](${l.url}) • \`${truncated}\``;
-    });
+        l.url.length > 50 ? `${l.url.substring(0, 47)}...` : l.url
+      return `**${startIndex + idx + 1}.** [/${l.slug}](${full})${titlePart} ${clickPart}\n   ↳ [🌐 원본 열기 ↗](${l.url}) • \`${truncated}\``
+    })
 
-    const userDisplayName = targetUser.displayName || targetUser.username;
-    const headerInfo = `> 👤 **대상 유저:** <@${targetUser.id}> (\`userHash: ${userHash}\`)\n\n`;
+    const userDisplayName = targetUser.displayName || targetUser.username
+    const headerInfo = `> 👤 **대상 유저:** <@${targetUser.id}> (\`userHash: ${userHash}\`)\n\n`
 
     const totalLabel = catalog.complete
       ? `총 ${userLinks.length.toLocaleString()}개`
-      : `검색 기준 ${Math.max(countRes.success ? countRes.count : 0, userLinks.length + 1).toLocaleString()}개 중 최신 ${userLinks.length.toLocaleString()}개`;
+      : `검색 기준 ${Math.max(countRes.success ? countRes.count : 0, userLinks.length + 1).toLocaleString()}개 중 최신 ${userLinks.length.toLocaleString()}개`
     const listEmbed = ui.createSuccessMessage(
       `${userDisplayName} 님의 링크 목록 (${totalLabel} / 페이지 ${currentPage}/${totalPages})`,
-      headerInfo + lines.join("\n\n"),
-    );
-    await interaction.editReply(listEmbed);
-    return;
+      headerInfo + lines.join('\n\n')
+    )
+    await interaction.editReply(listEmbed)
+    return
   }
 
   // 4. /link admin delete
-  if (subcommand === "delete") {
-    const slug = interaction.options.getString("slug", true).trim();
-    const cleanSlug = slug.startsWith("/") ? slug.substring(1) : slug;
+  if (subcommand === 'delete') {
+    const slug = interaction.options.getString('slug', true).trim()
+    const cleanSlug = slug.startsWith('/') ? slug.substring(1) : slug
 
-    const res = await sinkClient.deleteLink(cleanSlug);
+    const res = await sinkClient.deleteLink(cleanSlug)
     if (!res.success) {
       logger.warn(
-        `Admin ${interaction.user.tag} (${interaction.user.id}) failed to delete link '/${cleanSlug}': ${res.error}`,
-      );
+        `Admin ${interaction.user.tag} (${interaction.user.id}) failed to delete link '/${cleanSlug}': ${res.error}`
+      )
       const errEmbed = ui.createErrorMessage(
-        "관리자 강제 삭제 실패",
-        res.error || "링크 삭제 중 오류가 발생했습니다.",
-      );
-      await interaction.editReply(errEmbed);
-      return;
+        '관리자 강제 삭제 실패',
+        res.error || '링크 삭제 중 오류가 발생했습니다.'
+      )
+      await interaction.editReply(errEmbed)
+      return
     }
 
     const successEmbed = ui.createSuccessMessage(
-      "관리자 강제 삭제 완료",
-      `단축 링크 \`/${cleanSlug}\`이(가) 관리자 권한으로 영구 삭제되었습니다.`,
-    );
-    await interaction.editReply(successEmbed);
-    return;
+      '관리자 강제 삭제 완료',
+      `단축 링크 \`/${cleanSlug}\`이(가) 관리자 권한으로 영구 삭제되었습니다.`
+    )
+    await interaction.editReply(successEmbed)
+    return
   }
 }
 
@@ -1606,20 +1590,20 @@ async function handleAdminCommand(
  * @param interaction - Chat input command interaction
  */
 async function handleConfigCommand(
-  interaction: ChatInputCommandInteraction,
+  interaction: ChatInputCommandInteraction
 ): Promise<void> {
   await interaction.deferReply({
-    flags: MessageFlags.Ephemeral,
-  });
+    flags: MessageFlags.Ephemeral
+  })
 
-  const key = interaction.options.getString("key")?.trim().toLowerCase();
-  const value = interaction.options.getString("value")?.trim();
+  const key = interaction.options.getString('key')?.trim().toLowerCase()
+  const value = interaction.options.getString('value')?.trim()
 
-  const currentConfig = userConfigService.getUserConfig(interaction.user.id);
+  const currentConfig = userConfigService.getUserConfig(interaction.user.id)
   const effectiveMinLength = guildConfigService.resolveEffectiveMinUrlLength(
     interaction.guildId,
-    interaction.user.id,
-  );
+    interaction.user.id
+  )
 
   // 1. No key passed -> show interactive Config Panel
   if (!key) {
@@ -1627,342 +1611,342 @@ async function handleConfigCommand(
       interaction.user,
       currentConfig,
       undefined,
-      effectiveMinLength,
-    );
-    await interaction.editReply(view);
-    return;
+      effectiveMinLength
+    )
+    await interaction.editReply(view)
+    return
   }
 
   // 2. Key passed without value -> show current value notice + Config Panel
-  if (value === undefined || value === null || value === "") {
-    let noticeDesc = "";
-    if (key === "auto_dm") {
+  if (value === undefined || value === null || value === '') {
+    let noticeDesc = ''
+    if (key === 'auto_dm') {
       const modeLabel =
-        currentConfig.autoDmMode === "inherit"
-          ? "상속 (서버 설정 따름)"
-          : currentConfig.autoDmMode === "on"
-            ? "항상 켬 (전체 채널)"
-            : "항상 끔";
-      noticeDesc = `현재 \`auto_dm\` 설정값은 **${currentConfig.autoDmMode}** (${modeLabel}) 입니다.`;
-    } else if (key === "dm_format") {
+        currentConfig.autoDmMode === 'inherit'
+          ? '상속 (서버 설정 따름)'
+          : currentConfig.autoDmMode === 'on'
+            ? '항상 켬 (전체 채널)'
+            : '항상 끔'
+      noticeDesc = `현재 \`auto_dm\` 설정값은 **${currentConfig.autoDmMode}** (${modeLabel}) 입니다.`
+    } else if (key === 'dm_format') {
       const fmtLabel =
-        currentConfig.dmFormat === "replace"
-          ? "본문 치환 (기본값)"
-          : "URL 목록 나열";
-      noticeDesc = `현재 \`dm_format\` 설정값은 **${currentConfig.dmFormat}** (${fmtLabel}) 입니다.`;
-    } else if (key === "min_length" || key === "min-length") {
+        currentConfig.dmFormat === 'replace'
+          ? '본문 치환 (기본값)'
+          : 'URL 목록 나열'
+      noticeDesc = `현재 \`dm_format\` 설정값은 **${currentConfig.dmFormat}** (${fmtLabel}) 입니다.`
+    } else if (key === 'min_length' || key === 'min-length') {
       const lenLabel =
         currentConfig.autoShortenMinUrlLength === null
           ? `상속 (현재: ${effectiveMinLength}자)`
           : currentConfig.autoShortenMinUrlLength === 0
-            ? "전체 단축 (제한 없음)"
-            : `${currentConfig.autoShortenMinUrlLength}자 이상`;
-      noticeDesc = `현재 \`min_length\` 설정값은 **${currentConfig.autoShortenMinUrlLength ?? "상속 (-1)"}** (${lenLabel}) 입니다.`;
-    } else if (key === "ignored_domains" || key === "ignored-domains") {
-      const count = currentConfig.ignoredDomains?.length ?? 0;
+            ? '전체 단축 (제한 없음)'
+            : `${currentConfig.autoShortenMinUrlLength}자 이상`
+      noticeDesc = `현재 \`min_length\` 설정값은 **${currentConfig.autoShortenMinUrlLength ?? '상속 (-1)'}** (${lenLabel}) 입니다.`
+    } else if (key === 'ignored_domains' || key === 'ignored-domains') {
+      const count = currentConfig.ignoredDomains?.length ?? 0
       const listStr =
         count > 0
-          ? `\`${currentConfig.ignoredDomains.join("`, `")}\``
-          : "없음 (기본값만 적용)";
-      noticeDesc = `현재 \`ignored_domains\` 설정: **${count}개** (${listStr})\n변경하려면 \`value\`에 쉼표로 구분된 도메인(또는 \`reset\`)을 입력하세요.`;
-    } else if (key === "fixupx") {
-      const fixupxLabel = currentConfig.fixupxEnabled ? "켬 (기본값)" : "끔";
-      noticeDesc = `현재 \`fixupx\` 설정값은 **${currentConfig.fixupxEnabled ? "on" : "off"}** (${fixupxLabel}) 입니다.`;
+          ? `\`${currentConfig.ignoredDomains.join('`, `')}\``
+          : '없음 (기본값만 적용)'
+      noticeDesc = `현재 \`ignored_domains\` 설정: **${count}개** (${listStr})\n변경하려면 \`value\`에 쉼표로 구분된 도메인(또는 \`reset\`)을 입력하세요.`
+    } else if (key === 'fixupx') {
+      const fixupxLabel = currentConfig.fixupxEnabled ? '켬 (기본값)' : '끔'
+      noticeDesc = `현재 \`fixupx\` 설정값은 **${currentConfig.fixupxEnabled ? 'on' : 'off'}** (${fixupxLabel}) 입니다.`
     } else {
-      noticeDesc = `알 수 없는 설정 키입니다: \`${key}\` (지원 키: \`auto_dm\`, \`dm_format\`, \`min_length\`, \`ignored_domains\`, \`fixupx\`)`;
+      noticeDesc = `알 수 없는 설정 키입니다: \`${key}\` (지원 키: \`auto_dm\`, \`dm_format\`, \`min_length\`, \`ignored_domains\`, \`fixupx\`)`
     }
 
     const view = ui.createConfigPanelView(
       interaction.user,
       currentConfig,
       {
-        title: "현재 설정 조회",
+        title: '현재 설정 조회',
         description: noticeDesc,
         type:
-          key === "auto_dm" ||
-          key === "dm_format" ||
-          key === "min_length" ||
-          key === "min-length" ||
-          key === "ignored_domains" ||
-          key === "ignored-domains" ||
-          key === "fixupx"
-            ? "info"
-            : "error",
+          key === 'auto_dm' ||
+          key === 'dm_format' ||
+          key === 'min_length' ||
+          key === 'min-length' ||
+          key === 'ignored_domains' ||
+          key === 'ignored-domains' ||
+          key === 'fixupx'
+            ? 'info'
+            : 'error'
       },
-      effectiveMinLength,
-    );
-    await interaction.editReply(view);
-    return;
+      effectiveMinLength
+    )
+    await interaction.editReply(view)
+    return
   }
 
   // 3. Both key and value passed -> validate and update
-  if (key === "auto_dm") {
-    const normalized = normalizeAutoDmMode(value);
+  if (key === 'auto_dm') {
+    const normalized = normalizeAutoDmMode(value)
     if (!normalized) {
       const view = ui.createConfigPanelView(
         interaction.user,
         currentConfig,
         {
-          title: "잘못된 설정 값",
+          title: '잘못된 설정 값',
           description: `\`auto_dm\` 설정 값은 \`inherit\`, \`on\`(또는 \`true\`), \`off\`(또는 \`false\`) 중 하나여야 합니다.\n입력값: \`${value}\``,
-          type: "error",
+          type: 'error'
         },
-        effectiveMinLength,
-      );
-      await interaction.editReply(view);
-      return;
+        effectiveMinLength
+      )
+      await interaction.editReply(view)
+      return
     }
 
     const res = await userConfigService.setUserConfig(interaction.user.id, {
-      autoDmMode: normalized,
-    });
+      autoDmMode: normalized
+    })
     if (!res.success) {
       const view = ui.createConfigPanelView(
         interaction.user,
         res.config,
         {
-          title: "설정 변경 실패",
-          description: res.error || "데이터베이스 저장 중 오류가 발생했습니다.",
-          type: "error",
+          title: '설정 변경 실패',
+          description: res.error || '데이터베이스 저장 중 오류가 발생했습니다.',
+          type: 'error'
         },
-        effectiveMinLength,
-      );
-      await interaction.editReply(view);
-      return;
+        effectiveMinLength
+      )
+      await interaction.editReply(view)
+      return
     }
 
     const view = ui.createConfigPanelView(
       interaction.user,
       res.config,
       {
-        title: "설정 변경 완료",
+        title: '설정 변경 완료',
         description: `자동 DM 모드가 **${normalized}** (으)로 성공적으로 변경되었습니다.`,
-        type: "success",
+        type: 'success'
       },
-      effectiveMinLength,
-    );
-    await interaction.editReply(view);
-    return;
+      effectiveMinLength
+    )
+    await interaction.editReply(view)
+    return
   }
 
-  if (key === "dm_format") {
-    const normalized = normalizeDmFormat(value);
+  if (key === 'dm_format') {
+    const normalized = normalizeDmFormat(value)
     if (!normalized) {
       const view = ui.createConfigPanelView(
         interaction.user,
         currentConfig,
         {
-          title: "잘못된 설정 값",
+          title: '잘못된 설정 값',
           description: `\`dm_format\` 설정 값은 \`replace\`(본문 치환) 또는 \`list\`(단축 URL 목록) 이어야 합니다.\n입력값: \`${value}\``,
-          type: "error",
+          type: 'error'
         },
-        effectiveMinLength,
-      );
-      await interaction.editReply(view);
-      return;
+        effectiveMinLength
+      )
+      await interaction.editReply(view)
+      return
     }
 
     const res = await userConfigService.setUserConfig(interaction.user.id, {
-      dmFormat: normalized,
-    });
+      dmFormat: normalized
+    })
     if (!res.success) {
       const view = ui.createConfigPanelView(
         interaction.user,
         res.config,
         {
-          title: "설정 변경 실패",
-          description: res.error || "데이터베이스 저장 중 오류가 발생했습니다.",
-          type: "error",
+          title: '설정 변경 실패',
+          description: res.error || '데이터베이스 저장 중 오류가 발생했습니다.',
+          type: 'error'
         },
-        effectiveMinLength,
-      );
-      await interaction.editReply(view);
-      return;
+        effectiveMinLength
+      )
+      await interaction.editReply(view)
+      return
     }
 
     const view = ui.createConfigPanelView(
       interaction.user,
       res.config,
       {
-        title: "설정 변경 완료",
+        title: '설정 변경 완료',
         description: `DM 메시지 포맷이 **${normalized}** (으)로 성공적으로 변경되었습니다.`,
-        type: "success",
+        type: 'success'
       },
-      effectiveMinLength,
-    );
-    await interaction.editReply(view);
-    return;
+      effectiveMinLength
+    )
+    await interaction.editReply(view)
+    return
   }
 
-  if (key === "min_length" || key === "min-length") {
-    const normalized = normalizeMinUrlLength(value);
+  if (key === 'min_length' || key === 'min-length') {
+    const normalized = normalizeMinUrlLength(value)
     if (!normalized.valid) {
       const view = ui.createConfigPanelView(
         interaction.user,
         currentConfig,
         {
-          title: "잘못된 설정 값",
+          title: '잘못된 설정 값',
           description: `\`min_length\` 설정 값은 \`-1\`(상속/초기화), \`0\`(전체 단축), 또는 \`1\`~ \`2048\`(지정 길이) 여야 합니다.\n입력값: \`${value}\``,
-          type: "error",
+          type: 'error'
         },
-        effectiveMinLength,
-      );
-      await interaction.editReply(view);
-      return;
+        effectiveMinLength
+      )
+      await interaction.editReply(view)
+      return
     }
 
     const res = await userConfigService.setUserConfig(interaction.user.id, {
-      autoShortenMinUrlLength: normalized.value,
-    });
+      autoShortenMinUrlLength: normalized.value
+    })
     const updatedEffective = guildConfigService.resolveEffectiveMinUrlLength(
       interaction.guildId,
-      interaction.user.id,
-    );
+      interaction.user.id
+    )
 
     if (!res.success) {
       const view = ui.createConfigPanelView(
         interaction.user,
         res.config,
         {
-          title: "설정 변경 실패",
-          description: res.error || "데이터베이스 저장 중 오류가 발생했습니다.",
-          type: "error",
+          title: '설정 변경 실패',
+          description: res.error || '데이터베이스 저장 중 오류가 발생했습니다.',
+          type: 'error'
         },
-        updatedEffective,
-      );
-      await interaction.editReply(view);
-      return;
+        updatedEffective
+      )
+      await interaction.editReply(view)
+      return
     }
 
     const targetDesc =
       normalized.value === null
         ? `상위 기본값 상속 (현재: **${updatedEffective}자**)`
         : normalized.value === 0
-          ? "전체 단축 (제한 없음)"
-          : `최소 **${normalized.value}자** 이상 단축`;
+          ? '전체 단축 (제한 없음)'
+          : `최소 **${normalized.value}자** 이상 단축`
 
     const view = ui.createConfigPanelView(
       interaction.user,
       res.config,
       {
-        title: "설정 변경 완료",
+        title: '설정 변경 완료',
         description: `최소 URL 길이가 **${targetDesc}** (으)로 성공적으로 변경되었습니다.`,
-        type: "success",
+        type: 'success'
       },
-      updatedEffective,
-    );
-    await interaction.editReply(view);
-    return;
+      updatedEffective
+    )
+    await interaction.editReply(view)
+    return
   }
 
-  if (key === "ignored_domains" || key === "ignored-domains") {
-    const normalized = normalizeIgnoredDomains(value);
+  if (key === 'ignored_domains' || key === 'ignored-domains') {
+    const normalized = normalizeIgnoredDomains(value)
     if (!normalized.valid) {
       const view = ui.createConfigPanelView(
         interaction.user,
         currentConfig,
         {
-          title: "잘못된 설정 값",
-          description: normalized.error || "올바른 도메인 형식이 아닙니다.",
-          type: "error",
+          title: '잘못된 설정 값',
+          description: normalized.error || '올바른 도메인 형식이 아닙니다.',
+          type: 'error'
         },
-        effectiveMinLength,
-      );
-      await interaction.editReply(view);
-      return;
+        effectiveMinLength
+      )
+      await interaction.editReply(view)
+      return
     }
 
     const res = await userConfigService.setUserConfig(interaction.user.id, {
-      ignoredDomains: normalized.value,
-    });
+      ignoredDomains: normalized.value
+    })
 
     if (!res.success) {
       const view = ui.createConfigPanelView(
         interaction.user,
         res.config,
         {
-          title: "설정 변경 실패",
-          description: res.error || "데이터베이스 저장 중 오류가 발생했습니다.",
-          type: "error",
+          title: '설정 변경 실패',
+          description: res.error || '데이터베이스 저장 중 오류가 발생했습니다.',
+          type: 'error'
         },
-        effectiveMinLength,
-      );
-      await interaction.editReply(view);
-      return;
+        effectiveMinLength
+      )
+      await interaction.editReply(view)
+      return
     }
 
     const domainMsg =
       normalized.value.length === 0
-        ? "개인 추가 제외 도메인이 초기화되어 시스템 기본 도메인만 제외됩니다."
-        : `개인 추가 제외 도메인이 **${normalized.value.length}개**(\`${normalized.value.join("`, `")}\`)로 성공적으로 설정되었습니다.`;
+        ? '개인 추가 제외 도메인이 초기화되어 시스템 기본 도메인만 제외됩니다.'
+        : `개인 추가 제외 도메인이 **${normalized.value.length}개**(\`${normalized.value.join('`, `')}\`)로 성공적으로 설정되었습니다.`
 
     const view = ui.createConfigPanelView(
       interaction.user,
       res.config,
       {
-        title: "설정 변경 완료",
+        title: '설정 변경 완료',
         description: domainMsg,
-        type: "success",
+        type: 'success'
       },
-      effectiveMinLength,
-    );
-    await interaction.editReply(view);
-    return;
+      effectiveMinLength
+    )
+    await interaction.editReply(view)
+    return
   }
 
-  if (key === "fixupx") {
-    const normalized = normalizeFixupxEnabled(value);
+  if (key === 'fixupx') {
+    const normalized = normalizeFixupxEnabled(value)
     if (normalized === null) {
       const view = ui.createConfigPanelView(
         interaction.user,
         currentConfig,
         {
-          title: "잘못된 설정 값",
+          title: '잘못된 설정 값',
           description:
-            "올바른 fixupx 설정 값이 아닙니다. `on` 또는 `off`를 입력하세요.",
-          type: "error",
+            '올바른 fixupx 설정 값이 아닙니다. `on` 또는 `off`를 입력하세요.',
+          type: 'error'
         },
-        effectiveMinLength,
-      );
-      await interaction.editReply(view);
-      return;
+        effectiveMinLength
+      )
+      await interaction.editReply(view)
+      return
     }
 
     const res = await userConfigService.setUserConfig(interaction.user.id, {
-      fixupxEnabled: normalized,
-    });
+      fixupxEnabled: normalized
+    })
 
     if (!res.success) {
       const view = ui.createConfigPanelView(
         interaction.user,
         res.config,
         {
-          title: "설정 변경 실패",
-          description: res.error || "데이터베이스 저장 중 오류가 발생했습니다.",
-          type: "error",
+          title: '설정 변경 실패',
+          description: res.error || '데이터베이스 저장 중 오류가 발생했습니다.',
+          type: 'error'
         },
-        effectiveMinLength,
-      );
-      await interaction.editReply(view);
-      return;
+        effectiveMinLength
+      )
+      await interaction.editReply(view)
+      return
     }
 
     const statusMsg = normalized
-      ? "트위터(X) 게시물 링크가 감지되면 자동으로 `fixupx.com`으로 변환되어 DM으로 전송됩니다."
-      : "트위터(X) 링크의 fixupx 자동 변환이 꺼졌으며, 일반 단축 정책(min_length)을 따릅니다.";
+      ? '트위터(X) 게시물 링크가 감지되면 자동으로 `fixupx.com`으로 변환되어 DM으로 전송됩니다.'
+      : '트위터(X) 링크의 fixupx 자동 변환이 꺼졌으며, 일반 단축 정책(min_length)을 따릅니다.'
 
     const view = ui.createConfigPanelView(
       interaction.user,
       res.config,
       {
-        title: "설정 변경 완료",
-        description: `\`fixupx\` 설정이 **${normalized ? "on (활성화)" : "off (비활성화)"}**(으)로 변경되었습니다.\n${statusMsg}`,
-        type: "success",
+        title: '설정 변경 완료',
+        description: `\`fixupx\` 설정이 **${normalized ? 'on (활성화)' : 'off (비활성화)'}**(으)로 변경되었습니다.\n${statusMsg}`,
+        type: 'success'
       },
-      effectiveMinLength,
-    );
-    await interaction.editReply(view);
-    return;
+      effectiveMinLength
+    )
+    await interaction.editReply(view)
+    return
   }
 
   // Unknown key
@@ -1970,13 +1954,13 @@ async function handleConfigCommand(
     interaction.user,
     currentConfig,
     {
-      title: "알 수 없는 설정 키",
+      title: '알 수 없는 설정 키',
       description: `지원하지 않는 설정 키입니다: \`${key}\` (지원 키: \`auto_dm\`, \`dm_format\`, \`min_length\`, \`ignored_domains\`, \`fixupx\`)`,
-      type: "error",
+      type: 'error'
     },
-    effectiveMinLength,
-  );
-  await interaction.editReply(view);
+    effectiveMinLength
+  )
+  await interaction.editReply(view)
 }
 
 /**
@@ -1985,115 +1969,115 @@ async function handleConfigCommand(
  * @param interaction - Autocomplete interaction
  */
 export async function handleConfigAutocomplete(
-  interaction: AutocompleteInteraction,
+  interaction: AutocompleteInteraction
 ): Promise<void> {
-  const focused = interaction.options.getFocused(true);
+  const focused = interaction.options.getFocused(true)
 
-  if (focused.name === "key") {
+  if (focused.name === 'key') {
     const keyChoices = [
       {
-        name: "auto_dm (자동 DM 수신 모드: inherit / on / off)",
-        value: "auto_dm",
+        name: 'auto_dm (자동 DM 수신 모드: inherit / on / off)',
+        value: 'auto_dm'
       },
       {
-        name: "dm_format (DM 메시지 포맷: replace / list)",
-        value: "dm_format",
+        name: 'dm_format (DM 메시지 포맷: replace / list)',
+        value: 'dm_format'
       },
       {
-        name: "min_length (최소 URL 길이: -1 상속 / 0 전체 / 1~2048 길이)",
-        value: "min_length",
+        name: 'min_length (최소 URL 길이: -1 상속 / 0 전체 / 1~2048 길이)',
+        value: 'min_length'
       },
       {
-        name: "ignored_domains (제외 도메인 목록: 쉼표 구분 / reset 초기화)",
-        value: "ignored_domains",
+        name: 'ignored_domains (제외 도메인 목록: 쉼표 구분 / reset 초기화)',
+        value: 'ignored_domains'
       },
       {
-        name: "fixupx (트위터 링크 fixupx.com 자동 변환: on / off)",
-        value: "fixupx",
-      },
-    ];
+        name: 'fixupx (트위터 링크 fixupx.com 자동 변환: on / off)',
+        value: 'fixupx'
+      }
+    ]
     const filtered = keyChoices.filter(
-      (c) =>
+      c =>
         c.name.toLowerCase().includes(focused.value.toLowerCase()) ||
-        c.value.toLowerCase().includes(focused.value.toLowerCase()),
-    );
-    await interaction.respond(filtered.slice(0, 25));
-    return;
+        c.value.toLowerCase().includes(focused.value.toLowerCase())
+    )
+    await interaction.respond(filtered.slice(0, 25))
+    return
   }
 
-  if (focused.name === "value") {
+  if (focused.name === 'value') {
     const selectedKey = interaction.options
-      .getString("key")
+      .getString('key')
       ?.trim()
-      .toLowerCase();
+      .toLowerCase()
 
-    let valueChoices: Array<{ name: string; value: string }> = [];
+    let valueChoices: Array<{ name: string; value: string }> = []
 
-    if (selectedKey === "auto_dm") {
+    if (selectedKey === 'auto_dm') {
       valueChoices = [
-        { name: "inherit - 서버 설정 따름 (기본값)", value: "inherit" },
-        { name: "on - 모든 채널에서 항상 켬 (전역)", value: "on" },
-        { name: "off - 항상 끔 (완전 비활성화)", value: "off" },
-        { name: "true - 켜기 (on)", value: "true" },
-        { name: "false - 끄기 (off)", value: "false" },
-      ];
-    } else if (selectedKey === "dm_format") {
+        { name: 'inherit - 서버 설정 따름 (기본값)', value: 'inherit' },
+        { name: 'on - 모든 채널에서 항상 켬 (전역)', value: 'on' },
+        { name: 'off - 항상 끔 (완전 비활성화)', value: 'off' },
+        { name: 'true - 켜기 (on)', value: 'true' },
+        { name: 'false - 끄기 (off)', value: 'false' }
+      ]
+    } else if (selectedKey === 'dm_format') {
       valueChoices = [
-        { name: "replace - 메시지 본문 치환 (기본값)", value: "replace" },
-        { name: "list - 단축 URL 목록 나열 (모바일 최적화)", value: "list" },
-      ];
-    } else if (selectedKey === "min_length" || selectedKey === "min-length") {
+        { name: 'replace - 메시지 본문 치환 (기본값)', value: 'replace' },
+        { name: 'list - 단축 URL 목록 나열 (모바일 최적화)', value: 'list' }
+      ]
+    } else if (selectedKey === 'min_length' || selectedKey === 'min-length') {
       valueChoices = [
-        { name: "-1 - 상위 기본값 상속 (초기화)", value: "-1" },
-        { name: "0 - 모든 URL 단축 (제한 없음)", value: "0" },
-        { name: "70 - 70자 이상 단축 (기본 권장값)", value: "70" },
-        { name: "50 - 50자 이상 단축", value: "50" },
-        { name: "100 - 100자 이상 단축", value: "100" },
-      ];
+        { name: '-1 - 상위 기본값 상속 (초기화)', value: '-1' },
+        { name: '0 - 모든 URL 단축 (제한 없음)', value: '0' },
+        { name: '70 - 70자 이상 단축 (기본 권장값)', value: '70' },
+        { name: '50 - 50자 이상 단축', value: '50' },
+        { name: '100 - 100자 이상 단축', value: '100' }
+      ]
     } else if (
-      selectedKey === "ignored_domains" ||
-      selectedKey === "ignored-domains"
+      selectedKey === 'ignored_domains' ||
+      selectedKey === 'ignored-domains'
     ) {
       valueChoices = [
         {
-          name: "reset - 추가 제외 도메인 초기화 (기본값만 적용)",
-          value: "reset",
+          name: 'reset - 추가 제외 도메인 초기화 (기본값만 적용)',
+          value: 'reset'
         },
         {
-          name: "clear - 추가 제외 도메인 초기화",
-          value: "clear",
-        },
-      ];
-    } else if (selectedKey === "fixupx") {
+          name: 'clear - 추가 제외 도메인 초기화',
+          value: 'clear'
+        }
+      ]
+    } else if (selectedKey === 'fixupx') {
       valueChoices = [
         {
-          name: "on - 트위터 링크 fixupx 자동 변환 켜기 (기본값)",
-          value: "on",
+          name: 'on - 트위터 링크 fixupx 자동 변환 켜기 (기본값)',
+          value: 'on'
         },
-        { name: "off - 트위터 링크 fixupx 자동 변환 끄기", value: "off" },
-      ];
+        { name: 'off - 트위터 링크 fixupx 자동 변환 끄기', value: 'off' }
+      ]
     } else {
       valueChoices = [
-        { name: "auto_dm: inherit (서버 설정 따름)", value: "inherit" },
-        { name: "auto_dm: on (항상 켬)", value: "on" },
-        { name: "auto_dm: off (항상 끔)", value: "off" },
-        { name: "dm_format: replace (본문 치환)", value: "replace" },
-        { name: "dm_format: list (URL 목록)", value: "list" },
-        { name: "fixupx: on (트위터 링크 fixupx 자동 변환)", value: "on" },
-        { name: "fixupx: off (트위터 링크 fixupx 변환 끔)", value: "off" },
-        { name: "min_length: -1 (상위 기본값 상속)", value: "-1" },
-        { name: "min_length: 0 (모든 URL 단축)", value: "0" },
-        { name: "min_length: 70 (70자 이상)", value: "70" },
-        { name: "ignored_domains: reset (초기화)", value: "reset" },
-      ];
+        { name: 'auto_dm: inherit (서버 설정 따름)', value: 'inherit' },
+        { name: 'auto_dm: on (항상 켬)', value: 'on' },
+        { name: 'auto_dm: off (항상 끔)', value: 'off' },
+        { name: 'dm_format: replace (본문 치환)', value: 'replace' },
+        { name: 'dm_format: list (URL 목록)', value: 'list' },
+        { name: 'fixupx: on (트위터 링크 fixupx 자동 변환)', value: 'on' },
+        { name: 'fixupx: off (트위터 링크 fixupx 변환 끔)', value: 'off' },
+        { name: 'min_length: -1 (상위 기본값 상속)', value: '-1' },
+        { name: 'min_length: 0 (모든 URL 단축)', value: '0' },
+        { name: 'min_length: 70 (70자 이상)', value: '70' },
+        { name: 'ignored_domains: reset (초기화)', value: 'reset' }
+      ]
     }
 
     const filtered = valueChoices.filter(
-      (c) =>
+      c =>
         c.name.toLowerCase().includes(focused.value.toLowerCase()) ||
-        c.value.toLowerCase().includes(focused.value.toLowerCase()),
-    );
-    await interaction.respond(filtered.slice(0, 25));
-    return;
+        c.value.toLowerCase().includes(focused.value.toLowerCase())
+    )
+    await interaction.respond(filtered.slice(0, 25))
+    return
   }
 }

@@ -1,14 +1,14 @@
-import { describe, expect, it } from "bun:test";
-import { ui, COLORS } from "@/services/../utils/ui";
-import { MessageFlags, type User } from "discord.js";
-import type { UserDashboardStats } from "@/types/bot";
-import type { SinkLink, SinkStats } from "@/types/sink";
+import { describe, expect, it } from 'bun:test'
+import { ui, COLORS } from '@/services/../utils/ui'
+import { MessageFlags, type User } from 'discord.js'
+import type { UserDashboardStats } from '@/types/bot'
+import type { SinkLink, SinkStats } from '@/types/sink'
 
 const mockUser = {
-  id: "123456789012345678",
-  username: "TestUser",
-  displayAvatarURL: () => "https://cdn.discordapp.com/avatars/test.png",
-} as unknown as User;
+  id: '123456789012345678',
+  username: 'TestUser',
+  displayAvatarURL: () => 'https://cdn.discordapp.com/avatars/test.png'
+} as unknown as User
 
 const mockStats: UserDashboardStats = {
   totalLinks: 2,
@@ -19,309 +19,309 @@ const mockStats: UserDashboardStats = {
   linksComplete: true,
   links: [
     {
-      slug: "abc-1234",
-      url: "https://example.com/very/long/url",
-      title: "예시 타이틀",
-      tags: ["test"],
+      slug: 'abc-1234',
+      url: 'https://example.com/very/long/url',
+      title: '예시 타이틀',
+      tags: ['test'],
       clicks: 10,
-      createdAt: new Date().toISOString(),
+      createdAt: new Date().toISOString()
     },
     {
-      slug: "def-1234",
-      url: "https://google.com",
+      slug: 'def-1234',
+      url: 'https://google.com',
       clicks: 32,
-      createdAt: new Date().toISOString(),
-    },
-  ],
-};
+      createdAt: new Date().toISOString()
+    }
+  ]
+}
 
-describe("Discord Components v2 UI Modules", () => {
-  describe("formatPartialOwnedLinksNotice", () => {
-    it("labels an incomplete empty result with its scanned range", () => {
-      const notice = ui.formatPartialOwnedLinksNotice(20_000, 3);
+describe('Discord Components v2 UI Modules', () => {
+  describe('formatPartialOwnedLinksNotice', () => {
+    it('labels an incomplete empty result with its scanned range', () => {
+      const notice = ui.formatPartialOwnedLinksNotice(20_000, 3)
 
-      expect(notice).toContain("최신 `20,000`개");
-      expect(notice).toContain("전체 조회가 완료되지 않아");
-      expect(notice).toContain("Sink 검색 기준 결과: `3`개");
-    });
-  });
+      expect(notice).toContain('최신 `20,000`개')
+      expect(notice).toContain('전체 조회가 완료되지 않아')
+      expect(notice).toContain('Sink 검색 기준 결과: `3`개')
+    })
+  })
 
-  describe("createDashboardView", () => {
-    it("renders single top overview container when no link is selected", () => {
-      const view = ui.createDashboardView(mockUser, mockStats);
-      expect(view.flags).toBe(MessageFlags.IsComponentsV2);
-      expect(view.components.length).toBe(1);
+  describe('createDashboardView', () => {
+    it('renders single top overview container when no link is selected', () => {
+      const view = ui.createDashboardView(mockUser, mockStats)
+      expect(view.flags).toBe(MessageFlags.IsComponentsV2)
+      expect(view.components.length).toBe(1)
 
-      const topJson = view.components[0].toJSON();
-      expect(topJson.type).toBe(17); // Container
-      expect(topJson.accent_color).toBe(COLORS.DARK);
-    });
+      const topJson = view.components[0].toJSON()
+      expect(topJson.type).toBe(17) // Container
+      expect(topJson.accent_color).toBe(COLORS.DARK)
+    })
 
-    it("renders 2-step split containers when a link is selected", () => {
-      const view = ui.createDashboardView(mockUser, mockStats, "abc-1234");
-      expect(view.flags).toBe(MessageFlags.IsComponentsV2);
-      expect(view.components.length).toBe(2);
+    it('renders 2-step split containers when a link is selected', () => {
+      const view = ui.createDashboardView(mockUser, mockStats, 'abc-1234')
+      expect(view.flags).toBe(MessageFlags.IsComponentsV2)
+      expect(view.components.length).toBe(2)
 
-      const topJson = view.components[0].toJSON();
-      const bottomJson = view.components[1].toJSON();
+      const topJson = view.components[0].toJSON()
+      const bottomJson = view.components[1].toJSON()
 
-      expect(topJson.type).toBe(17);
-      expect(bottomJson.type).toBe(17);
-      expect(topJson.accent_color).toBe(COLORS.DARK);
-      expect(bottomJson.accent_color).toBe(COLORS.DARK);
+      expect(topJson.type).toBe(17)
+      expect(bottomJson.type).toBe(17)
+      expect(topJson.accent_color).toBe(COLORS.DARK)
+      expect(bottomJson.accent_color).toBe(COLORS.DARK)
 
       // Verify bottom container has Section (Type 9) and ActionRow (Type 1)
       const subTypes = bottomJson.components.map(
-        (c: { type: number }) => c.type,
-      );
-      expect(subTypes).toContain(9); // Section
-      expect(subTypes).toContain(1); // ActionRow
-    });
+        (c: { type: number }) => c.type
+      )
+      expect(subTypes).toContain(9) // Section
+      expect(subTypes).toContain(1) // ActionRow
+    })
 
-    it("renders an empty title as not configured", () => {
+    it('renders an empty title as not configured', () => {
       const stats: UserDashboardStats = {
         ...mockStats,
-        links: [{ ...mockStats.links[0]!, title: "" }],
-      };
-      const view = ui.createDashboardView(mockUser, stats, "abc-1234");
-      const json = JSON.stringify(view.components[1].toJSON());
+        links: [{ ...mockStats.links[0]!, title: '' }]
+      }
+      const view = ui.createDashboardView(mockUser, stats, 'abc-1234')
+      const json = JSON.stringify(view.components[1].toJSON())
 
-      expect(json).toContain("설정 안 됨");
-    });
+      expect(json).toContain('설정 안 됨')
+    })
 
-    it("labels capped dashboard statistics as partial", () => {
+    it('labels capped dashboard statistics as partial', () => {
       const stats: UserDashboardStats = {
         ...mockStats,
         totalLinks: 2_500,
         displayedLinks: 2_000,
-        linksComplete: false,
-      };
-      const view = ui.createDashboardView(mockUser, stats);
-      const json = JSON.stringify(view.components[0].toJSON());
+        linksComplete: false
+      }
+      const view = ui.createDashboardView(mockUser, stats)
+      const json = JSON.stringify(view.components[0].toJSON())
 
-      expect(json).toContain("검색 기준 총 링크");
-      expect(json).toContain("표시 링크 클릭 합계");
-      expect(json).toContain("2,000");
-    });
-  });
+      expect(json).toContain('검색 기준 총 링크')
+      expect(json).toContain('표시 링크 클릭 합계')
+      expect(json).toContain('2,000')
+    })
+  })
 
-  describe("createConfigPanelView", () => {
-    it("renders single integrated container for user config", () => {
+  describe('createConfigPanelView', () => {
+    it('renders single integrated container for user config', () => {
       const view = ui.createConfigPanelView(mockUser, {
-        autoDmMode: "inherit",
-        dmFormat: "replace",
-        fixupxEnabled: true,
-      });
-      expect(view.flags).toBe(MessageFlags.IsComponentsV2);
-      expect(view.components.length).toBe(1);
+        autoDmMode: 'inherit',
+        dmFormat: 'replace',
+        fixupxEnabled: true
+      })
+      expect(view.flags).toBe(MessageFlags.IsComponentsV2)
+      expect(view.components.length).toBe(1)
 
-      const json = view.components[0].toJSON();
-      expect(json.type).toBe(17);
-      expect(json.accent_color).toBe(COLORS.DARK);
-      expect(JSON.stringify(json)).toContain("fixupx");
-    });
+      const json = view.components[0].toJSON()
+      expect(json.type).toBe(17)
+      expect(json.accent_color).toBe(COLORS.DARK)
+      expect(JSON.stringify(json)).toContain('fixupx')
+    })
 
-    it("integrates notice banner into the container when notice is provided", () => {
+    it('integrates notice banner into the container when notice is provided', () => {
       const view = ui.createConfigPanelView(
         mockUser,
-        { autoDmMode: "on", dmFormat: "list" },
-        { title: "성공", description: "설정 저장됨", type: "success" },
-      );
-      expect(view.flags).toBe(MessageFlags.IsComponentsV2);
-      expect(view.components.length).toBe(1);
-      const json = view.components[0].toJSON();
-      expect(json.type).toBe(17);
-      expect(JSON.stringify(json)).toContain("성공");
-    });
-  });
+        { autoDmMode: 'on', dmFormat: 'list' },
+        { title: '성공', description: '설정 저장됨', type: 'success' }
+      )
+      expect(view.flags).toBe(MessageFlags.IsComponentsV2)
+      expect(view.components.length).toBe(1)
+      const json = view.components[0].toJSON()
+      expect(json.type).toBe(17)
+      expect(JSON.stringify(json)).toContain('성공')
+    })
+  })
 
-  describe("createDeleteConfirmView", () => {
-    it("renders Danger accent colored container with delete buttons", () => {
-      const view = ui.createDeleteConfirmView("abc-1234");
-      expect(view.flags).toBe(MessageFlags.IsComponentsV2);
-      expect(view.components.length).toBe(1);
+  describe('createDeleteConfirmView', () => {
+    it('renders Danger accent colored container with delete buttons', () => {
+      const view = ui.createDeleteConfirmView('abc-1234')
+      expect(view.flags).toBe(MessageFlags.IsComponentsV2)
+      expect(view.components.length).toBe(1)
 
-      const json = view.components[0].toJSON();
-      expect(json.type).toBe(17);
-      expect(json.accent_color).toBe(COLORS.DANGER);
-    });
-  });
+      const json = view.components[0].toJSON()
+      expect(json.type).toBe(17)
+      expect(json.accent_color).toBe(COLORS.DANGER)
+    })
+  })
 
-  describe("createLinkCard", () => {
-    it("renders container with Section accessory for single link open button", () => {
+  describe('createLinkCard', () => {
+    it('renders container with Section accessory for single link open button', () => {
       const link: SinkLink = {
-        slug: "abc-1234",
-        url: "https://example.com",
-        clicks: 5,
-      };
-      const view = ui.createLinkCard(link);
-      expect(view.flags).toBe(MessageFlags.IsComponentsV2);
-      expect(view.components.length).toBe(1);
+        slug: 'abc-1234',
+        url: 'https://example.com',
+        clicks: 5
+      }
+      const view = ui.createLinkCard(link)
+      expect(view.flags).toBe(MessageFlags.IsComponentsV2)
+      expect(view.components.length).toBe(1)
 
-      const json = view.components[0].toJSON();
-      expect(json.type).toBe(17);
+      const json = view.components[0].toJSON()
+      expect(json.type).toBe(17)
 
       const section = json.components.find(
-        (c: { type: number }) => c.type === 9,
-      );
-      expect(section).toBeDefined();
-      expect(section.accessory.style).toBe(5); // Link style button
-    });
-  });
+        (c: { type: number }) => c.type === 9
+      )
+      expect(section).toBeDefined()
+      expect(section.accessory.style).toBe(5) // Link style button
+    })
+  })
 
-  describe("createStatsCard", () => {
-    it("renders container with device and referrer statistics", () => {
+  describe('createStatsCard', () => {
+    it('renders container with device and referrer statistics', () => {
       const stats: SinkStats = {
-        slug: "abc-1234",
-        url: "https://example.com",
+        slug: 'abc-1234',
+        url: 'https://example.com',
         clicks: 100,
         devices: { desktop: 70, mobile: 30 },
         countries: { KR: 90, US: 10 },
-        referrers: { discord: 50 },
-      };
-      const view = ui.createStatsCard(stats);
-      expect(view.flags).toBe(MessageFlags.IsComponentsV2);
-      expect(view.components.length).toBe(1);
+        referrers: { discord: 50 }
+      }
+      const view = ui.createStatsCard(stats)
+      expect(view.flags).toBe(MessageFlags.IsComponentsV2)
+      expect(view.components.length).toBe(1)
 
-      const json = view.components[0].toJSON();
-      expect(json.type).toBe(17);
-      expect(JSON.stringify(json)).toContain("desktop");
-      expect(JSON.stringify(json)).toContain("KR");
-    });
-  });
+      const json = view.components[0].toJSON()
+      expect(json.type).toBe(17)
+      expect(JSON.stringify(json)).toContain('desktop')
+      expect(JSON.stringify(json)).toContain('KR')
+    })
+  })
 
-  describe("createWatchDmCard", () => {
-    it("renders clean information container without action buttons", () => {
+  describe('createWatchDmCard', () => {
+    it('renders clean information container without action buttons', () => {
       const view = ui.createWatchDmCard(
         [
           {
-            originalUrl: "https://verylongurl.com/a/b/c",
-            targetUrl: "https://s.japsik.com/abc",
-            shortenedUrl: "https://s.japsik.com/abc",
-            type: "shorten",
-            slug: "abc",
-          },
+            originalUrl: 'https://verylongurl.com/a/b/c',
+            targetUrl: 'https://s.japsik.com/abc',
+            shortenedUrl: 'https://s.japsik.com/abc',
+            type: 'shorten',
+            slug: 'abc'
+          }
         ],
-        "https://discord.com/channels/1/2/3",
-        "replace",
-      );
+        'https://discord.com/channels/1/2/3',
+        'replace'
+      )
       expect(view.flags).toBe(
-        MessageFlags.IsComponentsV2 | MessageFlags.SuppressEmbeds,
-      );
-      expect((view.flags & MessageFlags.SuppressEmbeds) !== 0).toBe(true);
-      expect(view.components.length).toBe(1);
+        MessageFlags.IsComponentsV2 | MessageFlags.SuppressEmbeds
+      )
+      expect((view.flags & MessageFlags.SuppressEmbeds) !== 0).toBe(true)
+      expect(view.components.length).toBe(1)
 
-      const json = view.components[0].toJSON();
-      expect(json.type).toBe(17);
+      const json = view.components[0].toJSON()
+      expect(json.type).toBe(17)
       // No ActionRow (Type 1)
       const hasActionRow = json.components.some(
-        (c: { type: number }) => c.type === 1,
-      );
-      expect(hasActionRow).toBe(false);
+        (c: { type: number }) => c.type === 1
+      )
+      expect(hasActionRow).toBe(false)
 
       // Verify original message URL is rendered directly without markdown []() link formatting
-      const jsonStr = JSON.stringify(json);
+      const jsonStr = JSON.stringify(json)
       expect(jsonStr).toContain(
-        "> 📍 **원본 메시지:** https://discord.com/channels/1/2/3",
-      );
-      expect(jsonStr).not.toContain("[메시지로 바로가기 ↗]");
-    });
+        '> 📍 **원본 메시지:** https://discord.com/channels/1/2/3'
+      )
+      expect(jsonStr).not.toContain('[메시지로 바로가기 ↗]')
+    })
 
-    it("renders reused link label when isReused is true", () => {
+    it('renders reused link label when isReused is true', () => {
       const view = ui.createWatchDmCard(
         [
           {
-            originalUrl: "https://verylongurl.com/a/b/c",
-            targetUrl: "https://s.japsik.com/reused-123",
-            shortenedUrl: "https://s.japsik.com/reused-123",
-            type: "shorten",
-            slug: "reused-123",
-            isReused: true,
+            originalUrl: 'https://verylongurl.com/a/b/c',
+            targetUrl: 'https://s.japsik.com/reused-123',
+            shortenedUrl: 'https://s.japsik.com/reused-123',
+            type: 'shorten',
+            slug: 'reused-123',
+            isReused: true
           },
           {
-            originalUrl: "https://anotherlongurl.com/x/y/z",
-            targetUrl: "https://s.japsik.com/new-123",
-            shortenedUrl: "https://s.japsik.com/new-123",
-            type: "shorten",
-            slug: "new-123",
-            isReused: false,
-          },
+            originalUrl: 'https://anotherlongurl.com/x/y/z',
+            targetUrl: 'https://s.japsik.com/new-123',
+            shortenedUrl: 'https://s.japsik.com/new-123',
+            type: 'shorten',
+            slug: 'new-123',
+            isReused: false
+          }
         ],
-        "https://discord.com/channels/1/2/3",
-        "replace",
-      );
+        'https://discord.com/channels/1/2/3',
+        'replace'
+      )
 
-      const jsonStr = JSON.stringify(view.components[0].toJSON());
+      const jsonStr = JSON.stringify(view.components[0].toJSON())
       expect(jsonStr).toContain(
-        "`https://s.japsik.com/reused-123` *(기존 링크 재사용)*",
-      );
-      expect(jsonStr).toContain("`https://s.japsik.com/new-123`\\n");
+        '`https://s.japsik.com/reused-123` *(기존 링크 재사용)*'
+      )
+      expect(jsonStr).toContain('`https://s.japsik.com/new-123`\\n')
       expect(jsonStr).not.toContain(
-        "`https://s.japsik.com/new-123` *(기존 링크 재사용)*",
-      );
-    });
+        '`https://s.japsik.com/new-123` *(기존 링크 재사용)*'
+      )
+    })
 
-    it("renders fixupx header when items contain fixupx URLs", () => {
+    it('renders fixupx header when items contain fixupx URLs', () => {
       const view = ui.createWatchDmCard(
         [
           {
-            originalUrl: "https://x.com/jack/status/20",
-            targetUrl: "https://fixupx.com/jack/status/20",
-            type: "fixupx",
-          },
+            originalUrl: 'https://x.com/jack/status/20',
+            targetUrl: 'https://fixupx.com/jack/status/20',
+            type: 'fixupx'
+          }
         ],
-        "https://discord.com/channels/1/2/3",
-        "replace",
-      );
+        'https://discord.com/channels/1/2/3',
+        'replace'
+      )
 
-      const jsonStr = JSON.stringify(view.components[0].toJSON());
-      expect(jsonStr).toContain("트위터 링크가 fixupx로 변환되었습니다");
-      expect(jsonStr).toContain("*(fixupx 변환)*");
-      expect(jsonStr).toContain("`https://fixupx.com/jack/status/20`");
-    });
-  });
+      const jsonStr = JSON.stringify(view.components[0].toJSON())
+      expect(jsonStr).toContain('트위터 링크가 fixupx로 변환되었습니다')
+      expect(jsonStr).toContain('*(fixupx 변환)*')
+      expect(jsonStr).toContain('`https://fixupx.com/jack/status/20`')
+    })
+  })
 
-  describe("Simple messages (Success, Error, Info)", () => {
-    it("renders Success and Info with Dark accent, Error with Danger accent, with IsComponentsV2 flag", () => {
-      const success = ui.createSuccessMessage("완료", "작업이 완료되었습니다.");
-      const error = ui.createErrorMessage("에러", "작업 실패");
-      const info = ui.createInfoMessage("안내", "참고 정보");
+  describe('Simple messages (Success, Error, Info)', () => {
+    it('renders Success and Info with Dark accent, Error with Danger accent, with IsComponentsV2 flag', () => {
+      const success = ui.createSuccessMessage('완료', '작업이 완료되었습니다.')
+      const error = ui.createErrorMessage('에러', '작업 실패')
+      const info = ui.createInfoMessage('안내', '참고 정보')
 
-      expect(success.flags).toBe(MessageFlags.IsComponentsV2);
-      expect(error.flags).toBe(MessageFlags.IsComponentsV2);
-      expect(info.flags).toBe(MessageFlags.IsComponentsV2);
+      expect(success.flags).toBe(MessageFlags.IsComponentsV2)
+      expect(error.flags).toBe(MessageFlags.IsComponentsV2)
+      expect(info.flags).toBe(MessageFlags.IsComponentsV2)
 
-      expect(success.components[0].toJSON().accent_color).toBe(COLORS.DARK);
-      expect(error.components[0].toJSON().accent_color).toBe(COLORS.DANGER);
-      expect(info.components[0].toJSON().accent_color).toBe(COLORS.DARK);
-    });
-  });
-});
+      expect(success.components[0].toJSON().accent_color).toBe(COLORS.DARK)
+      expect(error.components[0].toJSON().accent_color).toBe(COLORS.DANGER)
+      expect(info.components[0].toJSON().accent_color).toBe(COLORS.DARK)
+    })
+  })
+})
 
-describe("formatClicks", () => {
-  it("renders a real zero as 0", () => {
-    expect(ui.formatClicks(0)).toBe("`0`");
-  });
+describe('formatClicks', () => {
+  it('renders a real zero as 0', () => {
+    expect(ui.formatClicks(0)).toBe('`0`')
+  })
 
-  it("renders a known count with its unit", () => {
-    expect(ui.formatClicks(1234, "회")).toBe("`1,234`회");
-  });
+  it('renders a known count with its unit', () => {
+    expect(ui.formatClicks(1234, '회')).toBe('`1,234`회')
+  })
 
-  it("renders missing analytics as a dash rather than a fake zero", () => {
-    expect(ui.formatClicks(undefined)).toBe("—");
-    expect(ui.formatClicks(undefined, "회")).toBe("—");
-  });
+  it('renders missing analytics as a dash rather than a fake zero', () => {
+    expect(ui.formatClicks(undefined)).toBe('—')
+    expect(ui.formatClicks(undefined, '회')).toBe('—')
+  })
 
-  it("keeps a missing click count distinguishable on the dashboard", () => {
+  it('keeps a missing click count distinguishable on the dashboard', () => {
     const statsWithoutAnalytics: UserDashboardStats = {
       ...mockStats,
       totalClicks: undefined,
-      links: mockStats.links.map((link) => ({ ...link, clicks: undefined })),
-    };
+      links: mockStats.links.map(link => ({ ...link, clicks: undefined }))
+    }
 
-    const view = ui.createDashboardView(mockUser, statsWithoutAnalytics);
-    const rendered = JSON.stringify(view);
-    expect(rendered).toContain("—");
-    expect(rendered).not.toContain("클릭 수:** `0`");
-  });
-});
+    const view = ui.createDashboardView(mockUser, statsWithoutAnalytics)
+    const rendered = JSON.stringify(view)
+    expect(rendered).toContain('—')
+    expect(rendered).not.toContain('클릭 수:** `0`')
+  })
+})

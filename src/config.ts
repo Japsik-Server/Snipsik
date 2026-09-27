@@ -1,125 +1,121 @@
-import { z } from "zod";
+import { z } from 'zod'
 import {
   assertValidDatabaseUrl,
-  firstConfiguredValue,
-} from "@/db/connectionConfig";
+  firstConfiguredValue
+} from '@/db/connectionConfig'
 
 export const envSchema = z.object({
-  DISCORD_TOKEN: z.string().min(1, "DISCORD_TOKEN is required"),
-  DISCORD_CLIENT_ID: z.string().min(1, "DISCORD_CLIENT_ID is required"),
+  DISCORD_TOKEN: z.string().min(1, 'DISCORD_TOKEN is required'),
+  DISCORD_CLIENT_ID: z.string().min(1, 'DISCORD_CLIENT_ID is required'),
   DATABASE_URL: z
     .string()
     .optional()
-    .transform((val) => {
+    .transform(val => {
       // In test mode, default to isolated in-memory SQLite database if omitted or if a legacy postgres URL is present in local .env
       if (
-        process.env.NODE_ENV === "test" &&
-        (!val || val.startsWith("postgres:") || val.startsWith("postgresql:"))
+        process.env.NODE_ENV === 'test' &&
+        (!val || val.startsWith('postgres:') || val.startsWith('postgresql:'))
       ) {
-        return "file::memory:";
+        return 'file::memory:'
       }
-      return firstConfiguredValue(val, process.env.TURSO_DATABASE_URL) ?? "";
+      return firstConfiguredValue(val, process.env.TURSO_DATABASE_URL) ?? ''
     })
     .pipe(
       z
         .string()
-        .min(1, "DATABASE_URL or TURSO_DATABASE_URL is required")
+        .min(1, 'DATABASE_URL or TURSO_DATABASE_URL is required')
         .transform((url, ctx) => {
           try {
-            return assertValidDatabaseUrl(url);
+            return assertValidDatabaseUrl(url)
           } catch {
             ctx.addIssue({
               code: z.ZodIssueCode.custom,
               message:
-                "DATABASE_URL must be a valid LibSQL connection URL with a host (e.g. 'libsql://database-org.turso.io') or a valid local file path (e.g. 'file:local.db'). PostgreSQL URLs are no longer supported.",
-            });
-            return z.NEVER;
+                "DATABASE_URL must be a valid LibSQL connection URL with a host (e.g. 'libsql://database-org.turso.io') or a valid local file path (e.g. 'file:local.db'). PostgreSQL URLs are no longer supported."
+            })
+            return z.NEVER
           }
-        }),
+        })
     ),
   DATABASE_AUTH_TOKEN: z
     .string()
     .optional()
-    .transform((val) =>
-      firstConfiguredValue(val, process.env.TURSO_AUTH_TOKEN),
-    ),
+    .transform(val => firstConfiguredValue(val, process.env.TURSO_AUTH_TOKEN)),
   SINK_BASE_URL: z
     .string()
-    .url("SINK_BASE_URL must be a valid URL")
-    .transform((url) => url.replace(/\/+$/, "")),
-  SINK_API_TOKEN: z.string().min(1, "SINK_API_TOKEN is required"),
+    .url('SINK_BASE_URL must be a valid URL')
+    .transform(url => url.replace(/\/+$/, '')),
+  SINK_API_TOKEN: z.string().min(1, 'SINK_API_TOKEN is required'),
   SINK_REQUEST_TIMEOUT_MS: z
     .string()
     .optional()
-    .default("10000")
-    .transform((val) => {
-      const trimmed = val.trim();
-      if (!/^\d+$/.test(trimmed)) return 10000;
-      const parsed = parseInt(trimmed, 10);
-      if (isNaN(parsed)) return 10000;
-      return Math.min(60000, Math.max(1000, parsed));
+    .default('10000')
+    .transform(val => {
+      const trimmed = val.trim()
+      if (!/^\d+$/.test(trimmed)) return 10000
+      const parsed = parseInt(trimmed, 10)
+      if (Number.isNaN(parsed)) return 10000
+      return Math.min(60000, Math.max(1000, parsed))
     }),
   RANDOM_SLUG_LENGTH: z
     .string()
     .optional()
-    .default("3")
-    .transform((val) => {
-      const parsed = parseInt(val, 10);
-      return isNaN(parsed) || parsed < 2 ? 3 : parsed;
+    .default('3')
+    .transform(val => {
+      const parsed = parseInt(val, 10)
+      return Number.isNaN(parsed) || parsed < 2 ? 3 : parsed
     }),
   ADMIN_USER_IDS: z
     .string()
     .optional()
-    .default("")
-    .transform((val) =>
+    .default('')
+    .transform(val =>
       val
-        .split(",")
-        .map((id) => id.trim())
-        .filter((id) => id.length > 0),
+        .split(',')
+        .map(id => id.trim())
+        .filter(id => id.length > 0)
     ),
   AUTO_SHORTEN_MIN_URL_LENGTH: z
     .string()
     .optional()
-    .default("70")
-    .transform((val) => {
-      const trimmed = val.trim();
-      if (!/^\d+$/.test(trimmed)) return 70;
-      const parsed = parseInt(trimmed, 10);
-      if (isNaN(parsed) || parsed < 0) return 70;
-      return Math.min(parsed, 2048);
+    .default('70')
+    .transform(val => {
+      const trimmed = val.trim()
+      if (!/^\d+$/.test(trimmed)) return 70
+      const parsed = parseInt(trimmed, 10)
+      if (Number.isNaN(parsed) || parsed < 0) return 70
+      return Math.min(parsed, 2048)
     }),
   IGNORED_DOMAINS: z
     .string()
     .optional()
-    .default("")
-    .transform((val) =>
+    .default('')
+    .transform(val =>
       val
-        .split(",")
-        .map((d) => d.trim().toLowerCase())
-        .filter((d) => d.length > 0),
+        .split(',')
+        .map(d => d.trim().toLowerCase())
+        .filter(d => d.length > 0)
     ),
-  NODE_ENV: z
-    .enum(["development", "production", "test"])
-    .default("development"),
-});
+  NODE_ENV: z.enum(['development', 'production', 'test']).default('development')
+})
 
-export type Config = z.infer<typeof envSchema>;
+export type Config = z.infer<typeof envSchema>
 
-let parsedConfig: Config;
+let parsedConfig: Config
 
 try {
-  parsedConfig = envSchema.parse(process.env);
+  parsedConfig = envSchema.parse(process.env)
 } catch (error) {
   if (error instanceof z.ZodError) {
     const errorDetails = error.errors
-      .map((err) => `  - ${err.path.join(".")}: ${err.message}`)
-      .join("\n");
+      .map(err => `  - ${err.path.join('.')}: ${err.message}`)
+      .join('\n')
     console.error(
-      `\x1b[31m❌ Environment Configuration Error:\x1b[0m\n${errorDetails}`,
-    );
-    process.exit(1);
+      `\x1b[31m❌ Environment Configuration Error:\x1b[0m\n${errorDetails}`
+    )
+    process.exit(1)
   }
-  throw error;
+  throw error
 }
 
-export const config = parsedConfig;
+export const config = parsedConfig
