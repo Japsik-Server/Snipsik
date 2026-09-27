@@ -7,7 +7,7 @@ export type TagsParseResult =
 
 /** Maps the compact Discord text input to Sink's normalized tags array. */
 export function parseTagsInput(input?: string | null): TagsParseResult {
-  if (!input || !input.trim()) return { valid: true, value: [] };
+  if (!input?.trim()) return { valid: true, value: [] };
 
   const tags = [
     ...new Set(

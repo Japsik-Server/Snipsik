@@ -1,7 +1,7 @@
 import {
   type AutocompleteInteraction,
   ChannelType,
-  ChatInputCommandInteraction,
+  type ChatInputCommandInteraction,
   MessageFlags,
   PermissionFlagsBits,
   SlashCommandBuilder,
@@ -1087,7 +1087,6 @@ async function handleWatchCommand(
         case ChannelType.PublicThread:
         case ChannelType.PrivateThread:
           return { icon: "🧵", label: "스레드" };
-        case ChannelType.GuildText:
         default:
           return { icon: "💬", label: "텍스트" };
       }
@@ -1442,7 +1441,7 @@ async function handleAdminCommand(
         (l) =>
           l.slug.toLowerCase().includes(query) ||
           l.url.toLowerCase().includes(query) ||
-          (l.title && l.title.toLowerCase().includes(query)),
+          (l.title?.toLowerCase().includes(query)),
       );
     }
 

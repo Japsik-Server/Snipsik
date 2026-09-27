@@ -1,4 +1,4 @@
-import fs from "fs";
+import fs from "node:fs";
 import dotenv from "dotenv";
 
 const raw = process.env.APP_ENV;
@@ -33,7 +33,7 @@ try {
     return `${key}=${val}`;
   });
 
-  fs.writeFileSync(targetPath, lines.join("\n") + "\n", { mode: 0o600 });
+  fs.writeFileSync(targetPath, `${lines.join("\n")}\n`, { mode: 0o600 });
   console.log(
     `Successfully normalized ${keys.length} environment variables with dotenv to ${targetPath}`,
   );

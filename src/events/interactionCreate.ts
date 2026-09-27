@@ -1,4 +1,4 @@
-import { type Interaction } from "discord.js";
+import type { Interaction } from "discord.js";
 import { z } from "zod";
 import { CustomId } from "@/types/bot";
 import {
@@ -480,7 +480,7 @@ export async function onInteractionCreate(
         const val = interaction.values[0];
 
         // Case A: Page Navigation (nav:page:N)
-        if (val && val.startsWith("nav:page:")) {
+        if (val?.startsWith("nav:page:")) {
           const targetPage =
             parseInt(val.substring("nav:page:".length), 10) || 1;
           const stats = await fetchUserDashboardStats(interaction.user.id);
@@ -498,7 +498,7 @@ export async function onInteractionCreate(
         let selectedSlug = val || "";
         let currentPage = 1;
 
-        if (val && val.startsWith("slug:")) {
+        if (val?.startsWith("slug:")) {
           const parts = val.split(":");
           selectedSlug = parts[1] || "";
           currentPage = parseInt(parts[2] || "1", 10) || 1;
@@ -646,7 +646,7 @@ export async function onInteractionCreate(
           return;
         }
 
-        let passwordPayload: string | undefined = undefined;
+        let passwordPayload: string | undefined ;
         if (
           rawPassword &&
           (rawPassword.toLowerCase() === "none" ||

@@ -888,7 +888,7 @@ export class SinkClient {
 
     // 1. Primary: Query /api/link/query?slug=... (Official Sink endpoint)
     const queryRes = await this.queryLink({ slug: cleanSlug });
-    if (queryRes.success && queryRes.link && queryRes.link.url) {
+    if (queryRes.success && queryRes.link?.url) {
       return { success: true, link: queryRes.link, status: queryRes.status };
     }
     if (

@@ -433,7 +433,7 @@ describe("SinkClient New API Tests", () => {
       token: TEST_TOKEN,
       fetchImpl: async (url, init) => {
         const method = init?.method ?? "GET";
-        const urlStr = String(url);
+        const _urlStr = String(url);
         if (method === "GET") {
           return new Response(
             JSON.stringify({

@@ -1,8 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import {
-  crc32,
   toBase36,
-  toBase62,
   getUserHash,
   generateSlug,
   verifyOwnership,

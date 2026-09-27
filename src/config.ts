@@ -56,7 +56,7 @@ export const envSchema = z.object({
       const trimmed = val.trim();
       if (!/^\d+$/.test(trimmed)) return 10000;
       const parsed = parseInt(trimmed, 10);
-      if (isNaN(parsed)) return 10000;
+      if (Number.isNaN(parsed)) return 10000;
       return Math.min(60000, Math.max(1000, parsed));
     }),
   RANDOM_SLUG_LENGTH: z
@@ -65,7 +65,7 @@ export const envSchema = z.object({
     .default("3")
     .transform((val) => {
       const parsed = parseInt(val, 10);
-      return isNaN(parsed) || parsed < 2 ? 3 : parsed;
+      return Number.isNaN(parsed) || parsed < 2 ? 3 : parsed;
     }),
   ADMIN_USER_IDS: z
     .string()
@@ -85,7 +85,7 @@ export const envSchema = z.object({
       const trimmed = val.trim();
       if (!/^\d+$/.test(trimmed)) return 70;
       const parsed = parseInt(trimmed, 10);
-      if (isNaN(parsed) || parsed < 0) return 70;
+      if (Number.isNaN(parsed) || parsed < 0) return 70;
       return Math.min(parsed, 2048);
     }),
   IGNORED_DOMAINS: z

@@ -1,5 +1,4 @@
 import { describe, expect, it, mock, beforeEach, afterEach } from "bun:test";
-import { MessageFlags } from "discord.js";
 import { onMessageCreate } from "@/events/messageCreate";
 import { watchService } from "@/services/watchService";
 import { userConfigService } from "@/services/userConfigService";

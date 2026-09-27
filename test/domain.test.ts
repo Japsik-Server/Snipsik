@@ -1,7 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import {
   DEFAULT_SYSTEM_IGNORED_DOMAINS,
-  MAX_CUSTOM_IGNORED_DOMAINS,
   getAllSystemDefaultDomains,
   isDomainIgnored,
   isSystemDefaultDomain,

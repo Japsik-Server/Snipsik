@@ -20,7 +20,7 @@ export function parseExpiration(
   input?: string | null,
   nowMs = Date.now(),
 ): ExpirationParseResult {
-  if (!input || !input.trim()) return { kind: "omitted" };
+  if (!input?.trim()) return { kind: "omitted" };
 
   const trimmed = input.trim().toLowerCase();
   const relative = trimmed.match(/^(\d+)\s*(s|m|h|d|w|y)?$/);

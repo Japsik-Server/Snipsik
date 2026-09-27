@@ -36,7 +36,7 @@ function safeDescription(text: unknown, maxLen = 3800): string {
   const str = typeof text === "string" ? text : String(text || "");
   if (str.length > maxLen) {
     return (
-      str.substring(0, maxLen - 30) + "\n\n...*(내용이 너무 길어 일부 생략됨)*"
+      `${str.substring(0, maxLen - 30)}\n\n...*(내용이 너무 길어 일부 생략됨)*`
     );
   }
   return str;

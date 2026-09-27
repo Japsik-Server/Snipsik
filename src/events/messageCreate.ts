@@ -1,4 +1,4 @@
-import { Message, MessageFlags } from "discord.js";
+import { type Message, MessageFlags } from "discord.js";
 import { config } from "@/config";
 import { watchService } from "@/services/watchService";
 import { userConfigService } from "@/services/userConfigService";

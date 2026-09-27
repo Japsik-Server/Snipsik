@@ -1,4 +1,4 @@
-import { ActivityType, Client, REST, Routes } from "discord.js";
+import { ActivityType, type Client, REST, Routes } from "discord.js";
 import { config } from "@/config";
 import { linkCommand } from "@/commands/link";
 import { watchService } from "@/services/watchService";
