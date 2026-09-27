@@ -1066,7 +1066,7 @@ describe("Sink Analytics Tests", () => {
     // forces the split.
     const ids = Array.from(
       { length: 401 },
-      (_, i) => `l${String(i).padStart(3,"0")}abcdefghijklmnopqrstu`,
+      (_, i) => `l${String(i).padStart(3, "0")}abcdefghijklmnopqrstu`,
     );
     const res = await client.getCountersByIds(ids);
     expect(res.success).toBe(true);
@@ -1105,7 +1105,7 @@ describe("Sink Analytics Tests", () => {
     // succeeds and the split is driven by the byte budget.
     const ids = Array.from(
       { length: 400 },
-      (_, i) => `l${String(i).padStart(3,"0")}abcdefghijklmnopqrstu`,
+      (_, i) => `l${String(i).padStart(3, "0")}abcdefghijklmnopqrstu`,
     );
     ids.push("lfailabcdefghijklmnopqrstu");
     const res = await client.getCountersByIds(ids);
@@ -1231,7 +1231,7 @@ describe("Sink Analytics Tests", () => {
     );
   });
 
-  it("leaves clicks undefined when a link has no analytics rows", async () => {
+  it("reports a real zero when a link was never clicked", async () => {
     const client = new SinkClient({
       baseUrl: "https://sink.example",
       token: TEST_TOKEN,
@@ -1248,8 +1248,9 @@ describe("Sink Analytics Tests", () => {
 
     const res = await client.getStats("quiet");
     expect(res.success).toBe(true);
-    // No analytics row is not the same as zero clicks; the card must show "—".
-    expect(res.stats?.clicks).toBeUndefined();
+    // Sink's counters only hold rows for links that were clicked, so an empty
+    // result for a link that exists means it was never clicked: a real zero.
+    expect(res.stats?.clicks).toBe(0);
     expect(res.stats?.lastClickedAt).toBeUndefined();
   });
 
@@ -1433,5 +1434,84 @@ describe("Click Count Partial Resolution Tests", () => {
     const res = await client.getCountersByIds(["x".repeat(27)]);
     expect(res.success).toBe(false);
     expect(res.error).toContain("26 characters");
+  });
+});
+
+describe("Zero-Click Link Resolution Tests", () => {
+  const userId = "681920391829381920";
+  const userHash = getUserHash(userId);
+
+  it("treats a queried link with no analytics row as a real zero, not a gap", async () => {
+    const originalCount = sinkClient.countLinks;
+    const originalList = sinkClient.listLinks;
+    const originalCounters = sinkClient.getCountersByIds;
+
+    sinkClient.countLinks = mock(async () => ({
+      success: true,
+      count: 2,
+      status: 200,
+    }));
+    sinkClient.listLinks = mock(async () => ({
+      success: true,
+      list: [
+        { id: "clicked", slug: `a-${userHash}`, url: "https://a.com" },
+        { id: "never", slug: `b-${userHash}`, url: "https://b.com" },
+      ],
+      total: 2,
+      listComplete: true,
+    }));
+    // Sink returns rows only for links that were actually clicked.
+    sinkClient.getCountersByIds = mock(async () => ({
+      success: true,
+      counters: new Map([["clicked", 9]]),
+    }));
+
+    try {
+      const stats = await fetchUserDashboardStats(userId);
+      // The never-clicked link resolved to a real 0, so the set is complete and
+      // the dashboard may present 9 as a genuine total.
+      expect(stats.clicksComplete).toBe(true);
+      expect(stats.totalClicks).toBe(9);
+      const never = stats.links.find((l) => l.id === "never");
+      expect(never?.clicks).toBe(0);
+    } finally {
+      sinkClient.countLinks = originalCount;
+      sinkClient.listLinks = originalList;
+      sinkClient.getCountersByIds = originalCounters;
+    }
+  });
+
+  it("still reports partial when a batch fails, even if every id resolved", async () => {
+    const originalCount = sinkClient.countLinks;
+    const originalList = sinkClient.listLinks;
+    const originalCounters = sinkClient.getCountersByIds;
+
+    sinkClient.countLinks = mock(async () => ({
+      success: true,
+      count: 1,
+      status: 200,
+    }));
+    sinkClient.listLinks = mock(async () => ({
+      success: true,
+      list: [{ id: "only", slug: `a-${userHash}`, url: "https://a.com" }],
+      total: 1,
+      listComplete: true,
+    }));
+    sinkClient.getCountersByIds = mock(async () => ({
+      success: false,
+      counters: new Map([["only", 5]]),
+      error: "boom",
+    }));
+
+    try {
+      const stats = await fetchUserDashboardStats(userId);
+      // A failed lookup means other batches may be missing, so this is a floor.
+      expect(stats.clicksComplete).toBe(false);
+      expect(stats.totalClicks).toBe(5);
+    } finally {
+      sinkClient.countLinks = originalCount;
+      sinkClient.listLinks = originalList;
+      sinkClient.getCountersByIds = originalCounters;
+    }
   });
 });

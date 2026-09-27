@@ -48,20 +48,24 @@ export async function attachClickCounts(
     );
   }
 
-  // A link whose id was queried but produced no row is genuinely click-free;
-  // a link that is missing an id could not be queried at all, so the totals
-  // derived from this set cannot be called complete.
-  const unresolved = links.filter(
-    (link) => !link.id || !res.counters.has(link.id),
+  // A queried id that produced no analytics row is a genuinely click-free link
+  // (Sink's counters only group rows that exist, i.e. links that were clicked).
+  // Only a link that could never be queried at all - no usable id to correlate
+  // with - makes a total derived from this set a floor rather than a total.
+  const unqueryable = links.filter(
+    (link) => typeof link.id !== "string" || link.id.trim().length === 0,
   ).length;
 
   return {
     links: links.map((link) => {
       if (!link.id) return link;
       const clicks = res.counters.get(link.id);
-      return clicks === undefined ? link : { ...link, clicks };
+      // Absent from the map means zero clicks, not an unknown figure.
+      return clicks === undefined
+        ? { ...link, clicks: 0 }
+        : { ...link, clicks };
     }),
-    partial: !res.success || unresolved > 0,
+    partial: !res.success || unqueryable > 0,
   };
 }
 
