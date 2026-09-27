@@ -1345,7 +1345,7 @@ async function handleAdminCommand(
       const full = sinkClient.getFullShortUrl(l.slug);
       const truncated =
         l.url.length > 45 ? `${l.url.substring(0, 42)}...` : l.url;
-      return `**${i + 1}.** [/${l.slug}](${full}) - \`${ui.formatClicks(l.clicks)} clicks\`\n   ↳ [🌐 원본 열기 ↗](${l.url}) • \`${truncated}\``;
+      return `**${i + 1}.** [/${l.slug}](${full}) - ${ui.formatClicks(l.clicks, " clicks")}\n   ↳ [🌐 원본 열기 ↗](${l.url}) • \`${truncated}\``;
     });
 
     const desc = [

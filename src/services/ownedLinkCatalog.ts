@@ -16,13 +16,25 @@ export async function attachClickCounts(
 ): Promise<SinkLink[]> {
   const ids = links
     .map((link) => link.id)
-    .filter((id): id is string => typeof id === "string" && id.length > 0);
-  if (ids.length === 0) return [...links];
+    .filter(
+      (id): id is string => typeof id === "string" && id.trim().length > 0,
+    );
+  if (ids.length === 0) {
+    if (links.length > 0) {
+      logger.warn(
+        `No usable link ids among ${links.length} links; Sink returned no id to correlate analytics with`,
+      );
+    }
+    return [...links];
+  }
 
   const res = await sinkClient.getCountersByIds(ids);
   if (!res.success) {
-    logger.warn(`Failed to fetch click counts: ${res.error}`);
-    return [...links];
+    // A partial failure still carries real counts for the batches that
+    // succeeded, so apply those and only warn about the gap.
+    logger.warn(
+      `Click count lookup partially failed (${res.error}); applying ${res.counters.size} resolved count(s)`,
+    );
   }
 
   return links.map((link) => {

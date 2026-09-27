@@ -1065,8 +1065,77 @@ describe("Sink Analytics Tests", () => {
     const ids = Array.from({ length: 401 }, (_, i) => `id-${i}`);
     const res = await client.getCountersByIds(ids);
     expect(res.success).toBe(true);
-    expect(requestedIds.map((v) => v.split(",").length)).toEqual([200, 200, 1]);
     expect(res.counters.size).toBe(401);
+    expect(requestedIds.length).toBeGreaterThan(1);
+    // Every id must be requested exactly once, across however many batches it took.
+    expect(requestedIds.join(",").split(",").sort()).toEqual([...ids].sort());
+    // Each request must stay within the encoded id-parameter budget.
+    for (const param of requestedIds) {
+      expect(param.length).toBeLessThanOrEqual(4_000);
+    }
+  });
+
+  it("keeps successful batches when one batch fails", async () => {
+    const client = new SinkClient({
+      baseUrl: "https://sink.example",
+      token: TEST_TOKEN,
+      requestTimeoutMs: 5_000,
+      fetchImpl: async (url) => {
+        const idParam = new URL(String(url)).searchParams.get("id") ?? "";
+        const ids = idParam.split(",");
+        if (ids.includes("id-fail")) {
+          return new Response(JSON.stringify({ message: "boom" }), {
+            status: 500,
+            statusText: "Internal Server Error",
+          });
+        }
+        return new Response(
+          JSON.stringify({ data: ids.map((id) => ({ id, visits: 7 })) }),
+          { status: 200 },
+        );
+      },
+    });
+
+    // Two batches' worth of ids, so one can fail while the other succeeds.
+    const ids = Array.from({ length: 400 }, (_, i) => `id-${i}`);
+    ids.push("id-fail");
+    const res = await client.getCountersByIds(ids);
+    expect(res.success).toBe(false);
+    // The good batch's real counts must survive the failure.
+    expect(res.counters.get("id-0")).toBe(7);
+    expect(res.counters.size).toBeGreaterThan(0);
+    // The failing batch contributed nothing, and nothing was double counted.
+    expect(res.counters.has("id-fail")).toBe(false);
+  });
+
+  it("caps how many counter requests run at once", async () => {
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const client = new SinkClient({
+      baseUrl: "https://sink.example",
+      token: TEST_TOKEN,
+      requestTimeoutMs: 5_000,
+      fetchImpl: async (url) => {
+        inFlight++;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        inFlight--;
+        const idParam = new URL(String(url)).searchParams.get("id") ?? "";
+        return new Response(
+          JSON.stringify({
+            data: idParam.split(",").map((id) => ({ id, visits: 1 })),
+          }),
+          { status: 200 },
+        );
+      },
+    });
+
+    // Enough ids to need many batches.
+    const ids = Array.from({ length: 600 }, (_, i) => `id-${i}`);
+    const res = await client.getCountersByIds(ids);
+    expect(res.success).toBe(true);
+    expect(res.counters.size).toBe(600);
+    expect(maxInFlight).toBeLessThanOrEqual(3);
   });
 
   it("maps analytics metric rows into a record", async () => {
@@ -1155,7 +1224,7 @@ describe("Sink Analytics Tests", () => {
     );
   });
 
-  it("reports zero clicks when a link has no analytics rows", async () => {
+  it("leaves clicks undefined when a link has no analytics rows", async () => {
     const client = new SinkClient({
       baseUrl: "https://sink.example",
       token: TEST_TOKEN,
@@ -1172,8 +1241,63 @@ describe("Sink Analytics Tests", () => {
 
     const res = await client.getStats("quiet");
     expect(res.success).toBe(true);
-    expect(res.stats?.clicks).toBe(0);
+    // No analytics row is not the same as zero clicks; the card must show "—".
+    expect(res.stats?.clicks).toBeUndefined();
     expect(res.stats?.lastClickedAt).toBeUndefined();
+  });
+
+  it("distinguishes a real zero from missing analytics", async () => {
+    const client = new SinkClient({
+      baseUrl: "https://sink.example",
+      token: TEST_TOKEN,
+      fetchImpl: async (url) => {
+        const urlStr = String(url);
+        if (urlStr.includes("/api/link/query"))
+          return new Response(
+            JSON.stringify({ slug: "zeroed", url: "https://example.com" }),
+            { status: 200 },
+          );
+        if (urlStr.includes("/api/stats/counters"))
+          return new Response(
+            JSON.stringify({ data: [{ visits: 0, visitors: 0, referers: 0 }] }),
+            { status: 200 },
+          );
+        return new Response(JSON.stringify({ data: [] }), { status: 200 });
+      },
+    });
+
+    const res = await client.getStats("zeroed");
+    expect(res.success).toBe(true);
+    expect(res.stats?.clicks).toBe(0);
+  });
+
+  it("rejects a blank slug before querying analytics", async () => {
+    let calls = 0;
+    const client = new SinkClient({
+      baseUrl: "https://sink.example",
+      token: TEST_TOKEN,
+      fetchImpl: async () => {
+        calls++;
+        return new Response("{}", { status: 200 });
+      },
+    });
+
+    const counters = await client.getCountersBySlug("   ");
+    expect(counters.success).toBe(false);
+    expect(counters.error).toContain("non-empty slug");
+    expect(calls).toBe(0);
+  });
+
+  it("rejects an invalid metrics limit", async () => {
+    const client = new SinkClient({
+      baseUrl: "https://sink.example",
+      token: TEST_TOKEN,
+      fetchImpl: async () => new Response("{}", { status: 200 }),
+    });
+
+    const res = await client.getMetrics("valid-slug", "country", Number.NaN);
+    expect(res.success).toBe(false);
+    expect(res.error).toContain("Invalid metrics limit");
   });
 
   it("fails stats lookup when the link does not exist", async () => {

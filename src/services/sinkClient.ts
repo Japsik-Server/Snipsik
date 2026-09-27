@@ -17,8 +17,71 @@ import { safeHttpGet } from "@/utils/safeHttp";
 import { expirationToUnixSeconds } from "@/utils/time";
 import { z } from "zod";
 
-/** Max link ids per `/api/stats/counters` request. */
-const SINK_STATS_BATCH_SIZE = 200;
+/**
+ * Validates a slug before it is used as an analytics filter.
+ *
+ * Analytics slugs reach `/api/stats/*` as a query parameter, so a blank or
+ * malformed value would silently widen the query to every link on the instance.
+ * Fails loudly instead.
+ */
+function validateAnalyticsSlug(
+  slug: string,
+): { success: true; slug: string } | { success: false; error: string } {
+  const trimmed = (slug.startsWith("/") ? slug.substring(1) : slug).trim();
+  const parsed = z.string().trim().min(1).max(2048).safeParse(trimmed);
+  if (!parsed.success) {
+    logger.warn(
+      `Sink analytics slug validation failed: a non-empty slug is required`,
+    );
+    return {
+      success: false,
+      error: "Invalid slug for Sink analytics: a non-empty slug is required",
+    };
+  }
+  return { success: true, slug: parsed.data };
+}
+
+/** Max in-flight `/api/stats/counters` requests. */
+const SINK_STATS_CONCURRENCY = 3;
+
+/** Upper bound accepted for a `/api/stats/metrics` row limit. */
+const SINK_METRICS_MAX_LIMIT = 500;
+
+/**
+ * Ceiling on the encoded length of the `id` query parameter for one
+ * `/api/stats/counters` request. Sink caps a link id at 26 characters, so a
+ * plain count-based batch can push the URL past what proxies accept; this is a
+ * byte budget instead of a fixed item count.
+ */
+const SINK_STATS_ID_PARAM_MAX_BYTES = 4_000;
+
+/**
+ * Splits link ids into batches whose encoded `id` parameter stays within budget.
+ * A single id that alone exceeds the budget still gets its own batch, so an
+ * unexpectedly long id can never stall the whole lookup.
+ */
+function chunkIdsForStatsRequest(ids: readonly string[]): string[][] {
+  const batches: string[][] = [];
+  let current: string[] = [];
+  let currentBytes = 0;
+
+  for (const id of ids) {
+    // "," separates ids and %XX escapes expand bytes, so budget for the worst case.
+    const cost = encodeURIComponent(id).length * 3 + 1;
+    if (
+      current.length > 0 &&
+      currentBytes + cost > SINK_STATS_ID_PARAM_MAX_BYTES
+    ) {
+      batches.push(current);
+      current = [];
+      currentBytes = 0;
+    }
+    current.push(id);
+    currentBytes += cost;
+  }
+  if (current.length > 0) batches.push(current);
+  return batches;
+}
 
 /**
  * Reads `{ data: [{ id, visits, ... }] }` analytics rows into a flat list.
@@ -254,7 +317,7 @@ const statsSchema = z
   .object({
     slug: z.string().trim().min(1),
     url: z.string().trim().url(),
-    clicks: z.number().finite().nonnegative(),
+    clicks: z.number().finite().nonnegative().optional(),
     createdAt: z.union([z.string(), z.number()]).optional(),
     lastClickedAt: z.union([z.string(), z.number(), z.null()]).optional(),
     countries: z.record(z.number()).optional(),
@@ -1009,53 +1072,74 @@ export class SinkClient {
       return { success: true, counters: new Map() };
     }
 
-    const batches: string[][] = [];
-    for (let i = 0; i < uniqueIds.length; i += SINK_STATS_BATCH_SIZE) {
-      batches.push(uniqueIds.slice(i, i + SINK_STATS_BATCH_SIZE));
+    const batches = chunkIdsForStatsRequest(uniqueIds);
+
+    // Bounded concurrency: the dashboard can pass the whole catalog (2,000 links),
+    // and firing every batch at once would spike the instance.
+    const results: { success: boolean; body?: unknown; error?: string }[] = [];
+    for (let i = 0; i < batches.length; i += SINK_STATS_CONCURRENCY) {
+      results.push(
+        ...(await Promise.all(
+          batches
+            .slice(i, i + SINK_STATS_CONCURRENCY)
+            .map((batch) =>
+              this.request<unknown>(
+                `/api/stats/counters?id=${encodeURIComponent(batch.join(","))}`,
+              ),
+            ),
+        )),
+      );
     }
 
-    const results = await Promise.all(
-      batches.map((batch) =>
-        this.request<unknown>(
-          `/api/stats/counters?id=${encodeURIComponent(batch.join(","))}`,
-        ),
-      ),
-    );
-
     const counters = new Map<string, number>();
+    let failure: string | undefined;
     for (const res of results) {
       if (!res.success) {
-        return { success: false, counters, error: res.error };
+        // Keep whatever the successful batches resolved, so one bad batch does
+        // not discard every other batch's real counts.
+        failure ??= res.error;
+        continue;
       }
       for (const row of parseCounterRows(res.body)) {
         counters.set(row.id, row.visits);
       }
     }
-    return { success: true, counters };
+    return { success: failure === undefined, counters, error: failure };
   }
 
   /**
    * Fetches total visit counters for a single slug.
+   *
+   * `visits` is `undefined` when Sink returns no analytics row, which is how a
+   * link that genuinely has zero clicks is told apart from an instance whose
+   * analytics dataset is unavailable. Callers must not collapse the two.
    */
   async getCountersBySlug(slug: string): Promise<{
     success: boolean;
-    visits: number;
+    visits: number | undefined;
     error?: string;
   }> {
+    const cleanSlug = validateAnalyticsSlug(slug);
+    if (!cleanSlug.success) {
+      return { success: false, visits: undefined, error: cleanSlug.error };
+    }
     const res = await this.request<unknown>(
-      `/api/stats/counters?slug=${encodeURIComponent(slug)}`,
+      `/api/stats/counters?slug=${encodeURIComponent(cleanSlug.slug)}`,
     );
     if (!res.success) {
-      return { success: false, visits: 0, error: res.error };
+      return { success: false, visits: undefined, error: res.error };
     }
     // The slug-filtered response carries no `id` column (it is not grouped by
     // link id), so it is read separately from the id-grouped `parseCounterRows`.
     const rows = isRecord(res.body) ? res.body.data : undefined;
     const first = Array.isArray(rows) ? rows[0] : undefined;
-    const visits = isRecord(first) ? Number(first.visits) : NaN;
+    if (!isRecord(first)) {
+      return { success: true, visits: undefined };
+    }
+    const visits = Number(first.visits);
     return {
       success: true,
-      visits: Number.isFinite(visits) ? visits : 0,
+      visits: Number.isFinite(visits) ? visits : undefined,
     };
   }
 
@@ -1071,10 +1155,27 @@ export class SinkClient {
     metrics: Record<string, number>;
     error?: string;
   }> {
+    const cleanSlug = validateAnalyticsSlug(slug);
+    if (!cleanSlug.success) {
+      return { success: false, metrics: {}, error: cleanSlug.error };
+    }
+    const parsedLimit = z
+      .number()
+      .finite()
+      .positive()
+      .max(SINK_METRICS_MAX_LIMIT)
+      .safeParse(limit);
+    if (!parsedLimit.success) {
+      return {
+        success: false,
+        metrics: {},
+        error: `Invalid metrics limit for Sink analytics: expected a positive number up to ${SINK_METRICS_MAX_LIMIT}`,
+      };
+    }
     const params = new URLSearchParams({
-      slug,
+      slug: cleanSlug.slug,
       type,
-      limit: String(Math.max(1, Math.floor(limit))),
+      limit: String(Math.floor(parsedLimit.data)),
     });
     const res = await this.request<unknown>(
       `/api/stats/metrics?${params.toString()}`,
@@ -1104,8 +1205,12 @@ export class SinkClient {
     lastClickedAt?: number;
     error?: string;
   }> {
+    const cleanSlug = validateAnalyticsSlug(slug);
+    if (!cleanSlug.success) {
+      return { success: false, error: cleanSlug.error };
+    }
     const res = await this.request<unknown>(
-      `/api/logs/events?slug=${encodeURIComponent(slug)}&limit=1`,
+      `/api/logs/events?slug=${encodeURIComponent(cleanSlug.slug)}&limit=1`,
     );
     if (!res.success) {
       return { success: false, error: res.error };
@@ -1171,12 +1276,16 @@ export class SinkClient {
     const stats: SinkStats = {
       slug: linkRes.link.slug,
       url: linkRes.link.url,
-      clicks: counters.visits,
       createdAt: linkRes.link.createdAt,
       countries: countries.metrics,
       referrers: referrers.metrics,
       devices: devices.metrics,
     };
+    // Left undefined when the instance has no analytics, so the card can say
+    // "unavailable" instead of claiming a click count of zero.
+    if (counters.visits !== undefined) {
+      stats.clicks = counters.visits;
+    }
     if (lastClicked.success && lastClicked.lastClickedAt !== undefined) {
       stats.lastClickedAt = lastClicked.lastClickedAt;
     }
@@ -1184,12 +1293,12 @@ export class SinkClient {
     const parsed = statsSchema.safeParse(stats);
     if (!parsed.success) {
       logger.warn(
-        "Sink contract validation failed for link stats: slug, url, and non-negative clicks are required",
+        "Sink contract validation failed for link stats: slug and url are required",
       );
       return {
         success: false,
         error:
-          "Invalid Sink response contract for link stats: slug, url, and non-negative clicks are required",
+          "Invalid Sink response contract for link stats: slug and url are required",
       };
     }
     return { success: true, stats: parsed.data };

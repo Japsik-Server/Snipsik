@@ -58,7 +58,8 @@ export interface UpdateLinkPayload {
 export interface SinkStats {
   slug: string;
   url: string;
-  clicks: number;
+  /** `undefined` when the instance has no analytics data for this link. */
+  clicks?: number;
   createdAt?: string | number;
   lastClickedAt?: string | number | null;
   countries?: Record<string, number>;
