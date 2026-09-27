@@ -27,10 +27,11 @@ export function parseExpiration(
   let unixSeconds: number
 
   if (relative) {
-    const amount = BigInt(relative[1]!)
+    const rawAmount = relative[1] ?? '0'
     const unit = relative[2] || 's'
-    const target =
-      BigInt(Math.floor(nowMs / 1000)) + amount * UNIT_SECONDS[unit]!
+    const unitSeconds = UNIT_SECONDS[unit] ?? 1n
+    const amount = BigInt(rawAmount)
+    const target = BigInt(Math.floor(nowMs / 1000)) + amount * unitSeconds
     if (target > BigInt(Number.MAX_SAFE_INTEGER)) {
       return {
         kind: 'invalid',

@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'bun:test'
 import {
+  chmod,
   copyFile,
   mkdtemp,
-  chmod,
   readFile,
-  writeFile,
+  rm,
   symlink,
-  rm
+  writeFile
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'

@@ -1,12 +1,12 @@
 import { ActivityType, type Client, REST, Routes } from 'discord.js'
-import { config } from '@/config'
 import { linkCommand } from '@/commands/link'
-import { watchService } from '@/services/watchService'
-import { userConfigService } from '@/services/userConfigService'
-import { guildConfigService } from '@/services/guildConfigService'
+import { config } from '@/config'
 import { testDbConnection } from '@/db'
-import { logger } from '@/utils/logger'
 import { getAutomaticProcessingReadiness } from '@/services/cacheReadiness'
+import { guildConfigService } from '@/services/guildConfigService'
+import { userConfigService } from '@/services/userConfigService'
+import { watchService } from '@/services/watchService'
+import { logger } from '@/utils/logger'
 
 /**
  * Handles the Discord client ready event.

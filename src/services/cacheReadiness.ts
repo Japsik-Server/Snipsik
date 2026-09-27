@@ -1,7 +1,7 @@
+import type { CacheStatus } from '@/services/cacheRecovery'
 import { guildConfigService } from '@/services/guildConfigService'
 import { userConfigService } from '@/services/userConfigService'
 import { watchService } from '@/services/watchService'
-import type { CacheStatus } from '@/services/cacheRecovery'
 
 export interface AutomaticProcessingReadiness {
   ready: boolean

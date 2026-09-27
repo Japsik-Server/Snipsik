@@ -1,23 +1,23 @@
 import { and, eq } from 'drizzle-orm'
+import { config } from '@/config'
 import { db } from '@/db'
 import { guildConfigs } from '@/db/schema'
-import { config } from '@/config'
-import {
-  userConfigService,
-  normalizeMinUrlLength
-} from '@/services/userConfigService'
-import {
-  getAllSystemDefaultDomains,
-  isSystemDefaultDomain,
-  normalizeDomain,
-  MAX_CUSTOM_IGNORED_DOMAINS
-} from '@/utils/domain'
-import { logger } from '@/utils/logger'
-import { keyedMutex } from '@/utils/mutex'
 import {
   CacheRecoveryController,
   type CacheStatus
 } from '@/services/cacheRecovery'
+import {
+  normalizeMinUrlLength,
+  userConfigService
+} from '@/services/userConfigService'
+import {
+  getAllSystemDefaultDomains,
+  isSystemDefaultDomain,
+  MAX_CUSTOM_IGNORED_DOMAINS,
+  normalizeDomain
+} from '@/utils/domain'
+import { logger } from '@/utils/logger'
+import { keyedMutex } from '@/utils/mutex'
 
 export interface GuildConfigData {
   guildId?: string

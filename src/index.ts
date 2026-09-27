@@ -1,13 +1,13 @@
 import { Client, Events, GatewayIntentBits, Partials } from 'discord.js'
 import { config } from '@/config'
-import { onReady } from '@/events/ready'
+import { onChannelDelete } from '@/events/channelDelete'
 import { onInteractionCreate } from '@/events/interactionCreate'
 import { onMessageCreate } from '@/events/messageCreate'
-import { onChannelDelete } from '@/events/channelDelete'
+import { onReady } from '@/events/ready'
 import { onThreadDelete } from '@/events/threadDelete'
-import { logger } from '@/utils/logger'
 import { stopAutomaticProcessingCacheRecovery } from '@/services/cacheReadiness'
 import { startDeploymentReadiness } from '@/services/deploymentReadiness'
+import { logger } from '@/utils/logger'
 
 logger.info('Starting Snipsik Discord Bot...')
 

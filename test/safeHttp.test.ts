@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'bun:test'
 import {
   isPublicIpAddress,
-  safeHttpGet,
   type SafeHttpResolver,
-  type SafeHttpTransport
+  type SafeHttpTransport,
+  safeHttpGet
 } from '@/utils/safeHttp'
 
 const publicResolver: SafeHttpResolver = async () => [

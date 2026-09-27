@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'bun:test'
 import {
+  DEFAULT_USER_CONFIG,
   normalizeAutoDmMode,
   normalizeDmFormat,
-  normalizeMinUrlLength,
-  normalizeIgnoredDomains,
   normalizeFixupxEnabled,
-  userConfigService,
-  DEFAULT_USER_CONFIG
+  normalizeIgnoredDomains,
+  normalizeMinUrlLength,
+  userConfigService
 } from '@/services/userConfigService'
 import { MAX_CUSTOM_IGNORED_DOMAINS } from '@/utils/domain'
 

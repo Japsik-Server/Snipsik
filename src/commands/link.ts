@@ -2,11 +2,19 @@ import {
   type AutocompleteInteraction,
   ChannelType,
   type ChatInputCommandInteraction,
+  type GuildMember,
   MessageFlags,
   PermissionFlagsBits,
   SlashCommandBuilder
 } from 'discord.js'
-import type { Command, UserDashboardStats } from '@/types/bot'
+import { z } from 'zod'
+import { config } from '@/config'
+import { storeDashboardLinkSnapshots } from '@/services/dashboardLinkSnapshot'
+import { guildConfigService } from '@/services/guildConfigService'
+import {
+  attachClickCounts,
+  collectOwnedLinks
+} from '@/services/ownedLinkCatalog'
 import { sinkClient } from '@/services/sinkClient'
 import {
   generateSlug,
@@ -15,31 +23,25 @@ import {
   validateCustomSlug,
   verifyOwnership
 } from '@/services/slugManager'
-import { watchService } from '@/services/watchService'
 import {
-  userConfigService,
   normalizeAutoDmMode,
   normalizeDmFormat,
-  normalizeMinUrlLength,
+  normalizeFixupxEnabled,
   normalizeIgnoredDomains,
-  normalizeFixupxEnabled
+  normalizeMinUrlLength,
+  userConfigService
 } from '@/services/userConfigService'
-import { guildConfigService } from '@/services/guildConfigService'
-import { config } from '@/config'
+import { watchService } from '@/services/watchService'
+import type { Command, UserDashboardStats } from '@/types/bot'
 import { getAllSystemDefaultDomains, normalizeDomain } from '@/utils/domain'
-import { ui } from '@/utils/ui'
+import { logger } from '@/utils/logger'
+import { parseTagsInput } from '@/utils/tags'
 import {
   expirationToUnixSeconds,
   parseExpiration,
   timestampToMilliseconds
 } from '@/utils/time'
-import { logger } from '@/utils/logger'
-import { storeDashboardLinkSnapshots } from '@/services/dashboardLinkSnapshot'
-import { parseTagsInput } from '@/utils/tags'
-import {
-  attachClickCounts,
-  collectOwnedLinks
-} from '@/services/ownedLinkCatalog'
+import { ui } from '@/utils/ui'
 
 /**
  * Fetches link statistics and dashboard summary for a specific Discord user.
@@ -853,28 +855,36 @@ export const linkCommand: Command = {
   }
 }
 
+export const accessibleChannelSchema = z
+  .object({
+    id: z.string().regex(/^\d{17,20}$/, 'Invalid Discord channel snowflake ID'),
+    type: z.union([z.nativeEnum(ChannelType), z.number()]).optional()
+  })
+  .passthrough()
+
+export interface AccessibleChannelLike {
+  id: string
+  type?: ChannelType | number
+  permissionsFor?: (
+    member: GuildMember
+  ) => { has: (perm: bigint) => boolean } | null
+  members?: unknown
+}
+
 /**
  * Validates whether the bot has required access to monitor messages in the given channel or thread.
  * For regular channels and categories, ViewChannel permission is required.
  * For private threads, either ManageThreads permission or confirmed thread membership is required in addition to ViewChannel.
  */
 export async function validateBotChannelAccess(
-  channel: {
-    id: string
-    type?: ChannelType | number
-    permissionsFor?: (member: any) => { has: (perm: bigint) => boolean } | null
-    members?: {
-      cache: { has: (id: string) => boolean }
-      fetchMe?: () => Promise<any>
-    }
-  },
+  channel: AccessibleChannelLike,
   botMember: { id: string } | null
 ): Promise<{ canAccess: boolean; errorTitle?: string; errorMessage?: string }> {
   if (!botMember || !channel.permissionsFor) {
     return { canAccess: true }
   }
 
-  const perms = channel.permissionsFor(botMember)
+  const perms = channel.permissionsFor(botMember as GuildMember)
   if (perms && !perms.has(PermissionFlagsBits.ViewChannel)) {
     return {
       canAccess: false,
@@ -890,11 +900,15 @@ export async function validateBotChannelAccess(
     let isThreadMember = false
 
     if (!hasManageThreads && channel.members) {
-      if (channel.members.cache.has(botMember.id)) {
+      const threadMembers = channel.members as {
+        cache?: { has: (id: string) => boolean }
+        fetchMe?: () => Promise<unknown>
+      }
+      if (threadMembers.cache?.has(botMember.id)) {
         isThreadMember = true
-      } else if (typeof channel.members.fetchMe === 'function') {
+      } else if (typeof threadMembers.fetchMe === 'function') {
         try {
-          const member = await channel.members.fetchMe()
+          const member = await threadMembers.fetchMe()
           isThreadMember = Boolean(member)
         } catch {
           isThreadMember = false
@@ -954,15 +968,24 @@ async function handleWatchCommand(
   })
 
   if (subcommand === 'add') {
-    const channel = interaction.options.getChannel('channel', true)
+    const rawChannel = interaction.options.getChannel('channel', true)
+    const channelParse = accessibleChannelSchema.safeParse(rawChannel)
+    if (!channelParse.success) {
+      const errEmbed = ui.createErrorMessage(
+        '잘못된 채널',
+        '유효한 Discord 채널 정보를 확인할 수 없습니다.'
+      )
+      await interaction.editReply(errEmbed)
+      return
+    }
+    // Keep the original discord.js Channel instance: zod's object parse returns a
+    // plain copy that loses prototype members (permissionsFor, guild getter, isThread).
+    const channel = rawChannel
 
     // Bot channel/thread access check (strict mode)
     const botMember =
       guild.members.me ?? (await guild.members.fetchMe().catch(() => null))
-    const accessCheck = await validateBotChannelAccess(
-      channel as any,
-      botMember
-    )
+    const accessCheck = await validateBotChannelAccess(channel, botMember)
     if (!accessCheck.canAccess) {
       const errEmbed = ui.createErrorMessage(
         accessCheck.errorTitle ?? '봇 권한 부족',

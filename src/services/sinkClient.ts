@@ -1,21 +1,21 @@
+import { z } from 'zod'
 import { config } from '@/config'
 import type {
   CreateLinkPayload,
-  UpdateLinkPayload,
+  SinkCountParams,
   SinkLink,
-  SinkStats,
+  SinkListParams,
   SinkMetricType,
   SinkQueryParams,
   SinkSearchParams,
   SinkSearchResult,
-  SinkCountParams,
-  SinkListParams,
+  SinkStats,
+  UpdateLinkPayload,
   UrlCheckResult
 } from '@/types/sink'
 import { logger } from '@/utils/logger'
 import { safeHttpGet } from '@/utils/safeHttp'
 import { expirationToUnixSeconds } from '@/utils/time'
-import { z } from 'zod'
 
 /**
  * Validates a slug before it is used as an analytics filter.

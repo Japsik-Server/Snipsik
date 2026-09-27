@@ -1,10 +1,10 @@
-import { describe, expect, it, beforeEach } from 'bun:test'
+import { beforeEach, describe, expect, it } from 'bun:test'
+import { config } from '@/config'
 import {
-  guildConfigService,
-  DEFAULT_GUILD_CONFIG
+  DEFAULT_GUILD_CONFIG,
+  guildConfigService
 } from '@/services/guildConfigService'
 import { userConfigService } from '@/services/userConfigService'
-import { config } from '@/config'
 
 describe('GuildConfigService Unit Tests', () => {
   const testGuildId = 'test-guild-123456'

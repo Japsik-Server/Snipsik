@@ -1,4 +1,5 @@
 import { readFile } from 'node:fs/promises'
+
 const READINESS_FILE = '/tmp/snipsik-ready'
 
 try {

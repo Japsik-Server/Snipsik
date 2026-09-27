@@ -1,14 +1,14 @@
-import { describe, expect, it, mock, beforeEach, afterEach } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test'
 import {
-  onMessageCreate,
   cleanExtractedUrl,
-  extractUrlsFromDiscordMarkdown
+  extractUrlsFromDiscordMarkdown,
+  onMessageCreate
 } from '@/events/messageCreate'
-import { watchService } from '@/services/watchService'
-import { userConfigService } from '@/services/userConfigService'
 import { guildConfigService } from '@/services/guildConfigService'
 import { sinkClient } from '@/services/sinkClient'
 import { getUserHash } from '@/services/slugManager'
+import { userConfigService } from '@/services/userConfigService'
+import { watchService } from '@/services/watchService'
 
 describe('MessageCreate Pipe URL Extraction and Replacement', () => {
   const originalIsWatched = watchService.isWatched

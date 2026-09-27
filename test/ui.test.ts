@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test'
-import { ui, COLORS } from '@/services/../utils/ui'
 import { MessageFlags, type User } from 'discord.js'
+import { COLORS, ui } from '@/services/../utils/ui'
 import type { UserDashboardStats } from '@/types/bot'
 import type { SinkLink, SinkStats } from '@/types/sink'
 
