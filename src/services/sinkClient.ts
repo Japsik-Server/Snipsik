@@ -1073,7 +1073,10 @@ export class SinkClient {
   async getCountersByIds(ids: readonly string[]): Promise<{
     success: boolean;
     counters: Map<string, number>;
+    /** True only when every queried id resolved, so zero counts are provable. */
     analyticsAvailable: boolean;
+    /** Ids whose click count could not be established. */
+    unresolvedIds: string[];
     error?: string;
   }> {
     // Validate before de-duplicating so a malformed identifier fails loudly
@@ -1090,6 +1093,7 @@ export class SinkClient {
         success: false,
         counters: new Map(),
         analyticsAvailable: false,
+        unresolvedIds: [...ids],
         error:
           "Invalid link ids for Sink analytics: each id must be a non-empty string of at most 26 characters",
       };
@@ -1101,6 +1105,7 @@ export class SinkClient {
         success: true,
         counters: new Map(),
         analyticsAvailable: false,
+        unresolvedIds: [],
       };
     }
 
@@ -1110,17 +1115,24 @@ export class SinkClient {
     // and a freed slot immediately picks up the next batch rather than waiting
     // for a whole wave to finish. The dashboard passes the entire catalog here
     // (not one page), so this path can have many batches to drain.
-    const results: { success: boolean; body?: unknown; error?: string }[] = [];
+    //
+    // Each outcome is kept alongside the ids it covered: whether a batch came
+    // back empty is only meaningful for that batch's own links.
+    const outcomes: {
+      ids: string[];
+      res: { success: boolean; body?: unknown; error?: string };
+    }[] = [];
     let nextBatch = 0;
     const worker = async (): Promise<void> => {
       while (nextBatch < batches.length) {
         const batch = batches[nextBatch++];
         if (!batch) return;
-        results.push(
-          await this.request<unknown>(
+        outcomes.push({
+          ids: batch,
+          res: await this.request<unknown>(
             `/api/stats/counters?id=${encodeURIComponent(batch.join(","))}`,
           ),
-        );
+        });
       }
     };
     await Promise.all(
@@ -1132,24 +1144,36 @@ export class SinkClient {
 
     const counters = new Map<string, number>();
     let failure: string | undefined;
-    for (const res of results) {
+    // Ids whose analytics figure could not be established. A batch that failed
+    // outright, or that came back as `{ data: [] }` - which Sink also returns
+    // when the instance has no Cloudflare credentials - tells us nothing about
+    // whether its links were clicked, so they must not become a measured 0.
+    const unresolvedIds = new Set<string>();
+    for (const { ids, res } of outcomes) {
       if (!res.success) {
         // Keep whatever the successful batches resolved, so one bad batch does
         // not discard every other batch's real counts.
         failure ??= res.error;
+        for (const id of ids) unresolvedIds.add(id);
         continue;
       }
-      for (const row of parseCounterRows(res.body)) {
+      const rows = parseCounterRows(res.body);
+      if (rows.length === 0) {
+        for (const id of ids) unresolvedIds.add(id);
+        continue;
+      }
+      for (const row of rows) {
         counters.set(row.id, row.visits);
+        unresolvedIds.delete(row.id);
       }
     }
     return {
       success: failure === undefined,
       counters,
-      // Only a successful query returning rows proves the dataset is live. A
-      // query that ran but matched nothing is indistinguishable from one that
-      // never ran at all, so neither may be read as "these links have 0 clicks".
-      analyticsAvailable: counters.size > 0,
+      // Only a lookup that resolved every queried id proves the dataset is live
+      // for the whole set. A partial or empty outcome leaves it inconclusive.
+      analyticsAvailable: unresolvedIds.size === 0,
+      unresolvedIds: [...unresolvedIds],
       error: failure,
     };
   }

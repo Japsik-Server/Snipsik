@@ -1356,6 +1356,7 @@ describe("Click Count Partial Resolution Tests", () => {
     sinkClient.getCountersByIds = mock(async () => ({
       success: true,
       analyticsAvailable: true,
+      unresolvedIds: [],
       counters: new Map([["id-1", 12]]),
     }));
 
@@ -1393,6 +1394,7 @@ describe("Click Count Partial Resolution Tests", () => {
     sinkClient.getCountersByIds = mock(async () => ({
       success: true,
       analyticsAvailable: true,
+      unresolvedIds: [],
       counters: new Map([
         ["id-1", 3],
         ["id-2", 4],
@@ -1469,6 +1471,7 @@ describe("Zero-Click Link Resolution Tests", () => {
     sinkClient.getCountersByIds = mock(async () => ({
       success: true,
       analyticsAvailable: true,
+      unresolvedIds: [],
       counters: new Map([["clicked", 9]]),
     }));
 
@@ -1487,7 +1490,7 @@ describe("Zero-Click Link Resolution Tests", () => {
     }
   });
 
-  it("still reports partial when a batch fails, even if every id resolved", async () => {
+  it("stays complete when a batch failed but every id still resolved", async () => {
     const originalCount = sinkClient.countLinks;
     const originalList = sinkClient.listLinks;
     const originalCounters = sinkClient.getCountersByIds;
@@ -1507,13 +1510,15 @@ describe("Zero-Click Link Resolution Tests", () => {
       success: false,
       analyticsAvailable: false,
       counters: new Map([["only", 5]]),
+      unresolvedIds: [],
       error: "boom",
     }));
 
     try {
       const stats = await fetchUserDashboardStats(userId);
-      // A failed lookup means other batches may be missing, so this is a floor.
-      expect(stats.clicksComplete).toBe(false);
+      // Completeness is judged per id, not per request. Every id here resolved
+      // to a real value, so the total stands even though a request failed.
+      expect(stats.clicksComplete).toBe(true);
       expect(stats.totalClicks).toBe(5);
     } finally {
       sinkClient.countLinks = originalCount;
@@ -1551,6 +1556,7 @@ describe("Failed Lookup Must Not Fabricate Zeroes", () => {
       success: false,
       analyticsAvailable: false,
       counters: new Map(),
+      unresolvedIds: ["id-1", "id-2"],
       error: "network down",
     }));
 
@@ -1590,6 +1596,7 @@ describe("Failed Lookup Must Not Fabricate Zeroes", () => {
       success: false,
       analyticsAvailable: false,
       counters: new Map([["id-1", 11]]),
+      unresolvedIds: ["id-2"],
       error: "one batch failed",
     }));
 
@@ -1672,6 +1679,7 @@ describe("Empty Analytics Dataset Is Not Zero", () => {
       success: true,
       analyticsAvailable: false,
       counters: new Map(),
+      unresolvedIds: ["id-1", "id-2"],
     }));
 
     try {
@@ -1680,6 +1688,84 @@ describe("Empty Analytics Dataset Is Not Zero", () => {
       // No link may be stamped with a measured 0, and no total may be claimed.
       expect(stats.links.every((l) => l.clicks === undefined)).toBe(true);
       expect(stats.totalClicks).toBeUndefined();
+    } finally {
+      sinkClient.countLinks = originalCount;
+      sinkClient.listLinks = originalList;
+      sinkClient.getCountersByIds = originalCounters;
+    }
+  });
+});
+
+describe("Batch-Level Empty Results Are Not Zero", () => {
+  it("only treats an id as zero when its own batch answered for it", async () => {
+    const client = new SinkClient({
+      baseUrl: "https://sink.example",
+      token: TEST_TOKEN,
+      requestTimeoutMs: 5_000,
+      fetchImpl: async (url) => {
+        const ids = (new URL(String(url)).searchParams.get("id") ?? "").split(",");
+        const first = ids[0] ?? "";
+        // Second batch comes back empty, e.g. a transient empty response.
+        if (first >= "l300") {
+          return new Response(JSON.stringify({ data: [] }), { status: 200 });
+        }
+        return new Response(
+          JSON.stringify({ data: ids.map((id) => ({ id, visits: 5 })) }),
+          { status: 200 },
+        );
+      },
+    });
+
+    const ids = Array.from(
+      { length: 600 },
+      (_, i) => `l${String(i).padStart(3, "0")}abcdefghijklm`,
+    );
+    const res = await client.getCountersByIds(ids);
+    expect(res.success).toBe(true);
+    // The first batch's ids are known; the empty batch's are not.
+    expect(res.counters.size).toBeGreaterThan(0);
+    expect(res.analyticsAvailable).toBe(false);
+    expect(res.unresolvedIds.length).toBe(ids.length - res.counters.size);
+    for (const id of res.unresolvedIds) {
+      expect(res.counters.has(id)).toBe(false);
+    }
+  });
+
+  it("marks a link zero only when its own id is absent from unresolvedIds", async () => {
+    const userId = "981920391829381920";
+    const userHash = getUserHash(userId);
+    const originalCount = sinkClient.countLinks;
+    const originalList = sinkClient.listLinks;
+    const originalCounters = sinkClient.getCountersByIds;
+
+    sinkClient.countLinks = mock(async () => ({
+      success: true,
+      count: 2,
+      status: 200,
+    }));
+    sinkClient.listLinks = mock(async () => ({
+      success: true,
+      list: [
+        { id: "known-zero", slug: `a-${userHash}`, url: "https://a.com" },
+        { id: "no-answer", slug: `b-${userHash}`, url: "https://b.com" },
+      ],
+      total: 2,
+      listComplete: true,
+    }));
+    // One id provably has no clicks; the other never got an answer.
+    sinkClient.getCountersByIds = mock(async () => ({
+      success: true,
+      analyticsAvailable: false,
+      counters: new Map(),
+      unresolvedIds: ["no-answer"],
+    }));
+
+    try {
+      const stats = await fetchUserDashboardStats(userId);
+      expect(stats.links.find((l) => l.id === "known-zero")?.clicks).toBe(0);
+      expect(stats.links.find((l) => l.id === "no-answer")?.clicks).toBeUndefined();
+      expect(stats.clicksComplete).toBe(false);
+      expect(stats.totalClicks).toBe(0);
     } finally {
       sinkClient.countLinks = originalCount;
       sinkClient.listLinks = originalList;

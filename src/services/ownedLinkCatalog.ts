@@ -48,10 +48,11 @@ export async function attachClickCounts(
     );
   }
 
-  // A queried id that produced no analytics row is a genuinely click-free link
-  // (Sink's counters only group rows that exist, i.e. links that were clicked).
-  // Only a link that could never be queried at all - no usable id to correlate
-  // with - makes a total derived from this set a floor rather than a total.
+  // A link with no id can never be correlated with analytics. `unresolvedIds`
+  // covers the other case: its batch failed or came back empty, so Sink told us
+  // nothing about whether it was clicked. Only a link Sink positively reported
+  // as having no rows is a genuine zero.
+  const unresolved = new Set(res.unresolvedIds);
   const unqueryable = links.filter(
     (link) => typeof link.id !== "string" || link.id.trim().length === 0,
   ).length;
@@ -61,12 +62,12 @@ export async function attachClickCounts(
       if (!link.id) return link;
       const clicks = res.counters.get(link.id);
       if (clicks !== undefined) return { ...link, clicks };
-      // Only a query that actually returned analytics rows can prove a link was
-      // never clicked. An empty dataset answers with success but tells us
-      // nothing, so the figure stays unknown rather than becoming a measured 0.
-      return res.analyticsAvailable ? { ...link, clicks: 0 } : link;
+      // Absent from both the map and `unresolvedIds` means Sink answered for
+      // this id and reported no clicks, which is a measured zero.
+      if (!unresolved.has(link.id)) return { ...link, clicks: 0 };
+      return link;
     }),
-    partial: !res.success || !res.analyticsAvailable || unqueryable > 0,
+    partial: unresolved.size > 0 || unqueryable > 0,
   };
 }
 

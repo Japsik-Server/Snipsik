@@ -734,9 +734,11 @@ export const linkCommand: Command = {
         const currentPage = Math.max(1, Math.min(page, totalPages));
         const startIndex = (currentPage - 1) * pageSize;
         // Only the rendered page needs click counts, so this is a single request.
-        const paginated = (await attachClickCounts(
-          userLinks.slice(startIndex, startIndex + pageSize),
-        )).links;
+        const paginated = (
+          await attachClickCounts(
+            userLinks.slice(startIndex, startIndex + pageSize),
+          )
+        ).links;
 
         const lines = paginated.map((l, idx) => {
           const full = sinkClient.getFullShortUrl(l.slug);
@@ -1335,17 +1337,24 @@ async function handleAdminCommand(
       : totalLinks;
     const expiredLinks = expiredCountRes.success ? expiredCountRes.count : 0;
 
-    const sampleLinks = (await attachClickCounts(topLinksRes.list || [])).links;
-    let totalClicks = 0;
+    const clickRes = await attachClickCounts(topLinksRes.list || []);
+    const sampleLinks = clickRes.links;
+    // Unresolved clicks are unknown, not zero, so they must not be summed into
+    // a settled figure: `partial` keeps the total and the ranking honest.
+    let totalClicks: number | undefined;
     for (const l of sampleLinks) {
-      totalClicks += l.clicks ?? 0;
+      if (l.clicks !== undefined) totalClicks = (totalClicks ?? 0) + l.clicks;
     }
+    if (clickRes.partial) totalClicks = undefined;
 
-    const topLinks = [...sampleLinks]
-      .sort((a, b) => (b.clicks ?? 0) - (a.clicks ?? 0))
-      .slice(0, 5);
+    // Ranking by clicks is only meaningful when every sample resolved.
+    const rankable = clickRes.partial
+      ? []
+      : [...sampleLinks]
+          .sort((a, b) => (b.clicks ?? 0) - (a.clicks ?? 0))
+          .slice(0, 5);
 
-    const topLines = topLinks.map((l, i) => {
+    const topLines = rankable.map((l, i) => {
       const full = sinkClient.getFullShortUrl(l.slug);
       const truncated =
         l.url.length > 45 ? `${l.url.substring(0, 42)}...` : l.url;
@@ -1356,10 +1365,14 @@ async function handleAdminCommand(
       `📊 **총 등록 링크 수:** \`${totalLinks.toLocaleString()}\`개`,
       `🟢 **활성 링크 수:** \`${activeLinks.toLocaleString()}\`개`,
       `🔴 **만료된 링크 수:** \`${expiredLinks.toLocaleString()}\`개`,
-      `🖱️ **상위 링크 샘플 클릭 수:** \`${totalClicks.toLocaleString()}\`회`,
+      `🖱️ **상위 링크 샘플 클릭 수:** ${ui.formatClicks(totalClicks, "회")}`,
       "",
       "🏆 **최다 클릭 TOP 5 링크 (상위 샘플 기준):**",
-      topLines.length > 0 ? topLines.join("\n") : "_등록된 링크가 없습니다._",
+      clickRes.partial
+        ? "_클릭 통계를 완전하게 조회하지 못해 순위를 산출할 수 없습니다._"
+        : topLines.length > 0
+          ? topLines.join("\n")
+          : "_등록된 링크가 없습니다._",
     ].join("\n");
 
     const overviewEmbed = ui.createSuccessMessage(
@@ -1450,9 +1463,9 @@ async function handleAdminCommand(
     const totalPages = Math.ceil(links.length / pageSize) || 1;
     const currentPage = Math.max(1, Math.min(page, totalPages));
     const startIndex = (currentPage - 1) * pageSize;
-    const paginated = (await attachClickCounts(
-      links.slice(startIndex, startIndex + pageSize),
-    )).links;
+    const paginated = (
+      await attachClickCounts(links.slice(startIndex, startIndex + pageSize))
+    ).links;
 
     const lines = paginated.map((l, idx) => {
       const full = sinkClient.getFullShortUrl(l.slug);
@@ -1531,9 +1544,11 @@ async function handleAdminCommand(
     const totalPages = Math.ceil(userLinks.length / pageSize) || 1;
     const currentPage = Math.max(1, Math.min(page, totalPages));
     const startIndex = (currentPage - 1) * pageSize;
-    const paginated = (await attachClickCounts(
-      userLinks.slice(startIndex, startIndex + pageSize),
-    )).links;
+    const paginated = (
+      await attachClickCounts(
+        userLinks.slice(startIndex, startIndex + pageSize),
+      )
+    ).links;
 
     const lines = paginated.map((l, idx) => {
       const full = sinkClient.getFullShortUrl(l.slug);
