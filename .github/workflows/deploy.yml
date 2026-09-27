@@ -10,9 +10,6 @@ on:
       - ".gitignore"
       - ".env.example"
       - "test/**"
-      - ".github/pr-agent-allowed-users.txt"
-      - ".github/workflows/pr-agent.yml"
-      - ".pr_agent.toml"
       - "docker-compose.yml"
   workflow_dispatch:
     inputs:

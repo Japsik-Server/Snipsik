@@ -1,3 +1,0 @@
-# PR-Agent Allowed Users List
-# Repository owners are automatically allowed.
-# Add additional GitHub usernames here (one per line, case-insensitive).
