@@ -1,5 +1,36 @@
 import { sinkClient } from "@/services/sinkClient";
+import { logger } from "@/utils/logger";
 import type { SinkLink, SinkListParams } from "@/types/sink";
+
+/**
+ * Attaches real click counts to links using Sink's analytics dataset.
+ *
+ * Sink's link records carry no click count, so the value must come from
+ * `/api/stats/counters`. Links without an `id` cannot be correlated and keep
+ * `clicks` undefined, which the UI renders as "—" rather than a fake zero.
+ *
+ * Never throws: an analytics failure leaves the links untouched.
+ */
+export async function attachClickCounts(
+  links: readonly SinkLink[],
+): Promise<SinkLink[]> {
+  const ids = links
+    .map((link) => link.id)
+    .filter((id): id is string => typeof id === "string" && id.length > 0);
+  if (ids.length === 0) return [...links];
+
+  const res = await sinkClient.getCountersByIds(ids);
+  if (!res.success) {
+    logger.warn(`Failed to fetch click counts: ${res.error}`);
+    return [...links];
+  }
+
+  return links.map((link) => {
+    if (!link.id) return link;
+    const clicks = res.counters.get(link.id);
+    return clicks === undefined ? link : { ...link, clicks };
+  });
+}
 
 export const OWNED_LINK_LIMIT = 2_000;
 export const OWNED_LINK_PAGE_SIZE = 1_000;
@@ -237,7 +268,8 @@ export async function findOwnedLink(
     }
 
     const link = page.list.find(
-      (candidate) => isOwnedSlug(candidate.slug, userHash) && matches(candidate),
+      (candidate) =>
+        isOwnedSlug(candidate.slug, userHash) && matches(candidate),
     );
     if (link) {
       return {

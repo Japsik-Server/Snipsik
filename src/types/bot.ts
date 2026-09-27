@@ -19,7 +19,8 @@ export interface UserDashboardStats {
   totalLinks: number;
   activeLinks: number;
   expiredLinks: number;
-  totalClicks: number;
+  /** `undefined` when Sink returned no analytics at all, distinct from a real 0. */
+  totalClicks: number | undefined;
   displayedLinks: number;
   linksComplete: boolean;
   links: SinkLink[];

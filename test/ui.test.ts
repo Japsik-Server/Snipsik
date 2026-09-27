@@ -297,3 +297,31 @@ describe("Discord Components v2 UI Modules", () => {
     });
   });
 });
+
+describe("formatClicks", () => {
+  it("renders a real zero as 0", () => {
+    expect(ui.formatClicks(0)).toBe("`0`");
+  });
+
+  it("renders a known count with its unit", () => {
+    expect(ui.formatClicks(1234, "회")).toBe("`1,234`회");
+  });
+
+  it("renders missing analytics as a dash rather than a fake zero", () => {
+    expect(ui.formatClicks(undefined)).toBe("—");
+    expect(ui.formatClicks(undefined, "회")).toBe("—");
+  });
+
+  it("keeps a missing click count distinguishable on the dashboard", () => {
+    const statsWithoutAnalytics: UserDashboardStats = {
+      ...mockStats,
+      totalClicks: undefined,
+      links: mockStats.links.map((link) => ({ ...link, clicks: undefined })),
+    };
+
+    const view = ui.createDashboardView(mockUser, statsWithoutAnalytics);
+    const rendered = JSON.stringify(view);
+    expect(rendered).toContain("—");
+    expect(rendered).not.toContain("클릭 수:** `0`");
+  });
+});

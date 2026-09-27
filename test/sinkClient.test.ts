@@ -16,7 +16,6 @@ describe("SinkClient New API Tests", () => {
           data: {
             slug: "my-test-slug",
             url: "https://example.com",
-            clicks: 42,
           },
         }),
         { status: 200, headers: { "Content-Type": "application/json" } },
@@ -29,10 +28,33 @@ describe("SinkClient New API Tests", () => {
       expect(res.success).toBe(true);
       expect(res.link?.slug).toBe("my-test-slug");
       expect(res.link?.url).toBe("https://example.com");
-      expect(res.link?.clicks).toBe(42);
+      // Sink never returns a click count on the link record; it lives in the
+      // analytics dataset and is attached separately by attachClickCounts.
+      expect(res.link?.clicks).toBeUndefined();
     } finally {
       globalThis.fetch = originalFetch;
     }
+  });
+
+  it("should ignore a clicks field that Sink does not actually send", async () => {
+    const client = new SinkClient({
+      baseUrl: "https://sink.example",
+      token: TEST_TOKEN,
+      fetchImpl: async () =>
+        new Response(
+          JSON.stringify({
+            slug: "phantom-clicks",
+            url: "https://example.com",
+            clicks: 42,
+            views: 7,
+          }),
+          { status: 200 },
+        ),
+    });
+
+    const res = await client.queryLink({ slug: "phantom-clicks" });
+    expect(res.success).toBe(true);
+    expect(res.link?.clicks).toBeUndefined();
   });
 
   it("should search links using /api/link/search", async () => {
@@ -825,27 +847,37 @@ describe("Dashboard Stats Optimization Tests", () => {
         success: true,
         list: [
           {
+            id: "link-id-1",
             slug: `test1-${userHash}`,
             url: "https://example1.com",
-            clicks: 10,
             createdAt: new Date().toISOString(),
           },
           {
+            id: "link-id-2",
             slug: `test2-${userHash}`,
             url: "https://example2.com",
-            clicks: 25,
             createdAt: new Date().toISOString(),
           },
           {
+            id: "link-id-3",
             slug: "other-user-hash", // not owned by this user
             url: "https://other.com",
-            clicks: 999,
           },
         ],
         total: 3,
         listComplete: true,
       };
     });
+
+    const originalCounters = sinkClient.getCountersByIds;
+    sinkClient.getCountersByIds = mock(async () => ({
+      success: true,
+      counters: new Map([
+        ["link-id-1", 10],
+        ["link-id-2", 25],
+        ["link-id-3", 999],
+      ]),
+    }));
 
     try {
       const stats = await fetchUserDashboardStats(userId);
@@ -862,6 +894,7 @@ describe("Dashboard Stats Optimization Tests", () => {
     } finally {
       sinkClient.countLinks = originalCount;
       sinkClient.listLinks = originalList;
+      sinkClient.getCountersByIds = originalCounters;
     }
   });
 
@@ -949,5 +982,216 @@ describe("Dashboard Stats Optimization Tests", () => {
       sinkClient.countLinks = originalCount;
       sinkClient.listLinks = originalList;
     }
+  });
+});
+
+describe("Sink Analytics Tests", () => {
+  it("fetches click counters for many links in a single request", async () => {
+    const requestedCalls: string[] = [];
+    const client = new SinkClient({
+      baseUrl: "https://sink.example",
+      token: TEST_TOKEN,
+      fetchImpl: async (url, init) => {
+        requestedCalls.push(`${init?.method ?? "GET"} ${String(url)}`);
+        return new Response(
+          JSON.stringify({
+            data: [
+              { id: "id-a", visits: 12, visitors: 8, referers: 3 },
+              { id: "id-b", visits: 0, visitors: 0, referers: 0 },
+            ],
+          }),
+          { status: 200 },
+        );
+      },
+    });
+
+    const res = await client.getCountersByIds(["id-a", "id-b", "id-a"]);
+    expect(res.success).toBe(true);
+    expect(res.counters.get("id-a")).toBe(12);
+    expect(res.counters.get("id-b")).toBe(0);
+    expect(requestedCalls).toEqual([
+      "GET https://sink.example/api/stats/counters?id=id-a%2Cid-b",
+    ]);
+  });
+
+  it("treats an empty analytics payload as a valid empty result", async () => {
+    const client = new SinkClient({
+      baseUrl: "https://sink.example",
+      token: TEST_TOKEN,
+      // Sink answers { data: [] } when the instance has no Cloudflare credentials.
+      fetchImpl: async () =>
+        new Response(JSON.stringify({ data: [] }), { status: 200 }),
+    });
+
+    const res = await client.getCountersByIds(["id-a"]);
+    expect(res.success).toBe(true);
+    expect(res.counters.size).toBe(0);
+  });
+
+  it("skips the request entirely when no ids are given", async () => {
+    let calls = 0;
+    const client = new SinkClient({
+      baseUrl: "https://sink.example",
+      token: TEST_TOKEN,
+      fetchImpl: async () => {
+        calls++;
+        return new Response("{}", { status: 200 });
+      },
+    });
+
+    const res = await client.getCountersByIds([]);
+    expect(res.success).toBe(true);
+    expect(res.counters.size).toBe(0);
+    expect(calls).toBe(0);
+  });
+
+  it("splits large id sets into batched requests", async () => {
+    const requestedIds: string[] = [];
+    const client = new SinkClient({
+      baseUrl: "https://sink.example",
+      token: TEST_TOKEN,
+      fetchImpl: async (url) => {
+        const idParam = new URL(String(url)).searchParams.get("id") ?? "";
+        requestedIds.push(idParam);
+        return new Response(
+          JSON.stringify({
+            data: idParam.split(",").map((id) => ({ id, visits: 1 })),
+          }),
+          { status: 200 },
+        );
+      },
+    });
+
+    const ids = Array.from({ length: 401 }, (_, i) => `id-${i}`);
+    const res = await client.getCountersByIds(ids);
+    expect(res.success).toBe(true);
+    expect(requestedIds.map((v) => v.split(",").length)).toEqual([200, 200, 1]);
+    expect(res.counters.size).toBe(401);
+  });
+
+  it("maps analytics metric rows into a record", async () => {
+    let requestedUrl = "";
+    const client = new SinkClient({
+      baseUrl: "https://sink.example",
+      token: TEST_TOKEN,
+      fetchImpl: async (url) => {
+        requestedUrl = String(url);
+        return new Response(
+          JSON.stringify({
+            data: [
+              { name: "KR", count: 5 },
+              { name: "US", count: 2 },
+            ],
+          }),
+          { status: 200 },
+        );
+      },
+    });
+
+    const res = await client.getMetrics("my-slug", "country");
+    expect(requestedUrl).toContain("/api/stats/metrics?");
+    expect(requestedUrl).toContain("slug=my-slug");
+    expect(requestedUrl).toContain("type=country");
+    expect(res.success).toBe(true);
+    expect(res.metrics).toEqual({ KR: 5, US: 2 });
+  });
+
+  it("builds stats from analytics endpoints instead of the removed link stats route", async () => {
+    const requestedCalls: string[] = [];
+    const client = new SinkClient({
+      baseUrl: "https://sink.example",
+      token: TEST_TOKEN,
+      fetchImpl: async (url) => {
+        const urlStr = String(url);
+        requestedCalls.push(urlStr);
+        if (urlStr.includes("/api/link/query"))
+          return new Response(
+            JSON.stringify({ slug: "my-slug", url: "https://example.com" }),
+            { status: 200 },
+          );
+        if (urlStr.includes("/api/stats/counters"))
+          return new Response(
+            JSON.stringify({
+              data: [{ visits: 42, visitors: 30, referers: 9 }],
+            }),
+            { status: 200 },
+          );
+        if (urlStr.includes("type=country"))
+          return new Response(
+            JSON.stringify({ data: [{ name: "KR", count: 40 }] }),
+            { status: 200 },
+          );
+        if (urlStr.includes("type=referer"))
+          return new Response(
+            JSON.stringify({ data: [{ name: "https://x.com", count: 12 }] }),
+            { status: 200 },
+          );
+        if (urlStr.includes("type=device"))
+          return new Response(
+            JSON.stringify({ data: [{ name: "desktop", count: 33 }] }),
+            { status: 200 },
+          );
+        if (urlStr.includes("/api/logs/events"))
+          return new Response(
+            JSON.stringify([{ timestamp: "2026-09-20T10:00:00Z" }]),
+            { status: 200 },
+          );
+        return new Response("{}", { status: 404 });
+      },
+    });
+
+    const res = await client.getStats("my-slug");
+    expect(res.success).toBe(true);
+    expect(res.stats?.clicks).toBe(42);
+    expect(res.stats?.slug).toBe("my-slug");
+    expect(res.stats?.url).toBe("https://example.com");
+    expect(res.stats?.countries).toEqual({ KR: 40 });
+    expect(res.stats?.referrers).toEqual({ "https://x.com": 12 });
+    expect(res.stats?.devices).toEqual({ desktop: 33 });
+    expect(res.stats?.lastClickedAt).toBe(1789898400);
+    // The endpoint that never existed must not be called.
+    expect(requestedCalls.some((c) => c.includes("/api/link/stats/"))).toBe(
+      false,
+    );
+  });
+
+  it("reports zero clicks when a link has no analytics rows", async () => {
+    const client = new SinkClient({
+      baseUrl: "https://sink.example",
+      token: TEST_TOKEN,
+      fetchImpl: async (url) => {
+        const urlStr = String(url);
+        if (urlStr.includes("/api/link/query"))
+          return new Response(
+            JSON.stringify({ slug: "quiet", url: "https://example.com" }),
+            { status: 200 },
+          );
+        return new Response(JSON.stringify({ data: [] }), { status: 200 });
+      },
+    });
+
+    const res = await client.getStats("quiet");
+    expect(res.success).toBe(true);
+    expect(res.stats?.clicks).toBe(0);
+    expect(res.stats?.lastClickedAt).toBeUndefined();
+  });
+
+  it("fails stats lookup when the link does not exist", async () => {
+    const client = new SinkClient({
+      baseUrl: "https://sink.example",
+      token: TEST_TOKEN,
+      fetchImpl: async (url) => {
+        const urlStr = String(url);
+        if (urlStr.includes("/api/link/query"))
+          return new Response(JSON.stringify({ message: "Not Found" }), {
+            status: 404,
+            statusText: "Not Found",
+          });
+        return new Response(JSON.stringify({ data: [] }), { status: 200 });
+      },
+    });
+
+    const res = await client.getStats("missing");
+    expect(res.success).toBe(false);
   });
 });

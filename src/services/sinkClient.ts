@@ -4,6 +4,7 @@ import type {
   UpdateLinkPayload,
   SinkLink,
   SinkStats,
+  SinkMetricType,
   SinkQueryParams,
   SinkSearchParams,
   SinkSearchResult,
@@ -15,6 +16,28 @@ import { logger } from "@/utils/logger";
 import { safeHttpGet } from "@/utils/safeHttp";
 import { expirationToUnixSeconds } from "@/utils/time";
 import { z } from "zod";
+
+/** Max link ids per `/api/stats/counters` request. */
+const SINK_STATS_BATCH_SIZE = 200;
+
+/**
+ * Reads `{ data: [{ id, visits, ... }] }` analytics rows into a flat list.
+ * A missing or empty `data` array is a valid "no analytics" answer.
+ */
+function parseCounterRows(value: unknown): { id: string; visits: number }[] {
+  if (!isRecord(value)) return [];
+  const rows = value.data;
+  if (!Array.isArray(rows)) return [];
+
+  const parsed: { id: string; visits: number }[] = [];
+  for (const row of rows) {
+    if (!isRecord(row)) continue;
+    const id = typeof row.id === "string" ? row.id.trim() : "";
+    if (!id) continue;
+    parsed.push({ id, visits: Number(row.visits) || 0 });
+  }
+  return parsed;
+}
 
 function normalizeSinkLink(raw: unknown): SinkLink {
   if (!raw || typeof raw !== "object") {
@@ -137,20 +160,10 @@ function normalizeSinkLink(raw: unknown): SinkLink {
         ? meta.password
         : null;
 
-  const rawClicks =
-    obj.clicks ??
-    meta.clicks ??
-    obj.visit_count ??
-    meta.visit_count ??
-    obj.views ??
-    meta.views ??
-    obj.count;
-  const clicks =
-    typeof rawClicks === "number"
-      ? rawClicks
-      : typeof rawClicks === "string"
-        ? parseInt(rawClicks, 10) || 0
-        : 0;
+  // Sink never returns a click count on the link record itself — clicks live only in
+  // the analytics dataset (see `getCountersByIds` / `getStats`). Leaving this undefined
+  // keeps "no analytics" distinguishable from a genuine zero.
+  const clicks = undefined;
 
   const expiration = expirationToUnixSeconds(
     (obj.expiration ??
@@ -977,24 +990,198 @@ export class SinkClient {
   }
 
   /**
+   * Fetches visit counters for many links in one request.
+   *
+   * Sink groups analytics rows by `index1`, which is the link's `id`
+   * (`indexes: [link.id]` in the access log). Ids are comma-joined into a single
+   * `id` parameter, so a page of links costs one request regardless of size.
+   *
+   * When the instance has no Cloudflare credentials, Sink answers `{ data: [] }`.
+   * That is a valid empty result, not a failure.
+   */
+  async getCountersByIds(ids: readonly string[]): Promise<{
+    success: boolean;
+    counters: Map<string, number>;
+    error?: string;
+  }> {
+    const uniqueIds = [...new Set(ids.map((id) => id.trim()).filter(Boolean))];
+    if (uniqueIds.length === 0) {
+      return { success: true, counters: new Map() };
+    }
+
+    const batches: string[][] = [];
+    for (let i = 0; i < uniqueIds.length; i += SINK_STATS_BATCH_SIZE) {
+      batches.push(uniqueIds.slice(i, i + SINK_STATS_BATCH_SIZE));
+    }
+
+    const results = await Promise.all(
+      batches.map((batch) =>
+        this.request<unknown>(
+          `/api/stats/counters?id=${encodeURIComponent(batch.join(","))}`,
+        ),
+      ),
+    );
+
+    const counters = new Map<string, number>();
+    for (const res of results) {
+      if (!res.success) {
+        return { success: false, counters, error: res.error };
+      }
+      for (const row of parseCounterRows(res.body)) {
+        counters.set(row.id, row.visits);
+      }
+    }
+    return { success: true, counters };
+  }
+
+  /**
+   * Fetches total visit counters for a single slug.
+   */
+  async getCountersBySlug(slug: string): Promise<{
+    success: boolean;
+    visits: number;
+    error?: string;
+  }> {
+    const res = await this.request<unknown>(
+      `/api/stats/counters?slug=${encodeURIComponent(slug)}`,
+    );
+    if (!res.success) {
+      return { success: false, visits: 0, error: res.error };
+    }
+    // The slug-filtered response carries no `id` column (it is not grouped by
+    // link id), so it is read separately from the id-grouped `parseCounterRows`.
+    const rows = isRecord(res.body) ? res.body.data : undefined;
+    const first = Array.isArray(rows) ? rows[0] : undefined;
+    const visits = isRecord(first) ? Number(first.visits) : NaN;
+    return {
+      success: true,
+      visits: Number.isFinite(visits) ? visits : 0,
+    };
+  }
+
+  /**
+   * Fetches a single analytics dimension (country, referer, device, ...) for a slug.
+   */
+  async getMetrics(
+    slug: string,
+    type: SinkMetricType,
+    limit: number = 100,
+  ): Promise<{
+    success: boolean;
+    metrics: Record<string, number>;
+    error?: string;
+  }> {
+    const params = new URLSearchParams({
+      slug,
+      type,
+      limit: String(Math.max(1, Math.floor(limit))),
+    });
+    const res = await this.request<unknown>(
+      `/api/stats/metrics?${params.toString()}`,
+    );
+    if (!res.success) {
+      return { success: false, metrics: {}, error: res.error };
+    }
+
+    const metrics: Record<string, number> = {};
+    const body = res.body as { data?: unknown };
+    const rows = Array.isArray(body?.data) ? body.data : [];
+    for (const row of rows) {
+      if (!isRecord(row)) continue;
+      const name = typeof row.name === "string" ? row.name.trim() : "";
+      const count = typeof row.count === "number" ? row.count : NaN;
+      if (!name || !Number.isFinite(count)) continue;
+      metrics[name] = count;
+    }
+    return { success: true, metrics };
+  }
+
+  /**
+   * Fetches the most recent click timestamp for a slug, if any.
+   */
+  async getLastClickedAt(slug: string): Promise<{
+    success: boolean;
+    lastClickedAt?: number;
+    error?: string;
+  }> {
+    const res = await this.request<unknown>(
+      `/api/logs/events?slug=${encodeURIComponent(slug)}&limit=1`,
+    );
+    if (!res.success) {
+      return { success: false, error: res.error };
+    }
+    if (!Array.isArray(res.body)) {
+      return { success: true };
+    }
+    const first = res.body[0];
+    if (!isRecord(first)) {
+      return { success: true };
+    }
+    const timestamp = first.timestamp;
+    const seconds =
+      typeof timestamp === "number"
+        ? timestamp
+        : typeof timestamp === "string"
+          ? Date.parse(timestamp)
+          : NaN;
+    if (!Number.isFinite(seconds)) {
+      return { success: true };
+    }
+    // Sink emits either unix seconds or an ISO string; normalize to unix seconds.
+    return {
+      success: true,
+      lastClickedAt: Math.floor(seconds > 1e11 ? seconds / 1000 : seconds),
+    };
+  }
+
+  /**
    * Fetches statistics and click count for a slug.
+   *
+   * Sink has no per-link stats endpoint — every figure is derived from the analytics
+   * dataset, so this composes counters, three metric dimensions, and the last click.
    */
   async getStats(
     slug: string,
   ): Promise<{ success: boolean; stats?: SinkStats; error?: string }> {
-    const res = await this.request<SinkStats>(
-      `/api/link/stats/${encodeURIComponent(slug)}`,
-      {
-        method: "GET",
-      },
-    );
+    const cleanSlug = slug.startsWith("/") ? slug.substring(1) : slug;
 
-    if (!res.success) {
-      return { success: false, error: res.error || "Failed to fetch stats" };
+    const [counters, countries, referrers, devices, lastClicked, linkRes] =
+      await Promise.all([
+        this.getCountersBySlug(cleanSlug),
+        this.getMetrics(cleanSlug, "country"),
+        this.getMetrics(cleanSlug, "referer"),
+        this.getMetrics(cleanSlug, "device"),
+        this.getLastClickedAt(cleanSlug),
+        this.queryLink({ slug: cleanSlug }),
+      ]);
+
+    if (!linkRes.success || !linkRes.link) {
+      return {
+        success: false,
+        error: linkRes.error || "Link not found",
+      };
+    }
+    if (!counters.success) {
+      return {
+        success: false,
+        error: counters.error || "Failed to fetch stats",
+      };
     }
 
-    const candidate = unwrapObject(res.body, ["data", "stats"]);
-    const parsed = statsSchema.safeParse(candidate);
+    const stats: SinkStats = {
+      slug: linkRes.link.slug,
+      url: linkRes.link.url,
+      clicks: counters.visits,
+      createdAt: linkRes.link.createdAt,
+      countries: countries.metrics,
+      referrers: referrers.metrics,
+      devices: devices.metrics,
+    };
+    if (lastClicked.success && lastClicked.lastClickedAt !== undefined) {
+      stats.lastClickedAt = lastClicked.lastClickedAt;
+    }
+
+    const parsed = statsSchema.safeParse(stats);
     if (!parsed.success) {
       logger.warn(
         "Sink contract validation failed for link stats: slug, url, and non-negative clicks are required",

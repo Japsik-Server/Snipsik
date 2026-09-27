@@ -66,6 +66,22 @@ export interface SinkStats {
   devices?: Record<string, number>;
 }
 
+/** Analytics dimensions exposed by `GET /api/stats/metrics`. */
+export type SinkMetricType =
+  | "country"
+  | "region"
+  | "city"
+  | "device"
+  | "deviceType"
+  | "os"
+  | "browser"
+  | "browserType"
+  | "referer"
+  | "language"
+  | "timezone"
+  | "slug"
+  | "url";
+
 export interface SinkListResponse {
   list: SinkLink[];
   total: number;

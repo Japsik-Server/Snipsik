@@ -36,7 +36,10 @@ import {
 import { logger } from "@/utils/logger";
 import { storeDashboardLinkSnapshots } from "@/services/dashboardLinkSnapshot";
 import { parseTagsInput } from "@/utils/tags";
-import { collectOwnedLinks } from "@/services/ownedLinkCatalog";
+import {
+  attachClickCounts,
+  collectOwnedLinks,
+} from "@/services/ownedLinkCatalog";
 
 /**
  * Fetches link statistics and dashboard summary for a specific Discord user.
@@ -58,7 +61,7 @@ export async function fetchUserDashboardStats(
     ]);
 
   if (!catalog.success) throw new Error(catalog.error);
-  const userLinks = catalog.links;
+  const userLinks = await attachClickCounts(catalog.links);
 
   // Sort by createdAt descending (most recent first)
   userLinks.sort((a, b) => {
@@ -68,12 +71,16 @@ export async function fetchUserDashboardStats(
   });
 
   const now = Date.now();
-  let totalClicks = 0;
+  // Stays undefined when no link returned analytics, so the dashboard can say
+  // "unavailable" rather than claim a misleading zero.
+  let totalClicks: number | undefined;
   let loadedActive = 0;
   let loadedExpired = 0;
 
   for (const link of userLinks) {
-    totalClicks += link.clicks ?? 0;
+    if (link.clicks !== undefined) {
+      totalClicks = (totalClicks ?? 0) + link.clicks;
+    }
     if (link.expiration !== undefined && link.expiration !== null) {
       const expTime = expirationToUnixSeconds(link.expiration);
       if (expTime !== undefined && expTime * 1000 <= now) {
@@ -722,11 +729,14 @@ export const linkCommand: Command = {
         const totalPages = Math.ceil(userLinks.length / pageSize) || 1;
         const currentPage = Math.max(1, Math.min(page, totalPages));
         const startIndex = (currentPage - 1) * pageSize;
-        const paginated = userLinks.slice(startIndex, startIndex + pageSize);
+        // Only the rendered page needs click counts, so this is a single request.
+        const paginated = await attachClickCounts(
+          userLinks.slice(startIndex, startIndex + pageSize),
+        );
 
         const lines = paginated.map((l, idx) => {
           const full = sinkClient.getFullShortUrl(l.slug);
-          const clickPart = `(\`${(l.clicks ?? 0).toLocaleString()}\` clicks)`;
+          const clickPart = `(${ui.formatClicks(l.clicks, " clicks")})`;
           const truncated =
             l.url.length > 50 ? `${l.url.substring(0, 47)}...` : l.url;
           return `**${startIndex + idx + 1}.** [/${l.slug}](${full}) ${clickPart}\n   ↳ [🌐 원본 열기 ↗](${l.url}) • \`${truncated}\``;
@@ -1321,7 +1331,7 @@ async function handleAdminCommand(
       : totalLinks;
     const expiredLinks = expiredCountRes.success ? expiredCountRes.count : 0;
 
-    const sampleLinks = topLinksRes.list || [];
+    const sampleLinks = await attachClickCounts(topLinksRes.list || []);
     let totalClicks = 0;
     for (const l of sampleLinks) {
       totalClicks += l.clicks ?? 0;
@@ -1335,7 +1345,7 @@ async function handleAdminCommand(
       const full = sinkClient.getFullShortUrl(l.slug);
       const truncated =
         l.url.length > 45 ? `${l.url.substring(0, 42)}...` : l.url;
-      return `**${i + 1}.** [/${l.slug}](${full}) - \`${(l.clicks ?? 0).toLocaleString()} clicks\`\n   ↳ [🌐 원본 열기 ↗](${l.url}) • \`${truncated}\``;
+      return `**${i + 1}.** [/${l.slug}](${full}) - \`${ui.formatClicks(l.clicks)} clicks\`\n   ↳ [🌐 원본 열기 ↗](${l.url}) • \`${truncated}\``;
     });
 
     const desc = [
@@ -1436,12 +1446,14 @@ async function handleAdminCommand(
     const totalPages = Math.ceil(links.length / pageSize) || 1;
     const currentPage = Math.max(1, Math.min(page, totalPages));
     const startIndex = (currentPage - 1) * pageSize;
-    const paginated = links.slice(startIndex, startIndex + pageSize);
+    const paginated = await attachClickCounts(
+      links.slice(startIndex, startIndex + pageSize),
+    );
 
     const lines = paginated.map((l, idx) => {
       const full = sinkClient.getFullShortUrl(l.slug);
       const titlePart = l.title ? ` - **${l.title}**` : "";
-      const clickPart = `(\`${(l.clicks ?? 0).toLocaleString()}\` clicks)`;
+      const clickPart = `(${ui.formatClicks(l.clicks, " clicks")})`;
       const truncated =
         l.url.length > 50 ? `${l.url.substring(0, 47)}...` : l.url;
       return `**${startIndex + idx + 1}.** [/${l.slug}](${full})${titlePart} ${clickPart}\n   ↳ [🌐 원본 열기 ↗](${l.url}) • \`${truncated}\``;
@@ -1515,12 +1527,14 @@ async function handleAdminCommand(
     const totalPages = Math.ceil(userLinks.length / pageSize) || 1;
     const currentPage = Math.max(1, Math.min(page, totalPages));
     const startIndex = (currentPage - 1) * pageSize;
-    const paginated = userLinks.slice(startIndex, startIndex + pageSize);
+    const paginated = await attachClickCounts(
+      userLinks.slice(startIndex, startIndex + pageSize),
+    );
 
     const lines = paginated.map((l, idx) => {
       const full = sinkClient.getFullShortUrl(l.slug);
       const titlePart = l.title ? ` - **${l.title}**` : "";
-      const clickPart = `(\`${(l.clicks ?? 0).toLocaleString()}\` clicks)`;
+      const clickPart = `(${ui.formatClicks(l.clicks, " clicks")})`;
       const truncated =
         l.url.length > 50 ? `${l.url.substring(0, 47)}...` : l.url;
       return `**${startIndex + idx + 1}.** [/${l.slug}](${full})${titlePart} ${clickPart}\n   ↳ [🌐 원본 열기 ↗](${l.url}) • \`${truncated}\``;
