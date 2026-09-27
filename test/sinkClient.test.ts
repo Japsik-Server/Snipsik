@@ -1355,6 +1355,7 @@ describe("Click Count Partial Resolution Tests", () => {
     }));
     sinkClient.getCountersByIds = mock(async () => ({
       success: true,
+      analyticsAvailable: true,
       counters: new Map([["id-1", 12]]),
     }));
 
@@ -1391,6 +1392,7 @@ describe("Click Count Partial Resolution Tests", () => {
     }));
     sinkClient.getCountersByIds = mock(async () => ({
       success: true,
+      analyticsAvailable: true,
       counters: new Map([
         ["id-1", 3],
         ["id-2", 4],
@@ -1425,16 +1427,18 @@ describe("Click Count Partial Resolution Tests", () => {
     expect(calls).toBe(0);
   });
 
-  it("rejects an over-long id that exceeds Sink's 26 character limit", async () => {
+  it("rejects an absurdly large id set", async () => {
     const client = new SinkClient({
       baseUrl: "https://sink.example",
       token: TEST_TOKEN,
       fetchImpl: async () => new Response("{}", { status: 200 }),
     });
 
-    const res = await client.getCountersByIds(["x".repeat(27)]);
+    const res = await client.getCountersByIds(
+      Array.from({ length: 5_001 }, (_, i) => `id-${i}`),
+    );
     expect(res.success).toBe(false);
-    expect(res.error).toContain("26 characters");
+    expect(res.analyticsAvailable).toBe(false);
   });
 });
 
@@ -1464,6 +1468,7 @@ describe("Zero-Click Link Resolution Tests", () => {
     // Sink returns rows only for links that were actually clicked.
     sinkClient.getCountersByIds = mock(async () => ({
       success: true,
+      analyticsAvailable: true,
       counters: new Map([["clicked", 9]]),
     }));
 
@@ -1500,6 +1505,7 @@ describe("Zero-Click Link Resolution Tests", () => {
     }));
     sinkClient.getCountersByIds = mock(async () => ({
       success: false,
+      analyticsAvailable: false,
       counters: new Map([["only", 5]]),
       error: "boom",
     }));
@@ -1543,6 +1549,7 @@ describe("Failed Lookup Must Not Fabricate Zeroes", () => {
     // A failed lookup (network error, or a rejected id) returns an empty map.
     sinkClient.getCountersByIds = mock(async () => ({
       success: false,
+      analyticsAvailable: false,
       counters: new Map(),
       error: "network down",
     }));
@@ -1581,6 +1588,7 @@ describe("Failed Lookup Must Not Fabricate Zeroes", () => {
     }));
     sinkClient.getCountersByIds = mock(async () => ({
       success: false,
+      analyticsAvailable: false,
       counters: new Map([["id-1", 11]]),
       error: "one batch failed",
     }));
@@ -1617,5 +1625,65 @@ describe("Failed Lookup Must Not Fabricate Zeroes", () => {
     const res = await client.getStats("s");
     expect(res.success).toBe(true);
     expect(res.stats?.clicks).toBeUndefined();
+  });
+});
+
+describe("Empty Analytics Dataset Is Not Zero", () => {
+  const userId = "881920391829381920";
+  const userHash = getUserHash(userId);
+
+  it("reports analyticsAvailable false when Sink returns an empty dataset", async () => {
+    const client = new SinkClient({
+      baseUrl: "https://sink.example",
+      token: TEST_TOKEN,
+      fetchImpl: async () =>
+        // Sink's useWAE short-circuits to { data: [] } without CF credentials.
+        new Response(JSON.stringify({ data: [] }), { status: 200 }),
+    });
+
+    const res = await client.getCountersByIds(["a", "b"]);
+    expect(res.success).toBe(true);
+    // Succeeded, but proves nothing about whether clicks exist.
+    expect(res.analyticsAvailable).toBe(false);
+    expect(res.counters.size).toBe(0);
+  });
+
+  it("does not fabricate zeroes or claim a complete total on an empty dataset", async () => {
+    const originalCount = sinkClient.countLinks;
+    const originalList = sinkClient.listLinks;
+    const originalCounters = sinkClient.getCountersByIds;
+
+    sinkClient.countLinks = mock(async () => ({
+      success: true,
+      count: 2,
+      status: 200,
+    }));
+    sinkClient.listLinks = mock(async () => ({
+      success: true,
+      list: [
+        { id: "id-1", slug: `a-${userHash}`, url: "https://a.com" },
+        { id: "id-2", slug: `b-${userHash}`, url: "https://b.com" },
+      ],
+      total: 2,
+      listComplete: true,
+    }));
+    // Success with an empty map: exactly what a credentials-less instance returns.
+    sinkClient.getCountersByIds = mock(async () => ({
+      success: true,
+      analyticsAvailable: false,
+      counters: new Map(),
+    }));
+
+    try {
+      const stats = await fetchUserDashboardStats(userId);
+      expect(stats.clicksComplete).toBe(false);
+      // No link may be stamped with a measured 0, and no total may be claimed.
+      expect(stats.links.every((l) => l.clicks === undefined)).toBe(true);
+      expect(stats.totalClicks).toBeUndefined();
+    } finally {
+      sinkClient.countLinks = originalCount;
+      sinkClient.listLinks = originalList;
+      sinkClient.getCountersByIds = originalCounters;
+    }
   });
 });

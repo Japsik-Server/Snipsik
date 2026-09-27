@@ -61,12 +61,12 @@ export async function attachClickCounts(
       if (!link.id) return link;
       const clicks = res.counters.get(link.id);
       if (clicks !== undefined) return { ...link, clicks };
-      // A missing row reads as zero only when the lookup actually ran. When it
-      // failed, or the instance has no analytics dataset, the map is empty and
-      // the figure is genuinely unknown - never fabricate a measured 0.
-      return res.success ? { ...link, clicks: 0 } : link;
+      // Only a query that actually returned analytics rows can prove a link was
+      // never clicked. An empty dataset answers with success but tells us
+      // nothing, so the figure stays unknown rather than becoming a measured 0.
+      return res.analyticsAvailable ? { ...link, clicks: 0 } : link;
     }),
-    partial: !res.success || unqueryable > 0,
+    partial: !res.success || !res.analyticsAvailable || unqueryable > 0,
   };
 }
 

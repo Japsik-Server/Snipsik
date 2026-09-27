@@ -1063,27 +1063,33 @@ export class SinkClient {
    * (`indexes: [link.id]` in the access log). Ids are comma-joined into a single
    * `id` parameter, so a page of links costs one request regardless of size.
    *
-   * When the instance has no Cloudflare credentials, Sink answers `{ data: [] }`.
-   * That is a valid empty result, not a failure.
+   * `analyticsAvailable` distinguishes a real empty dataset from a real
+   * "nobody clicked anything". Both come back as `{ data: [] }`: Sink's `useWAE`
+   * short-circuits to an empty array when the instance has no Cloudflare
+   * credentials, and a query that matched no rows returns the same shape. So an
+   * empty response proves nothing and `analyticsAvailable` is then false —
+   * callers must treat absent links as unknown, not as zero clicks.
    */
   async getCountersByIds(ids: readonly string[]): Promise<{
     success: boolean;
     counters: Map<string, number>;
+    analyticsAvailable: boolean;
     error?: string;
   }> {
     // Validate before de-duplicating so a malformed identifier fails loudly
     // instead of being silently dropped and skewing the totals.
     const validated = z
-      .array(z.string().trim().min(1).max(26))
+      .array(z.string().trim().min(1))
       .max(SINK_STATS_MAX_IDS)
       .safeParse(ids);
     if (!validated.success) {
       logger.warn(
-        "Sink analytics id validation failed: ids must be non-empty strings of at most 26 characters",
+        "Sink analytics id validation failed: ids must be non-empty strings",
       );
       return {
         success: false,
         counters: new Map(),
+        analyticsAvailable: false,
         error:
           "Invalid link ids for Sink analytics: each id must be a non-empty string of at most 26 characters",
       };
@@ -1091,7 +1097,11 @@ export class SinkClient {
 
     const uniqueIds = [...new Set(validated.data)];
     if (uniqueIds.length === 0) {
-      return { success: true, counters: new Map() };
+      return {
+        success: true,
+        counters: new Map(),
+        analyticsAvailable: false,
+      };
     }
 
     const batches = chunkIdsForStatsRequest(uniqueIds);
@@ -1133,7 +1143,15 @@ export class SinkClient {
         counters.set(row.id, row.visits);
       }
     }
-    return { success: failure === undefined, counters, error: failure };
+    return {
+      success: failure === undefined,
+      counters,
+      // Only a successful query returning rows proves the dataset is live. A
+      // query that ran but matched nothing is indistinguishable from one that
+      // never ran at all, so neither may be read as "these links have 0 clicks".
+      analyticsAvailable: counters.size > 0,
+      error: failure,
+    };
   }
 
   /**
