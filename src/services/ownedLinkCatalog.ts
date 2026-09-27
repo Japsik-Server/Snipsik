@@ -1,5 +1,79 @@
 import { sinkClient } from "@/services/sinkClient";
+import { logger } from "@/utils/logger";
 import type { SinkLink, SinkListParams } from "@/types/sink";
+
+export interface ClickCountResult {
+  links: SinkLink[];
+  /**
+   * True when at least one link's count could not be resolved, so a total built
+   * from these links is a floor rather than a real total and must be labelled
+   * as partial.
+   */
+  partial: boolean;
+}
+
+/**
+ * Attaches real click counts to links using Sink's analytics dataset.
+ *
+ * Sink's link records carry no click count, so the value must come from
+ * `/api/stats/counters`. Links without an `id` cannot be correlated and keep
+ * `clicks` undefined, which the UI renders as "—" rather than a fake zero.
+ *
+ * Never throws: an analytics failure leaves the links untouched and reports
+ * `partial` so callers can avoid presenting an undercount as a total.
+ */
+export async function attachClickCounts(
+  links: readonly SinkLink[],
+): Promise<ClickCountResult> {
+  const ids = links
+    .map((link) => link.id)
+    .filter(
+      (id): id is string => typeof id === "string" && id.trim().length > 0,
+    );
+  if (ids.length === 0) {
+    if (links.length > 0) {
+      logger.warn(
+        `No usable link ids among ${links.length} links; Sink returned no id to correlate analytics with`,
+      );
+    }
+    return { links: [...links], partial: links.length > 0 };
+  }
+
+  const res = await sinkClient.getCountersByIds(ids);
+  if (!res.success) {
+    // A partial failure still carries real counts for the batches that
+    // succeeded, so apply those and only warn about the gap.
+    logger.warn(
+      `Click count lookup partially failed (${res.error}); applying ${res.counters.size} resolved count(s)`,
+    );
+  }
+
+  // A link with no id can never be correlated with analytics. `unresolvedIds`
+  // covers the case where its batch failed or came back empty, so Sink said
+  // nothing about whether it was clicked. Only an id that was actually queried
+  // and positively reported as having no rows is a genuine zero.
+  const queried = new Set(ids);
+  const unresolved = new Set(res.unresolvedIds);
+  const unqueryable = links.filter(
+    (link) => typeof link.id !== "string" || link.id.trim().length === 0,
+  ).length;
+
+  return {
+    links: links.map((link) => {
+      if (!link.id) return link;
+      const clicks = res.counters.get(link.id);
+      if (clicks !== undefined) return { ...link, clicks };
+      // Absent from the counters, from `unresolvedIds`, and present in the
+      // queried set means Sink answered for this id and reported no clicks.
+      // An id we never sent is not evidence of anything, so it stays unknown.
+      if (queried.has(link.id) && !unresolved.has(link.id)) {
+        return { ...link, clicks: 0 };
+      }
+      return link;
+    }),
+    partial: unresolved.size > 0 || unqueryable > 0,
+  };
+}
 
 export const OWNED_LINK_LIMIT = 2_000;
 export const OWNED_LINK_PAGE_SIZE = 1_000;
@@ -237,7 +311,8 @@ export async function findOwnedLink(
     }
 
     const link = page.list.find(
-      (candidate) => isOwnedSlug(candidate.slug, userHash) && matches(candidate),
+      (candidate) =>
+        isOwnedSlug(candidate.slug, userHash) && matches(candidate),
     );
     if (link) {
       return {
