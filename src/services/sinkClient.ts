@@ -47,6 +47,9 @@ const SINK_STATS_CONCURRENCY = 3;
 /** Upper bound accepted for a `/api/stats/metrics` row limit. */
 const SINK_METRICS_MAX_LIMIT = 500;
 
+/** Upper bound on how many link ids one `getCountersByIds` call may carry. */
+const SINK_STATS_MAX_IDS = 5_000;
+
 /**
  * Ceiling on the encoded length of the `id` query parameter for one
  * `/api/stats/counters` request. Sink caps a link id at 26 characters, so a
@@ -66,8 +69,9 @@ function chunkIdsForStatsRequest(ids: readonly string[]): string[][] {
   let currentBytes = 0;
 
   for (const id of ids) {
-    // "," separates ids and %XX escapes expand bytes, so budget for the worst case.
-    const cost = encodeURIComponent(id).length * 3 + 1;
+    // `encodeURIComponent` already gives the escaped length, so budget against
+    // that plus the "," separator between ids.
+    const cost = encodeURIComponent(id).length + 1;
     if (
       current.length > 0 &&
       currentBytes + cost > SINK_STATS_ID_PARAM_MAX_BYTES
@@ -1067,29 +1071,54 @@ export class SinkClient {
     counters: Map<string, number>;
     error?: string;
   }> {
-    const uniqueIds = [...new Set(ids.map((id) => id.trim()).filter(Boolean))];
+    // Validate before de-duplicating so a malformed identifier fails loudly
+    // instead of being silently dropped and skewing the totals.
+    const validated = z
+      .array(z.string().trim().min(1).max(26))
+      .max(SINK_STATS_MAX_IDS)
+      .safeParse(ids);
+    if (!validated.success) {
+      logger.warn(
+        "Sink analytics id validation failed: ids must be non-empty strings of at most 26 characters",
+      );
+      return {
+        success: false,
+        counters: new Map(),
+        error:
+          "Invalid link ids for Sink analytics: each id must be a non-empty string of at most 26 characters",
+      };
+    }
+
+    const uniqueIds = [...new Set(validated.data)];
     if (uniqueIds.length === 0) {
       return { success: true, counters: new Map() };
     }
 
     const batches = chunkIdsForStatsRequest(uniqueIds);
 
-    // Bounded concurrency: the dashboard can pass the whole catalog (2,000 links),
-    // and firing every batch at once would spike the instance.
+    // Worker pool: at most SINK_STATS_CONCURRENCY requests are ever in flight,
+    // and a freed slot immediately picks up the next batch rather than waiting
+    // for a whole wave to finish. The dashboard passes the entire catalog here
+    // (not one page), so this path can have many batches to drain.
     const results: { success: boolean; body?: unknown; error?: string }[] = [];
-    for (let i = 0; i < batches.length; i += SINK_STATS_CONCURRENCY) {
-      results.push(
-        ...(await Promise.all(
-          batches
-            .slice(i, i + SINK_STATS_CONCURRENCY)
-            .map((batch) =>
-              this.request<unknown>(
-                `/api/stats/counters?id=${encodeURIComponent(batch.join(","))}`,
-              ),
-            ),
-        )),
-      );
-    }
+    let nextBatch = 0;
+    const worker = async (): Promise<void> => {
+      while (nextBatch < batches.length) {
+        const batch = batches[nextBatch++];
+        if (!batch) return;
+        results.push(
+          await this.request<unknown>(
+            `/api/stats/counters?id=${encodeURIComponent(batch.join(","))}`,
+          ),
+        );
+      }
+    };
+    await Promise.all(
+      Array.from(
+        { length: Math.min(SINK_STATS_CONCURRENCY, batches.length) },
+        worker,
+      ),
+    );
 
     const counters = new Map<string, number>();
     let failure: string | undefined;

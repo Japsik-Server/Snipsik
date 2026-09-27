@@ -61,7 +61,8 @@ export async function fetchUserDashboardStats(
     ]);
 
   if (!catalog.success) throw new Error(catalog.error);
-  const userLinks = await attachClickCounts(catalog.links);
+  const clicks = await attachClickCounts(catalog.links);
+  const userLinks = clicks.links;
 
   // Sort by createdAt descending (most recent first)
   userLinks.sort((a, b) => {
@@ -117,6 +118,9 @@ export async function fetchUserDashboardStats(
     totalClicks,
     displayedLinks: userLinks.length,
     linksComplete: catalog.complete,
+    // A partial analytics lookup makes totalClicks a floor, not a total, so the
+    // dashboard must not present it as a complete "누적 클릭" figure.
+    clicksComplete: !clicks.partial,
     links: userLinks,
   };
 }
@@ -730,9 +734,9 @@ export const linkCommand: Command = {
         const currentPage = Math.max(1, Math.min(page, totalPages));
         const startIndex = (currentPage - 1) * pageSize;
         // Only the rendered page needs click counts, so this is a single request.
-        const paginated = await attachClickCounts(
+        const paginated = (await attachClickCounts(
           userLinks.slice(startIndex, startIndex + pageSize),
-        );
+        )).links;
 
         const lines = paginated.map((l, idx) => {
           const full = sinkClient.getFullShortUrl(l.slug);
@@ -1331,7 +1335,7 @@ async function handleAdminCommand(
       : totalLinks;
     const expiredLinks = expiredCountRes.success ? expiredCountRes.count : 0;
 
-    const sampleLinks = await attachClickCounts(topLinksRes.list || []);
+    const sampleLinks = (await attachClickCounts(topLinksRes.list || [])).links;
     let totalClicks = 0;
     for (const l of sampleLinks) {
       totalClicks += l.clicks ?? 0;
@@ -1446,9 +1450,9 @@ async function handleAdminCommand(
     const totalPages = Math.ceil(links.length / pageSize) || 1;
     const currentPage = Math.max(1, Math.min(page, totalPages));
     const startIndex = (currentPage - 1) * pageSize;
-    const paginated = await attachClickCounts(
+    const paginated = (await attachClickCounts(
       links.slice(startIndex, startIndex + pageSize),
-    );
+    )).links;
 
     const lines = paginated.map((l, idx) => {
       const full = sinkClient.getFullShortUrl(l.slug);
@@ -1527,9 +1531,9 @@ async function handleAdminCommand(
     const totalPages = Math.ceil(userLinks.length / pageSize) || 1;
     const currentPage = Math.max(1, Math.min(page, totalPages));
     const startIndex = (currentPage - 1) * pageSize;
-    const paginated = await attachClickCounts(
+    const paginated = (await attachClickCounts(
       userLinks.slice(startIndex, startIndex + pageSize),
-    );
+    )).links;
 
     const lines = paginated.map((l, idx) => {
       const full = sinkClient.getFullShortUrl(l.slug);

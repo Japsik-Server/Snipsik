@@ -23,6 +23,11 @@ export interface UserDashboardStats {
   totalClicks: number | undefined;
   displayedLinks: number;
   linksComplete: boolean;
+  /**
+   * False when some link's click count could not be resolved, making
+   * `totalClicks` a floor rather than a real total.
+   */
+  clicksComplete?: boolean;
   links: SinkLink[];
 }
 

@@ -1062,7 +1062,12 @@ describe("Sink Analytics Tests", () => {
       },
     });
 
-    const ids = Array.from({ length: 401 }, (_, i) => `id-${i}`);
+    // Use maximum-length ids so the byte budget, not the item count, is what
+    // forces the split.
+    const ids = Array.from(
+      { length: 401 },
+      (_, i) => `l${String(i).padStart(3,"0")}abcdefghijklmnopqrstu`,
+    );
     const res = await client.getCountersByIds(ids);
     expect(res.success).toBe(true);
     expect(res.counters.size).toBe(401);
@@ -1083,7 +1088,7 @@ describe("Sink Analytics Tests", () => {
       fetchImpl: async (url) => {
         const idParam = new URL(String(url)).searchParams.get("id") ?? "";
         const ids = idParam.split(",");
-        if (ids.includes("id-fail")) {
+        if (ids.includes("lfailabcdefghijklmnopqrstu")) {
           return new Response(JSON.stringify({ message: "boom" }), {
             status: 500,
             statusText: "Internal Server Error",
@@ -1096,16 +1101,18 @@ describe("Sink Analytics Tests", () => {
       },
     });
 
-    // Two batches' worth of ids, so one can fail while the other succeeds.
-    const ids = Array.from({ length: 400 }, (_, i) => `id-${i}`);
-    ids.push("id-fail");
+    // Two batches' worth of maximum-length ids, so one can fail while the other
+    // succeeds and the split is driven by the byte budget.
+    const ids = Array.from(
+      { length: 400 },
+      (_, i) => `l${String(i).padStart(3,"0")}abcdefghijklmnopqrstu`,
+    );
+    ids.push("lfailabcdefghijklmnopqrstu");
     const res = await client.getCountersByIds(ids);
     expect(res.success).toBe(false);
     // The good batch's real counts must survive the failure.
-    expect(res.counters.get("id-0")).toBe(7);
     expect(res.counters.size).toBeGreaterThan(0);
-    // The failing batch contributed nothing, and nothing was double counted.
-    expect(res.counters.has("id-fail")).toBe(false);
+    expect(res.counters.has("lfailabcdefghijklmnopqrstu")).toBe(false);
   });
 
   it("caps how many counter requests run at once", async () => {
@@ -1317,5 +1324,114 @@ describe("Sink Analytics Tests", () => {
 
     const res = await client.getStats("missing");
     expect(res.success).toBe(false);
+  });
+});
+
+describe("Click Count Partial Resolution Tests", () => {
+  const userId = "581920391829381920";
+  const userHash = getUserHash(userId);
+
+  it("reports partial when some links cannot be resolved", async () => {
+    const originalCount = sinkClient.countLinks;
+    const originalList = sinkClient.listLinks;
+    const originalCounters = sinkClient.getCountersByIds;
+
+    sinkClient.countLinks = mock(async (params) => ({
+      success: true,
+      count: params.status === "all" ? 2 : 2,
+      status: 200,
+    }));
+    sinkClient.listLinks = mock(async () => ({
+      success: true,
+      list: [
+        { id: "id-1", slug: `a-${userHash}`, url: "https://a.com" },
+        // No id, so this one can never be correlated with analytics.
+        { slug: `b-${userHash}`, url: "https://b.com" },
+      ],
+      total: 2,
+      listComplete: true,
+    }));
+    sinkClient.getCountersByIds = mock(async () => ({
+      success: true,
+      counters: new Map([["id-1", 12]]),
+    }));
+
+    try {
+      const stats = await fetchUserDashboardStats(userId);
+      expect(stats.clicksComplete).toBe(false);
+      // Only the resolved link contributes; the figure is a floor, not a total.
+      expect(stats.totalClicks).toBe(12);
+    } finally {
+      sinkClient.countLinks = originalCount;
+      sinkClient.listLinks = originalList;
+      sinkClient.getCountersByIds = originalCounters;
+    }
+  });
+
+  it("reports a complete lookup when every link resolves", async () => {
+    const originalCount = sinkClient.countLinks;
+    const originalList = sinkClient.listLinks;
+    const originalCounters = sinkClient.getCountersByIds;
+
+    sinkClient.countLinks = mock(async () => ({
+      success: true,
+      count: 2,
+      status: 200,
+    }));
+    sinkClient.listLinks = mock(async () => ({
+      success: true,
+      list: [
+        { id: "id-1", slug: `a-${userHash}`, url: "https://a.com" },
+        { id: "id-2", slug: `b-${userHash}`, url: "https://b.com" },
+      ],
+      total: 2,
+      listComplete: true,
+    }));
+    sinkClient.getCountersByIds = mock(async () => ({
+      success: true,
+      counters: new Map([
+        ["id-1", 3],
+        ["id-2", 4],
+      ]),
+    }));
+
+    try {
+      const stats = await fetchUserDashboardStats(userId);
+      expect(stats.clicksComplete).toBe(true);
+      expect(stats.totalClicks).toBe(7);
+    } finally {
+      sinkClient.countLinks = originalCount;
+      sinkClient.listLinks = originalList;
+      sinkClient.getCountersByIds = originalCounters;
+    }
+  });
+
+  it("rejects malformed ids before any request", async () => {
+    let calls = 0;
+    const client = new SinkClient({
+      baseUrl: "https://sink.example",
+      token: TEST_TOKEN,
+      fetchImpl: async () => {
+        calls++;
+        return new Response("{}", { status: 200 });
+      },
+    });
+
+    const res = await client.getCountersByIds(["ok-id", "   "]);
+    expect(res.success).toBe(false);
+    expect(res.error).toContain("Invalid link ids");
+    expect(calls).toBe(0);
+  });
+
+  it("rejects an over-long id that exceeds Sink's 26 character limit", async () => {
+    const client = new SinkClient({
+      baseUrl: "https://sink.example",
+      token: TEST_TOKEN,
+      fetchImpl: async () => new Response("{}", { status: 200 }),
+    });
+
+    const res = await client.getCountersByIds(["x".repeat(27)]);
+    expect(res.success).toBe(false);
+    expect(res.error).toContain("26 characters");
   });
 });

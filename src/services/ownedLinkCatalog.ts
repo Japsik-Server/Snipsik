@@ -2,6 +2,16 @@ import { sinkClient } from "@/services/sinkClient";
 import { logger } from "@/utils/logger";
 import type { SinkLink, SinkListParams } from "@/types/sink";
 
+export interface ClickCountResult {
+  links: SinkLink[];
+  /**
+   * True when at least one link's count could not be resolved, so a total built
+   * from these links is a floor rather than a real total and must be labelled
+   * as partial.
+   */
+  partial: boolean;
+}
+
 /**
  * Attaches real click counts to links using Sink's analytics dataset.
  *
@@ -9,11 +19,12 @@ import type { SinkLink, SinkListParams } from "@/types/sink";
  * `/api/stats/counters`. Links without an `id` cannot be correlated and keep
  * `clicks` undefined, which the UI renders as "—" rather than a fake zero.
  *
- * Never throws: an analytics failure leaves the links untouched.
+ * Never throws: an analytics failure leaves the links untouched and reports
+ * `partial` so callers can avoid presenting an undercount as a total.
  */
 export async function attachClickCounts(
   links: readonly SinkLink[],
-): Promise<SinkLink[]> {
+): Promise<ClickCountResult> {
   const ids = links
     .map((link) => link.id)
     .filter(
@@ -25,7 +36,7 @@ export async function attachClickCounts(
         `No usable link ids among ${links.length} links; Sink returned no id to correlate analytics with`,
       );
     }
-    return [...links];
+    return { links: [...links], partial: links.length > 0 };
   }
 
   const res = await sinkClient.getCountersByIds(ids);
@@ -37,11 +48,21 @@ export async function attachClickCounts(
     );
   }
 
-  return links.map((link) => {
-    if (!link.id) return link;
-    const clicks = res.counters.get(link.id);
-    return clicks === undefined ? link : { ...link, clicks };
-  });
+  // A link whose id was queried but produced no row is genuinely click-free;
+  // a link that is missing an id could not be queried at all, so the totals
+  // derived from this set cannot be called complete.
+  const unresolved = links.filter(
+    (link) => !link.id || !res.counters.has(link.id),
+  ).length;
+
+  return {
+    links: links.map((link) => {
+      if (!link.id) return link;
+      const clicks = res.counters.get(link.id);
+      return clicks === undefined ? link : { ...link, clicks };
+    }),
+    partial: !res.success || unresolved > 0,
+  };
 }
 
 export const OWNED_LINK_LIMIT = 2_000;
