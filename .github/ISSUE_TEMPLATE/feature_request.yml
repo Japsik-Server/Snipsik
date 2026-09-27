@@ -1,0 +1,43 @@
+name: 💡 Feature Request / 기능 제안
+description: Suggest an idea or new feature / 새로운 아이디어나 기능을 제안합니다
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ### 📌 안내 / Notice
+        - 이슈 본문은 **한국어**로 작성해 주세요. (Please write the issue content in **Korean**.)
+  - type: textarea
+    id: problem
+    attributes:
+      label: 배경 및 동기 / Problem & Motivation
+      description: 어떤 문제나 불편함을 해결하고자 하는지 설명해 주세요. (Is your feature request related to a problem? Please describe.)
+      placeholder: 현재 이런 부분에서 불편함이 있거나 개선이 필요합니다.
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: 제안 내용 / Proposed Solution
+      description: 제안하고자 하는 기능이나 동작 방식을 상세히 설명해 주세요. (Describe the solution you'd like.)
+      placeholder: 다음과 같이 동작하도록 기능을 추가/변경하면 좋겠습니다.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 고려한 대안 / Considered Alternatives
+      description: 생각해보신 다른 대안이나 접근 방식이 있다면 설명해 주세요. (Describe any alternative solutions or features you've considered.)
+      placeholder: 다른 대안이나 라이브러리 등이 있다면 적어주세요.
+    validations:
+      required: false
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: 사전 확인 / Checklist
+      options:
+        - label: 기존 등록된 중복 기능 제안이 없는지 검색했습니다. (I have searched existing issues for duplicates.)
+          required: true
+        - label: 본문 내용이 한국어로 작성되었습니다. (The issue content is written in Korean.)
+          required: true
