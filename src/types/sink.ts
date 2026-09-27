@@ -58,13 +58,30 @@ export interface UpdateLinkPayload {
 export interface SinkStats {
   slug: string;
   url: string;
-  clicks: number;
+  /** `undefined` when the instance has no analytics data for this link. */
+  clicks?: number;
   createdAt?: string | number;
   lastClickedAt?: string | number | null;
   countries?: Record<string, number>;
   referrers?: Record<string, number>;
   devices?: Record<string, number>;
 }
+
+/** Analytics dimensions exposed by `GET /api/stats/metrics`. */
+export type SinkMetricType =
+  | "country"
+  | "region"
+  | "city"
+  | "device"
+  | "deviceType"
+  | "os"
+  | "browser"
+  | "browserType"
+  | "referer"
+  | "language"
+  | "timezone"
+  | "slug"
+  | "url";
 
 export interface SinkListResponse {
   list: SinkLink[];

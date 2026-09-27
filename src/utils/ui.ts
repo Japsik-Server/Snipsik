@@ -63,6 +63,16 @@ function formatTitleDisplay(title?: string | null): string {
   return title?.trim() ? title : "*설정 안 됨*";
 }
 
+/**
+ * Formats a click count, distinguishing a real zero from "no analytics available".
+ * `undefined` means the figure could not be collected, so we never render it as 0.
+ */
+export function formatClicks(clicks?: number, unit: string = ""): string {
+  if (clicks === undefined) return "—";
+  const formatted = clicks.toLocaleString();
+  return unit ? `\`${formatted}\`${unit}` : `\`${formatted}\``;
+}
+
 export function createIgnoredDomainsContent(
   domains: readonly string[] = [],
   maxLength = 3_500,
@@ -84,10 +94,10 @@ export function createIgnoredDomainsContent(
     const next = [...shown, `\`${domain}\``];
     const omitted = domains.length - next.length;
     const summary =
-      omitted > 0
-        ? `\n*${next.length}개 표시 · ${omitted}개 생략됨*`
-        : "";
-    if ((header + prefix + next.join(", ") + summary + footer).length > maxLength) {
+      omitted > 0 ? `\n*${next.length}개 표시 · ${omitted}개 생략됨*` : "";
+    if (
+      (header + prefix + next.join(", ") + summary + footer).length > maxLength
+    ) {
       break;
     }
     shown.push(`\`${domain}\``);
@@ -95,13 +105,13 @@ export function createIgnoredDomainsContent(
 
   const omitted = domains.length - shown.length;
   const summary =
-    omitted > 0
-      ? `\n*${shown.length}개 표시 · ${omitted}개 생략됨*`
-      : "";
+    omitted > 0 ? `\n*${shown.length}개 표시 · ${omitted}개 생략됨*` : "";
   return header + prefix + shown.join(", ") + summary + footer;
 }
 
 export const ui = {
+  formatClicks,
+
   formatPartialOwnedLinksNotice(
     scannedRecords: number,
     searchCount?: number,
@@ -143,11 +153,20 @@ export const ui = {
       `### 📊 ${user.username}'s Link Dashboard\n> **개인 전용 링크 대시보드**에 오신 것을 환영합니다.\n> 고유 유저 해시: \`${userHash}\` ${totalPages > 1 ? `• 페이지: \`${page} / ${totalPages}\`` : ""}`,
     );
 
+    // "누적 클릭" is only honest when both the link list and the click lookup
+    // were complete; otherwise the figure is a floor and says so.
+    const clickLabel =
+      dashboardStats.clicksComplete === false
+        ? "확인된 클릭 합계"
+        : dashboardStats.linksComplete
+          ? "누적 클릭"
+          : "표시 링크 클릭 합계";
+
     const statsContent = dashboardStats.linksComplete
       ? `📊 **총 링크:** \`${dashboardStats.totalLinks}\`개  •  ⚡ **활성:** \`${dashboardStats.activeLinks}\`개\n` +
-        `⏳ **만료:** \`${dashboardStats.expiredLinks}\`개  •  🖱️ **누적 클릭:** \`${dashboardStats.totalClicks.toLocaleString()}\`회`
+        `⏳ **만료:** \`${dashboardStats.expiredLinks}\`개  •  🖱️ **${clickLabel}:** ${formatClicks(dashboardStats.totalClicks, "회")}`
       : `📊 **검색 기준 총 링크:** \`${dashboardStats.totalLinks.toLocaleString()}\`개  •  🗂️ **관리 목록:** 최신 \`${dashboardStats.displayedLinks.toLocaleString()}\`개\n` +
-        `⚡ **활성:** \`${dashboardStats.activeLinks}\`개  •  ⏳ **만료:** \`${dashboardStats.expiredLinks}\`개  •  🖱️ **표시 링크 클릭 합계:** \`${dashboardStats.totalClicks.toLocaleString()}\`회`;
+        `⚡ **활성:** \`${dashboardStats.activeLinks}\`개  •  ⏳ **만료:** \`${dashboardStats.expiredLinks}\`개  •  🖱️ **${clickLabel}:** ${formatClicks(dashboardStats.totalClicks, "회")}`;
     const statsText = new TextDisplayBuilder().setContent(statsContent);
 
     topContainer.addTextDisplayComponents(headerText);
@@ -263,7 +282,7 @@ export const ui = {
           `**원본 타겟:** [🌐 원본 웹사이트 열기 ↗](${selectedLink.url})\n` +
           `↳ \`${truncatedUrl}\`\n\n` +
           `🏷️ **타이틀:** ${formatTitleDisplay(selectedLink.title)}  •  🏷️ **태그:** ${formatTagDisplay(selectedLink.tags)}\n` +
-          `🖱️ **클릭 수:** \`${(selectedLink.clicks ?? 0).toLocaleString()}\`회  •  🔒 **비밀번호:** ${selectedLink.password ? "🔒 설정됨" : "🔓 공개"}\n` +
+          `🖱️ **클릭 수:** ${formatClicks(selectedLink.clicks, "회")}  •  🔒 **비밀번호:** ${selectedLink.password ? "🔒 설정됨" : "🔓 공개"}\n` +
           `⏳ **만료일:** ${formatExpiration(selectedLink.expiration)}`,
       );
 
@@ -366,7 +385,7 @@ export const ui = {
       `**단축 URL:** [🔗 /${stats.slug}](${fullShortUrl}) • \`${fullShortUrl}\`\n` +
       `**원본 타겟:** [🌐 원본 웹사이트 열기 ↗](${stats.url})\n` +
       `↳ \`${truncatedUrl}\`\n\n` +
-      `🖱️ **총 클릭 수:** \`${stats.clicks.toLocaleString()}\`회  •  ⏱️ **마지막 클릭:** ${
+      `🖱️ **총 클릭 수:** ${formatClicks(stats.clicks, "회")}  •  ⏱️ **마지막 클릭:** ${
         stats.lastClickedAt
           ? `<t:${Math.floor(new Date(stats.lastClickedAt).getTime() / 1000)}:R>`
           : "*클릭 기록 없음*"
