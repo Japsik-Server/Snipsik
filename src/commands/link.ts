@@ -17,6 +17,7 @@ import {
 } from '@/services/ownedLinkCatalog'
 import { sinkClient } from '@/services/sinkClient'
 import {
+  buildCustomSlug,
   generateSlug,
   getUserHash,
   isAdmin,
@@ -634,9 +635,16 @@ export const linkCommand: Command = {
           )
           return
         }
+
+        // The stored slug must end in `-{userHash}`: that tail is the only
+        // record of ownership (there is no link DB), so a slug without it
+        // would never show up in `/link list` or the dashboard and could not
+        // be deleted by the person who created it.
+        const ownedSlug = buildCustomSlug(customSlug, interaction.user.id)
+
         const res = await sinkClient.createLink({
           url: targetUrl,
-          slug: customSlug,
+          slug: ownedSlug,
           expiration:
             expirationResult.kind === 'valid'
               ? expirationResult.value

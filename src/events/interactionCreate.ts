@@ -25,7 +25,18 @@ import { parseTagsInput } from '@/utils/tags'
 import { parseExpiration } from '@/utils/time'
 import { ui } from '@/utils/ui'
 
-const dashboardSlugSchema = z.string().trim().min(1).max(100)
+/**
+ * Slugs are restricted to the characters `validateCustomSlug` and
+ * `generateSlug` can actually produce. The previous length-only check let
+ * anything through, so a forged `dash:delete_btn:../../etc` reached
+ * `sinkClient.deleteLink` verbatim.
+ */
+const dashboardSlugSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(100)
+  .regex(/^[A-Za-z0-9_-]+$/, 'slug contains unsupported characters')
 
 function parseCustomIdSlug(customId: string, prefix: string): string | null {
   const marker = `${prefix}:`
@@ -33,6 +44,18 @@ function parseCustomIdSlug(customId: string, prefix: string): string | null {
     ? customId.substring(marker.length)
     : undefined
   const parsed = dashboardSlugSchema.safeParse(candidate)
+  return parsed.success ? parsed.data : null
+}
+
+/**
+ * Reads the slug out of a `slug:{slug}:{page}` select-menu value.
+ * Rejects a value whose slug part is not a well-formed slug instead of
+ * forwarding raw attacker-shaped text into the dashboard view.
+ */
+function parseSelectMenuSlug(value: string): string | null {
+  if (!value.startsWith('slug:')) return null
+  const parts = value.split(':')
+  const parsed = dashboardSlugSchema.safeParse(parts[1])
   return parsed.success ? parsed.data : null
 }
 
@@ -149,15 +172,10 @@ export async function onInteractionCreate(
 
       // Delete Button -> Show Confirm Dialog
       if (customId.startsWith(CustomId.DASHBOARD_DELETE_BTN)) {
-        const slug = customId.includes(':')
-          ? customId.substring(CustomId.DASHBOARD_DELETE_BTN.length + 1)
-          : undefined
+        const slug = parseCustomIdSlug(customId, CustomId.DASHBOARD_DELETE_BTN)
         if (!slug) {
           await interaction.reply({
-            ...ui.createErrorMessage(
-              '오류',
-              '삭제할 링크를 먼저 선택해주세요.'
-            ),
+            ...ui.createErrorMessage('오류', '잘못된 링크 식별자입니다.'),
             ephemeral: true
           })
           return
@@ -181,10 +199,19 @@ export async function onInteractionCreate(
 
       // Confirm Delete Button -> Execute Delete
       if (customId.startsWith(CustomId.DASHBOARD_CONFIRM_DELETE_BTN)) {
-        const slug = customId.includes(':')
-          ? customId.substring(CustomId.DASHBOARD_CONFIRM_DELETE_BTN.length + 1)
-          : undefined
-        if (!slug || !verifyOwnership(slug, interaction.user.id)) {
+        const slug = parseCustomIdSlug(
+          customId,
+          CustomId.DASHBOARD_CONFIRM_DELETE_BTN
+        )
+        if (!slug) {
+          await interaction.reply({
+            ...ui.createErrorMessage('오류', '잘못된 링크 식별자입니다.'),
+            ephemeral: true
+          })
+          return
+        }
+
+        if (!verifyOwnership(slug, interaction.user.id)) {
           await interaction.reply({
             ...ui.createErrorMessage(
               '권한 없음',
@@ -500,7 +527,9 @@ export async function onInteractionCreate(
 
         if (val?.startsWith('slug:')) {
           const parts = val.split(':')
-          selectedSlug = parts[1] || ''
+          // Validate before the slug reaches the dashboard view: a malformed
+          // value would otherwise be rendered back into a fresh customId.
+          selectedSlug = parseSelectMenuSlug(val) ?? ''
           currentPage = parseInt(parts[2] || '1', 10) || 1
         }
 
