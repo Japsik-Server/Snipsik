@@ -63,25 +63,43 @@ describe('Config Schema AUTO_SHORTEN_MIN_URL_LENGTH parsing', () => {
       // @/db opens its client at module load, so a test run must never be able
       // to keep a remote URL: anything that is not a local `file:` form is
       // discarded in favour of an inert in-memory database.
-      for (const remoteUrl of [
-        'libsql://my-db-org.turso.io',
-        '  LIBSQL://my-db-org.turso.io  ',
-        'https://my-db-org.turso.io',
-        'ws://my-db-org.turso.io',
-        'postgresql://user:pass@localhost:5432/db',
-        'invalid://some-host'
-      ]) {
-        expect(
-          envSchema.parse({ ...baseEnv, DATABASE_URL: remoteUrl }).DATABASE_URL
-        ).toBe('file::memory:')
+      //
+      // NODE_ENV is pinned rather than inherited. config.ts keys this branch on
+      // `NODE_ENV === 'test'`, so a test that claimed to check test mode while
+      // reading the ambient value would silently pass (or fail) depending on
+      // the developer's shell.
+      const originalNodeEnv = process.env.NODE_ENV
+      try {
+        process.env.NODE_ENV = 'test'
+        for (const remoteUrl of [
+          'libsql://my-db-org.turso.io',
+          '  LIBSQL://my-db-org.turso.io  ',
+          'https://my-db-org.turso.io',
+          'ws://my-db-org.turso.io',
+          'postgresql://user:pass@localhost:5432/db',
+          'invalid://some-host'
+        ]) {
+          expect(
+            envSchema.parse({ ...baseEnv, DATABASE_URL: remoteUrl })
+              .DATABASE_URL
+          ).toBe('file::memory:')
+        }
+      } finally {
+        process.env.NODE_ENV = originalNodeEnv
       }
     })
 
     it('falls back to the in-memory database when DATABASE_URL is omitted in test mode', () => {
-      const { DATABASE_URL: _omitted, ...envWithoutDatabaseUrl } = baseEnv
-      expect(envSchema.parse(envWithoutDatabaseUrl).DATABASE_URL).toBe(
-        'file::memory:'
-      )
+      const originalNodeEnv = process.env.NODE_ENV
+      try {
+        process.env.NODE_ENV = 'test'
+        const { DATABASE_URL: _omitted, ...envWithoutDatabaseUrl } = baseEnv
+        expect(envSchema.parse(envWithoutDatabaseUrl).DATABASE_URL).toBe(
+          'file::memory:'
+        )
+      } finally {
+        process.env.NODE_ENV = originalNodeEnv
+      }
     })
 
     it('accepts valid file URL for local SQLite', () => {
