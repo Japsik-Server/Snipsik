@@ -4,6 +4,8 @@ import { request as httpRequest, type IncomingHttpHeaders } from 'node:http'
 import { request as httpsRequest } from 'node:https'
 import { BlockList, isIP } from 'node:net'
 
+import { MAX_STATUS_TEXT_LENGTH, sanitizeExternalText } from '@/utils/text'
+
 export type SafeHttpResponse = {
   status: number
   statusText: string
@@ -235,7 +237,18 @@ export async function safeHttpGet(
         transport(url, address, controller.signal),
         controller.signal
       )
-      if (!REDIRECT_STATUSES.has(response.status)) return response
+      if (!REDIRECT_STATUSES.has(response.status)) {
+        // The remote server controls the reason phrase and `/link check`
+        // renders it back to the user, so bound and defuse it at the single
+        // exit point — every transport, including an injected one, is covered.
+        return {
+          ...response,
+          statusText: sanitizeExternalText(
+            response.statusText,
+            MAX_STATUS_TEXT_LENGTH
+          )
+        }
+      }
 
       const location = response.headers.location
       if (!location) return response

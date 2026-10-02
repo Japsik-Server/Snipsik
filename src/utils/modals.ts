@@ -7,6 +7,7 @@ import {
 import { CustomId } from '@/types/bot'
 import type { SinkLink } from '@/types/sink'
 import { formatTags } from '@/utils/tags'
+import { MAX_LINK_TITLE_LENGTH } from '@/utils/text'
 
 export function createLinkModal(): ModalBuilder {
   const modal = new ModalBuilder()
@@ -47,6 +48,7 @@ export function createLinkModal(): ModalBuilder {
     .setLabel('링크 제목 (선택)')
     .setStyle(TextInputStyle.Short)
     .setPlaceholder('링크에 표시할 제목')
+    .setMaxLength(MAX_LINK_TITLE_LENGTH)
     .setRequired(false)
 
   modal.addComponents(
@@ -81,6 +83,7 @@ export function createEditLinkModal(link: SinkLink): ModalBuilder {
     .setLabel('링크 제목 (선택)')
     .setStyle(TextInputStyle.Short)
     .setPlaceholder('링크 제목')
+    .setMaxLength(MAX_LINK_TITLE_LENGTH)
     .setRequired(false)
   if (link.title) {
     titleInput.setValue(link.title)

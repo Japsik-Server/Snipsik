@@ -247,7 +247,7 @@ describe('SinkClient New API Tests', () => {
       expect(legacyCalled).toBe(true)
       expect(res.success).toBe(false)
       expect(res.status).toBe(404)
-      expect(res.error).toBe('Link not found')
+      expect(res.error).toBe('리소스를 찾을 수 없습니다 (404 Not Found).')
     } finally {
       globalThis.fetch = originalFetch
     }
@@ -422,9 +422,13 @@ describe('SinkClient New API Tests', () => {
 
     const res = await client.getStats('some-slug')
     expect(res.success).toBe(false)
+    // The HTML body and reason phrase are infrastructure detail; the user
+    // gets a fixed message instead.
     expect(res.error).toBe(
-      'HTTP 500: Internal Server Error (HTML error response)'
+      'Sink 서버에서 내부 오류가 발생했습니다. 잠시 후 다시 시도해주세요.'
     )
+    expect(res.error).not.toContain('Crash')
+    expect(res.error).not.toContain('HTML error response')
   })
 
   it('should report fallback error over original 404 in deleteLink when fallback fails', async () => {
@@ -462,7 +466,9 @@ describe('SinkClient New API Tests', () => {
 
     const res = await client.deleteLink('fallback-target')
     expect(res.success).toBe(false)
-    expect(res.error).toBe('Fallback permission denied')
+    expect(res.error).toBe(
+      '접근 거부 (403 Forbidden): API 접근 권한이 없습니다.'
+    )
   })
 
   it('should find exact match in search fallback when other search results exist', async () => {
@@ -608,7 +614,9 @@ describe('SinkClient New API Tests', () => {
     })
 
     expect(result.success).toBe(false)
-    expect(result.error).toBe('page failed')
+    expect(result.error).toBe(
+      'Sink 서버에서 내부 오류가 발생했습니다. 잠시 후 다시 시도해주세요.'
+    )
     expect(requestedUrls).toHaveLength(1)
     expect(requestedUrls[0]).toContain('cursor=page-2')
     expect(requestedUrls[0]).toContain('tag=news')

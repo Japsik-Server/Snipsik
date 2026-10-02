@@ -16,6 +16,12 @@ import { getUserHash } from '@/services/slugManager'
 import type { UserConfigData } from '@/services/userConfigService'
 import { CustomId, type UserDashboardStats } from '@/types/bot'
 import type { SinkLink, SinkStats } from '@/types/sink'
+import {
+  MAX_LINK_TITLE_LENGTH,
+  MAX_MESSAGE_TEXT_CONTENT,
+  neutralizeMentions,
+  truncateMiddle
+} from '@/utils/text'
 import { expirationToUnixSeconds } from '@/utils/time'
 
 export const COLORS = {
@@ -32,20 +38,18 @@ export interface V2MessageView {
   components: ContainerBuilder[]
 }
 
+/** Share of the config panel's flexible budget given to the ignored-domain list. */
+const DOMAIN_BUDGET_SHARE = 0.6
+
+/** Room left for `safeDescription`'s own "too long, truncated" suffix. */
+const MIN_NOTICE_BODY_LENGTH = 40
+
 function safeDescription(text: unknown, maxLen = 3800): string {
   const str = typeof text === 'string' ? text : String(text || '')
   if (str.length > maxLen) {
     return `${str.substring(0, maxLen - 30)}\n\n...*(내용이 너무 길어 일부 생략됨)*`
   }
   return str
-}
-
-function truncateMiddle(str: string, maxLength = 50): string {
-  if (str.length <= maxLength) return str
-  const keep = Math.max(0, maxLength - 3)
-  const front = Math.ceil(keep / 2)
-  const back = Math.floor(keep / 2)
-  return `${str.substring(0, front)}...${str.substring(str.length - back)}`
 }
 
 function formatExpiration(value: number | null | undefined): string {
@@ -57,8 +61,43 @@ function formatTagDisplay(tags?: readonly string[]): string {
   return tags?.length ? tags.map(tag => `\`#${tag}\``).join(', ') : '*없음*'
 }
 
+/**
+ * Clamps a link title for display.
+ *
+ * A title arrives from a third-party Sink response, so it can be arbitrarily
+ * long. The dashboard's selected-link container has no independent length cap,
+ * so an unclamped title pushes the message past Discord's combined limit and
+ * destroys the edit/delete buttons that live in the same container.
+ */
 function formatTitleDisplay(title?: string | null): string {
-  return title?.trim() ? title : '*설정 안 됨*'
+  return title?.trim()
+    ? truncateMiddle(title.trim(), MAX_LINK_TITLE_LENGTH)
+    : '*설정 안 됨*'
+}
+
+/**
+ * Measures the combined text content of a built Components v2 view.
+ *
+ * Discord enforces the 4000-character cap on the *sum* of every text display in
+ * a message, not per component, and discord.js does not check it — so an
+ * oversized view serializes fine locally and the API answers HTTP 400.
+ */
+export function sumViewTextLength(view: V2MessageView): number {
+  let total = 0
+  for (const container of view.components) {
+    for (const component of container.toJSON().components ?? []) {
+      // 10 = TextDisplay, 9 = Section (its nested accessory text counts too).
+      if (component.type === 10 && 'content' in component) {
+        total += String(component.content ?? '').length
+      }
+      if (component.type === 9) {
+        for (const accessory of component.components ?? []) {
+          total += String(accessory.content ?? '').length
+        }
+      }
+    }
+  }
+  return total
 }
 
 /**
@@ -520,12 +559,18 @@ export const ui = {
 
   /**
    * Creates standard error message container.
+   *
+   * Error text is the sink for every upstream failure string, so mentions are
+   * defused here: no call site passes an intentional mention in `description`,
+   * while a hostile or broken Sink response can put `@everyone` in one.
    */
   createErrorMessage(title: string, description: string): V2MessageView {
     const container = new ContainerBuilder().setAccentColor(COLORS.DANGER)
     container.addTextDisplayComponents(
       new TextDisplayBuilder().setContent(
-        `### ❌ ${title}\n${safeDescription(description || '오류가 발생했습니다.')}`
+        `### ❌ ${neutralizeMentions(title)}\n${neutralizeMentions(
+          safeDescription(description || '오류가 발생했습니다.')
+        )}`
       )
     )
     return { flags: MessageFlags.IsComponentsV2, components: [container] }
@@ -589,38 +634,90 @@ export const ui = {
   ): V2MessageView {
     const container = new ContainerBuilder().setAccentColor(COLORS.DARK)
 
-    // 1. Notice Banner (Integrated at top inside the container if present)
-    if (notice) {
-      const icon =
-        notice.type === 'error' ? '❌' : notice.type === 'info' ? 'ℹ️' : '✅'
-      const noticeText = new TextDisplayBuilder().setContent(
-        `> ${icon} **${notice.title}**\n> ${safeDescription(notice.description)}`
-      )
-      container.addTextDisplayComponents(noticeText)
-      container.addSeparatorComponents(new SeparatorBuilder().setDivider(true))
-    }
-
-    // 2. Header
-    const headerText = new TextDisplayBuilder().setContent(
+    // 1. Fixed sections. Collected first so their combined length can be
+    //    measured before the two unbounded blocks (notice, ignored domains)
+    //    are given any budget at all.
+    const headerContent =
       `### ⚙️ ${user.username}'s 개인 설정 (Config Panel)\n` +
-        `> 긴 URL 감지 시 동작할 **개인 맞춤 정책**을 설정합니다.\n` +
-        `> 아래 버튼을 탭하면 설정이 즉시 반영됩니다.`
-    )
-    container.addTextDisplayComponents(headerText)
-    container.addSeparatorComponents(new SeparatorBuilder().setDivider(true))
+      '> 긴 URL 감지 시 동작할 **개인 맞춤 정책**을 설정합니다.\n' +
+      '> 아래 버튼을 탭하면 설정이 즉시 반영됩니다.'
 
-    // 3. Auto DM Section
     const autoDmDesc =
       userConfig.autoDmMode === 'inherit'
         ? '🟢 **서버 설정 따름 (기본값)** — 서버 관리자가 지정한 감시 채널에서만 자동 단축 DM이 발송됩니다.'
         : userConfig.autoDmMode === 'on'
           ? '⚡ **항상 켬 (전체 채널)** — 서버 설정과 무관하게 봇이 접근 가능한 모든 채널에서 자동 단축 DM이 발송됩니다.'
           : '🛑 **항상 끔** — 감시 채널에 등록된 곳이라도 나에게는 일절 DM을 발송하지 않습니다.'
+    const autoDmContent = `🤖 **자동 DM 수신 모드 (\`auto_dm\`)**\n${autoDmDesc}`
 
-    const autoDmText = new TextDisplayBuilder().setContent(
-      `🤖 **자동 DM 수신 모드 (\`auto_dm\`)**\n${autoDmDesc}`
+    const formatDesc =
+      userConfig.dmFormat === 'replace'
+        ? '💬 **본문 치환 (기본값)** — 원본 메시지 문맥에서 긴 URL만 단축 링크로 고쳐 끼운 완성형 본문을 전송합니다.'
+        : '📋 **URL 목록 나열** — 단축된 URL만을 순차 나열하여 모바일 복사에 최적화합니다.'
+    const formatContent = `📝 **DM 메시지 포맷 (\`dm_format\`)**\n${formatDesc}`
+
+    const fixupxDesc = userConfig.fixupxEnabled
+      ? '🐦 **자동 변환 활성화 (기본값)** — 트위터(X) 게시물 링크를 fixupx.com 링크로 자동 변환하여 전송합니다.'
+      : '⏸️ **자동 변환 비활성화** — 트위터 링크도 일반 단축 정책(min_length)에 따릅니다.'
+    const fixupxContent = `🐦 **트위터 fixupx 변환 (\`fixupx\`)**\n${fixupxDesc}`
+
+    const lenDesc =
+      userConfig.autoShortenMinUrlLength === null
+        ? `🔄 **상위 설정 따름 (기본값)** — 서버 또는 전역 기본값(${effectiveMinLength !== undefined ? `현재: **${effectiveMinLength}자**` : '기본 70자'})을 상속받습니다.`
+        : userConfig.autoShortenMinUrlLength === 0
+          ? '⚡ **전체 단축 (제한 없음)** — URL 길이에 관계없이 모든 유효 URL을 단축합니다.'
+          : `🎯 **최소 ${userConfig.autoShortenMinUrlLength}자 이상 단축** — ${userConfig.autoShortenMinUrlLength}자 이상인 긴 URL만 단축합니다.`
+    const lenContent = `📏 **최소 URL 길이 (\`min_length\`)**\n${lenDesc}`
+
+    const footerContent =
+      '*Snipsik • 개인 설정은 모든 서버에서 동일하게 적용됩니다.*'
+
+    // Discord caps the *sum* of all text content in one message at 4000, and
+    // discord.js never checks it — an oversized panel serializes fine and the
+    // API answers 400, which fails both `editReply` and its error fallback, so
+    // the user gets no feedback at all and the panel is stuck. Split the single
+    // remaining budget between the two unbounded blocks instead of giving each
+    // its own independent 3800.
+    const fixedLength = [
+      headerContent,
+      autoDmContent,
+      formatContent,
+      fixupxContent,
+      lenContent,
+      footerContent
+    ].reduce((total, part) => total + part.length, 0)
+    const flexibleBudget = Math.max(0, MAX_MESSAGE_TEXT_CONTENT - fixedLength)
+    // The notice is a transient banner; the domain list is durable state the
+    // user may need to read back, so the list gets the larger share.
+    const domainsBudget = Math.floor(flexibleBudget * DOMAIN_BUDGET_SHARE)
+    const noticeBudget = flexibleBudget - domainsBudget
+
+    // 2. Notice Banner (Integrated at top inside the container if present)
+    if (notice) {
+      const icon =
+        notice.type === 'error' ? '❌' : notice.type === 'info' ? 'ℹ️' : '✅'
+      const noticeHead = `> ${icon} **${notice.title}**\n> `
+      const bodyBudget = Math.max(
+        0,
+        noticeBudget - noticeHead.length - MIN_NOTICE_BODY_LENGTH
+      )
+      const body = safeDescription(notice.description, bodyBudget)
+      container.addTextDisplayComponents(
+        new TextDisplayBuilder().setContent(noticeHead + body)
+      )
+      container.addSeparatorComponents(new SeparatorBuilder().setDivider(true))
+    }
+
+    // 3. Header
+    container.addTextDisplayComponents(
+      new TextDisplayBuilder().setContent(headerContent)
     )
-    container.addTextDisplayComponents(autoDmText)
+    container.addSeparatorComponents(new SeparatorBuilder().setDivider(true))
+
+    // 4. Auto DM Section
+    container.addTextDisplayComponents(
+      new TextDisplayBuilder().setContent(autoDmContent)
+    )
 
     const autoDmRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
       new ButtonBuilder()
@@ -654,16 +751,10 @@ export const ui = {
     container.addActionRowComponents(autoDmRow)
     container.addSeparatorComponents(new SeparatorBuilder().setDivider(true))
 
-    // 4. DM Format Section
-    const formatDesc =
-      userConfig.dmFormat === 'replace'
-        ? '💬 **본문 치환 (기본값)** — 원본 메시지 문맥에서 긴 URL만 단축 링크로 고쳐 끼운 완성형 본문을 전송합니다.'
-        : '📋 **URL 목록 나열** — 단축된 URL만을 순차 나열하여 모바일 복사에 최적화합니다.'
-
-    const formatText = new TextDisplayBuilder().setContent(
-      `📝 **DM 메시지 포맷 (\`dm_format\`)**\n${formatDesc}`
+    // 5. DM Format Section
+    container.addTextDisplayComponents(
+      new TextDisplayBuilder().setContent(formatContent)
     )
-    container.addTextDisplayComponents(formatText)
 
     const formatRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
       new ButtonBuilder()
@@ -688,15 +779,10 @@ export const ui = {
     container.addActionRowComponents(formatRow)
     container.addSeparatorComponents(new SeparatorBuilder().setDivider(true))
 
-    // 5. Twitter Fixupx Section
-    const fixupxDesc = userConfig.fixupxEnabled
-      ? '🐦 **자동 변환 활성화 (기본값)** — 트위터(X) 게시물 링크를 fixupx.com 링크로 자동 변환하여 전송합니다.'
-      : '⏸️ **자동 변환 비활성화** — 트위터 링크도 일반 단축 정책(min_length)에 따릅니다.'
-
-    const fixupxText = new TextDisplayBuilder().setContent(
-      `🐦 **트위터 fixupx 변환 (\`fixupx\`)**\n${fixupxDesc}`
+    // 6. Twitter Fixupx Section
+    container.addTextDisplayComponents(
+      new TextDisplayBuilder().setContent(fixupxContent)
     )
-    container.addTextDisplayComponents(fixupxText)
 
     const fixupxRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
       new ButtonBuilder()
@@ -717,18 +803,10 @@ export const ui = {
     container.addActionRowComponents(fixupxRow)
     container.addSeparatorComponents(new SeparatorBuilder().setDivider(true))
 
-    // 6. Min URL Length Section
-    const lenDesc =
-      userConfig.autoShortenMinUrlLength === null
-        ? `🔄 **상위 설정 따름 (기본값)** — 서버 또는 전역 기본값(${effectiveMinLength !== undefined ? `현재: **${effectiveMinLength}자**` : '기본 70자'})을 상속받습니다.`
-        : userConfig.autoShortenMinUrlLength === 0
-          ? '⚡ **전체 단축 (제한 없음)** — URL 길이에 관계없이 모든 유효 URL을 단축합니다.'
-          : `🎯 **최소 ${userConfig.autoShortenMinUrlLength}자 이상 단축** — ${userConfig.autoShortenMinUrlLength}자 이상인 긴 URL만 단축합니다.`
-
-    const lenText = new TextDisplayBuilder().setContent(
-      `📏 **최소 URL 길이 (\`min_length\`)**\n${lenDesc}`
+    // 7. Min URL Length Section
+    container.addTextDisplayComponents(
+      new TextDisplayBuilder().setContent(lenContent)
     )
-    container.addTextDisplayComponents(lenText)
 
     const lenRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
       new ButtonBuilder()
@@ -763,14 +841,15 @@ export const ui = {
     container.addActionRowComponents(lenRow)
     container.addSeparatorComponents(new SeparatorBuilder().setDivider(true))
 
-    // 6. Ignored Domains Section
-    const domainsText = new TextDisplayBuilder().setContent(
-      createIgnoredDomainsContent(userConfig.ignoredDomains)
+    // 8. Ignored Domains Section
+    container.addTextDisplayComponents(
+      new TextDisplayBuilder().setContent(
+        createIgnoredDomainsContent(userConfig.ignoredDomains, domainsBudget)
+      )
     )
-    container.addTextDisplayComponents(domainsText)
     container.addSeparatorComponents(new SeparatorBuilder().setDivider(true))
 
-    // 7. Navigation Section
+    // 9. Navigation Section
     const navRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
       new ButtonBuilder()
         .setCustomId(CustomId.CONFIG_NAV_DASHBOARD)
@@ -780,10 +859,9 @@ export const ui = {
     )
     container.addActionRowComponents(navRow)
 
-    const footerText = new TextDisplayBuilder().setContent(
-      '*Snipsik • 개인 설정은 모든 서버에서 동일하게 적용됩니다.*'
+    container.addTextDisplayComponents(
+      new TextDisplayBuilder().setContent(footerContent)
     )
-    container.addTextDisplayComponents(footerText)
 
     return { flags: MessageFlags.IsComponentsV2, components: [container] }
   }
