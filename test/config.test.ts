@@ -76,7 +76,7 @@ describe('Config Schema AUTO_SHORTEN_MIN_URL_LENGTH parsing', () => {
           '  LIBSQL://my-db-org.turso.io  ',
           'https://my-db-org.turso.io',
           'ws://my-db-org.turso.io',
-          'postgresql://user:pass@localhost:5432/db',
+          'postgresql://localhost:5432/db',
           'invalid://some-host'
         ]) {
           expect(

@@ -46,7 +46,7 @@ interface RunResult {
 }
 
 async function runProbe(env: Record<string, string>): Promise<RunResult> {
-  const proc = Bun.spawn(['bun', 'test', PROBE], {
+  const proc = Bun.spawn(['bun', 'test', '--no-env-file', PROBE], {
     cwd: REPO_ROOT,
     env: {
       ...globalThis.process.env,
@@ -135,14 +135,16 @@ describe('preload guard refuses a non-inert database URL', () => {
   })
 
   it('does not echo the secret-bearing URL back in the error', async () => {
+    const dynamicToken = crypto.randomUUID()
     const { exitCode, output, timedOut } = await runProbe({
       NODE_ENV: 'test',
-      DATABASE_URL: `libsql://my-db-org.turso.io?authToken=super-secret-token`,
+      DATABASE_URL: `libsql://example.com?authToken=${dynamicToken}`,
       TURSO_DATABASE_URL: ''
     })
 
     expect(output).toContain('Refusing to run tests')
-    expect(output).not.toContain('super-secret-token')
+    expect(output).not.toContain(dynamicToken)
+    expect(output).not.toMatch(/[?&]authToken=[^&\s]+/)
     expect(exitCode).not.toBe(0)
     expect(timedOut).toBe(false)
   })
@@ -161,11 +163,11 @@ describe('preload guard still permits a valid inert run', () => {
     expect(timedOut).toBe(false)
   })
 
-  it('passes with a local file: URL', async () => {
+  it('passes with a local file: path URL', async () => {
     const { exitCode, output, timedOut } = await runProbe({
       NODE_ENV: 'development',
-      DATABASE_URL: 'file::memory:',
-      TURSO_DATABASE_URL: 'file::memory:'
+      DATABASE_URL: 'file:./test.db',
+      TURSO_DATABASE_URL: 'file:./test.db'
     })
 
     expect(output).not.toContain('Refusing to run tests')

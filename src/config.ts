@@ -12,8 +12,32 @@ import {
  */
 function isInertTestDatabaseUrl(val: string | undefined): val is string {
   if (typeof val !== 'string') return false
-  const normalized = val.trim().toLowerCase()
-  return normalized.startsWith('file:') && !normalized.startsWith('file://')
+  const trimmed = val.trim()
+  const rawRemainder = trimmed.slice(5)
+
+  // file:\\host\share 및 file:/\host 형태는 Windows UNC 경로일 수 있다.
+  if (rawRemainder.startsWith('\\') || rawRemainder.startsWith('/\\')) {
+    return false
+  }
+
+  const normalized = trimmed.toLowerCase().replace(/\\/g, '/')
+  if (!normalized.startsWith('file:')) {
+    return false
+  }
+
+  const remainder = normalized.slice(5)
+  if (!remainder || /^[/\\.?#]+$/.test(remainder)) return false
+
+  try {
+    const u = new URL(normalized)
+    if (u.protocol !== 'file:') return false
+    if (u.host !== '' && u.host !== 'localhost') return false
+    if (!u.pathname || u.pathname === '/') return false
+  } catch {
+    return normalized === 'file::memory:'
+  }
+
+  return true
 }
 
 export const envSchema = z.object({

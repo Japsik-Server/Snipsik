@@ -46,10 +46,32 @@ process.env.NODE_ENV = 'test'
 
 /** Mirrors isInertTestDatabaseUrl() in src/config.ts. */
 function isInertDatabaseUrl(value: string): boolean {
-  // `file://host/path` is not inert: the host component can resolve to a
-  // network location.
-  const normalized = value.trim().toLowerCase()
-  return normalized.startsWith('file:') && !normalized.startsWith('file://')
+  if (typeof value !== 'string') return false
+  const trimmed = value.trim()
+  const rawRemainder = trimmed.slice(5)
+
+  if (rawRemainder.startsWith('\\') || rawRemainder.startsWith('/\\')) {
+    return false
+  }
+
+  const normalized = trimmed.toLowerCase().replace(/\\/g, '/')
+  if (!normalized.startsWith('file:')) {
+    return false
+  }
+
+  const remainder = normalized.slice(5)
+  if (!remainder || /^[/\\.?#]+$/.test(remainder)) return false
+
+  try {
+    const u = new URL(normalized)
+    if (u.protocol !== 'file:') return false
+    if (u.host !== '' && u.host !== 'localhost') return false
+    if (!u.pathname || u.pathname === '/') return false
+  } catch {
+    return normalized === 'file::memory:'
+  }
+
+  return true
 }
 
 /** How to describe a value without echoing a secret-bearing URL back out. */
@@ -60,8 +82,8 @@ function schemeOf(value: string): string {
 function refuse(variable: string, value: string): never {
   throw new Error(
     `[test/setup.ts] Refusing to run tests against a non-inert ${variable} ` +
-      `(scheme: ${schemeOf(value)}). Tests must use a local SQLite database, i.e. ` +
-      'a value starting with `file:`, such as "file::memory:" or "file:./test.db". ' +
+      `(scheme: ${schemeOf(value)}). Tests must use a local SQLite database, ` +
+      'such as "file::memory:" or "file:./test.db". ' +
       'This guard exists because `bun test` auto-loads your local .env and `@/db` ' +
       'opens a database connection at module load, so a remote URL here would ' +
       'let the test suite write to a real database.\n' +
