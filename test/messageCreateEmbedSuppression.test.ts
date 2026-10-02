@@ -79,7 +79,7 @@ describe('Message Embed Suppression Workflow in DM Auto-Shortening', () => {
 
     const mockMessage = {
       author: {
-        id: '1234567890',
+        id: '123456789012345678',
         bot: false,
         tag: 'User#1234',
         createDM: async () => mockDmChannel
@@ -141,7 +141,7 @@ describe('Message Embed Suppression Workflow in DM Auto-Shortening', () => {
 
     const mockMessage = {
       author: {
-        id: '1234567890',
+        id: '123456789012345678',
         bot: false,
         tag: 'User#1234',
         createDM: async () => mockDmChannel
@@ -188,7 +188,7 @@ describe('Message Embed Suppression Workflow in DM Auto-Shortening', () => {
 
     const mockMessage = {
       author: {
-        id: '1234567890',
+        id: '123456789012345678',
         bot: false,
         tag: 'User#1234',
         createDM: async () => mockDmChannel
@@ -228,7 +228,7 @@ describe('Message Embed Suppression Workflow in DM Auto-Shortening', () => {
 
     const mockMessage = {
       author: {
-        id: '1234567890',
+        id: '123456789012345678',
         bot: false,
         tag: 'User#1234',
         createDM: async () => mockDmChannel
@@ -278,7 +278,7 @@ describe('Message Embed Suppression Workflow in DM Auto-Shortening', () => {
 
     const mockMessage = {
       author: {
-        id: '1234567890',
+        id: '123456789012345678',
         bot: false,
         tag: 'User#1234',
         createDM: async () => mockDmChannel

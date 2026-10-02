@@ -613,8 +613,12 @@ export const linkCommand: Command = {
 
         const validation = validateCustomSlug(customSlug, interaction.user.id)
         if (!validation.valid) {
+          const title =
+            validation.reason === 'permission'
+              ? '커스텀 슬러그 생성 권한 없음'
+              : '잘못된 커스텀 슬러그'
           const errEmbed = ui.createErrorMessage(
-            '커스텀 슬러그 생성 권한 없음',
+            title,
             validation.error || '커스텀 슬러그를 생성할 수 없습니다.'
           )
           await interaction.editReply(errEmbed)
@@ -640,7 +644,24 @@ export const linkCommand: Command = {
         // record of ownership (there is no link DB), so a slug without it
         // would never show up in `/link list` or the dashboard and could not
         // be deleted by the person who created it.
-        const ownedSlug = buildCustomSlug(customSlug, interaction.user.id)
+        const normalizedCustomSlug = z
+          .string()
+          .trim()
+          .min(1)
+          .max(2048)
+          .transform(value => value.toLowerCase())
+          .parse(customSlug)
+        const validatedUserId = z
+          .string()
+          .regex(/^\d{17,20}$/)
+          .parse(interaction.user.id)
+        const ownedSlug = buildCustomSlug(normalizedCustomSlug, validatedUserId)
+        const wasRenamed = ownedSlug !== normalizedCustomSlug
+        if (wasRenamed) {
+          logger.info(
+            `User ${interaction.user.tag} (${interaction.user.id}) requested custom slug '/${normalizedCustomSlug}' which was stored as '/${ownedSlug}' to satisfy the ownership-suffix rule`
+          )
+        }
 
         const res = await sinkClient.createLink({
           url: targetUrl,
@@ -665,7 +686,13 @@ export const linkCommand: Command = {
           return
         }
 
-        const linkCard = ui.createLinkCard(res.link)
+        // Say so, and say which name manages this link. Do NOT claim that
+        // `/<requested>` is an existing link: nothing here looks it up, and
+        // asserting it would point the admin at a URL that may not exist.
+        const linkCard = ui.createLinkCard(
+          res.link,
+          wasRenamed ? normalizedCustomSlug : undefined
+        )
         await interaction.editReply(linkCard)
         return
       }

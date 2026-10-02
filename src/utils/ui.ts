@@ -327,13 +327,36 @@ export const ui = {
 
   /**
    * Creates a modern card for a newly created or viewed link using ContainerBuilder.
+   *
+   * `renamedFrom` is the slug the admin originally asked for, passed only when
+   * the stored slug differs from it. The `-{userHash}` tail is the only record
+   * of a link's owner (there is no link DB), so `/link custom` appends it rather
+   * than rejecting the name. The notice therefore states only what this call
+   * actually knows — the request was suffixed, and the stored name is the one
+   * that manages the link. It must NOT claim that `/<requested>` is an
+   * existing link: nothing here looks that slug up, so for an ordinary rename
+   * no such link exists, and saying so would send the admin to delete a URL
+   * that may not be there.
    */
-  createLinkCard(link: SinkLink): V2MessageView {
+  createLinkCard(link: SinkLink, renamedFrom?: string): V2MessageView {
     const fullShortUrl = sinkClient.getFullShortUrl(link.slug)
     const truncatedUrl =
       link.url.length > 70 ? `${link.url.substring(0, 67)}...` : link.url
 
     const container = new ContainerBuilder().setAccentColor(COLORS.DARK)
+
+    if (renamedFrom !== undefined) {
+      container.addTextDisplayComponents(
+        new TextDisplayBuilder().setContent(
+          `### ⚠️ 슬러그가 변경되어 저장되었습니다\n` +
+            `요청한 이름: \`${renamedFrom}\` → 실제 이름: \`${link.slug}\`\n` +
+            `이 봇은 링크 소유권을 slug의 꼬리(접미사)로만 기록하기 때문에, ` +
+            `요청하신 이름 뒤에 식별자가 붙습니다. ` +
+            `이 링크는 \`/link delete ${link.slug}\`로 삭제할 수 있습니다.`
+        )
+      )
+      container.addSeparatorComponents(new SeparatorBuilder().setDivider(true))
+    }
 
     const linkText = new TextDisplayBuilder().setContent(
       `### 🔗 단축 링크: /${link.slug}\n` +

@@ -1,4 +1,10 @@
+import { z } from 'zod'
 import { config } from '@/config'
+
+export const discordUserIdSchema = z
+  .string()
+  .trim()
+  .regex(/^\d{17,20}$/, 'Invalid Discord user ID')
 
 const BASE36_CHARS = '0123456789abcdefghijklmnopqrstuvwxyz'
 
@@ -68,7 +74,11 @@ function toBase36Wide(value: bigint): string {
  * required.
  */
 export function getUserHash(userId: string): string {
-  return toBase36Wide(fnv1a64(userId))
+  const parsed = discordUserIdSchema.safeParse(userId)
+  if (!parsed.success) {
+    throw new Error('Invalid Discord user ID')
+  }
+  return toBase36Wide(fnv1a64(parsed.data))
 }
 
 /**
@@ -96,9 +106,22 @@ export function isAdmin(userId: string): boolean {
  * Generates a full slug formatted as `{random}-{userHash}` in all-lowercase.
  */
 export function generateSlug(userId: string): string {
-  const randomPart = generateRandomString(config.RANDOM_SLUG_LENGTH)
   const userHash = getUserHash(userId)
+  const randomPart = generateRandomString(config.RANDOM_SLUG_LENGTH)
   return `${randomPart}-${userHash}`
+}
+
+/**
+ * The single definition of what a slug body means before storage.
+ *
+ * Every comparison in the custom-slug path — the rename check, the length cap,
+ * the ownership suffix test — must read the slug the same way Sink will store
+ * it, or the log, the notice and the stored name drift apart. This exists so
+ * that normalisation is derived once and reused rather than re-spelled as
+ * `slug.trim().toLowerCase()` at each call site.
+ */
+export function normalizeSlugBody(slug: string): string {
+  return slug.trim().toLowerCase()
 }
 
 /**
@@ -106,10 +129,11 @@ export function generateSlug(userId: string): string {
  * Uses case-insensitive comparison to support both mixed-case user input and lowercase-normalized storage in Sink.
  */
 export function verifyOwnership(slug: string, userId: string): boolean {
-  const cleanSlug = (slug.startsWith('/') ? slug.substring(1) : slug)
-    .trim()
-    .toLowerCase()
-  const userHash = getUserHash(userId).trim().toLowerCase()
+  if (!discordUserIdSchema.safeParse(userId).success) return false
+  const userHash = normalizeSlugBody(getUserHash(userId))
+  const cleanSlug = normalizeSlugBody(
+    slug.startsWith('/') ? slug.substring(1) : slug
+  )
 
   return cleanSlug.endsWith(`-${userHash}`) || cleanSlug === userHash
 }
@@ -140,12 +164,12 @@ export const CUSTOM_SLUG_BASE_MAX_LENGTH =
  * caller's own hash is left alone, so the command is idempotent.
  */
 export function buildCustomSlug(slug: string, userId: string): string {
-  const trimmed = slug.trim()
   const userHash = getUserHash(userId)
-  if (trimmed.toLowerCase().endsWith(`-${userHash}`)) {
-    return trimmed.toLowerCase()
+  const base = normalizeSlugBody(slug)
+  if (base.endsWith(`-${userHash}`)) {
+    return base
   }
-  return `${trimmed.toLowerCase()}-${userHash}`
+  return `${base}-${userHash}`
 }
 
 /**
@@ -158,38 +182,54 @@ export function buildCustomSlug(slug: string, userId: string): string {
  * limit than intended. Split out from {@link validateCustomSlug} so the rule is
  * testable without an admin-configured environment.
  */
+export const customSlugSchema = z
+  .string()
+  .trim()
+  .min(2, 'Custom slug must be between 2 and 64 characters long.')
+  .max(
+    CUSTOM_SLUG_MAX_LENGTH,
+    `Custom slug must be between 2 and ${CUSTOM_SLUG_MAX_LENGTH} characters long.`
+  )
+  .regex(
+    /^[a-zA-Z0-9_-]+$/,
+    'Custom slug can only contain letters, numbers, hyphens (-), and underscores (_).'
+  )
+
 export function validateCustomSlugShape(
   slug: string,
   userId: string
-): { valid: boolean; error?: string } {
-  const trimmed = slug.trim()
-  if (trimmed.length < 2 || trimmed.length > CUSTOM_SLUG_MAX_LENGTH) {
+): { valid: boolean; reason?: 'shape'; error?: string } {
+  const userValidation = discordUserIdSchema.safeParse(userId)
+  if (!userValidation.success) {
     return {
       valid: false,
-      error: `Custom slug must be between 2 and ${CUSTOM_SLUG_MAX_LENGTH} characters long.`
+      reason: 'shape',
+      error: 'Invalid user ID format.'
     }
   }
 
-  // URL-safe characters: letters, numbers, hyphens, underscores
-  const validSlugRegex = /^[a-zA-Z0-9_-]+$/
-  if (!validSlugRegex.test(trimmed)) {
+  const parsedSlug = customSlugSchema.safeParse(slug)
+  if (!parsedSlug.success) {
     return {
       valid: false,
-      error:
-        'Custom slug can only contain letters, numbers, hyphens (-), and underscores (_).'
+      reason: 'shape',
+      error: parsedSlug.error.issues[0]?.message ?? 'Invalid custom slug.'
     }
   }
 
   // The stored slug gets `-{userHash}` appended so it stays manageable, so the
   // body has to leave room for that suffix inside the length cap. An input
-  // that already carries the caller's own suffix is stored as-is.
-  const base = trimmed.toLowerCase()
+  // that already carries the caller's own suffix is stored as-is. Read the
+  // body through the same normalisation `buildCustomSlug` applies, so the cap
+  // is measured against exactly the string that gets stored.
+  const base = normalizeSlugBody(parsedSlug.data)
   if (
-    !base.endsWith(`-${getUserHash(userId)}`) &&
+    !base.endsWith(`-${getUserHash(userValidation.data)}`) &&
     base.length > CUSTOM_SLUG_BASE_MAX_LENGTH
   ) {
     return {
       valid: false,
+      reason: 'shape',
       error: `Custom slug is too long once the ${1 + USER_HASH_LENGTH}-character ownership suffix is appended. Use ${CUSTOM_SLUG_BASE_MAX_LENGTH} characters or fewer.`
     }
   }
@@ -203,14 +243,25 @@ export function validateCustomSlugShape(
 export function validateCustomSlug(
   slug: string,
   userId: string
-): { valid: boolean; error?: string } {
-  if (!isAdmin(userId)) {
+): { valid: boolean; reason?: 'permission' | 'shape'; error?: string } {
+  const userValidation = discordUserIdSchema.safeParse(userId)
+  if (!userValidation.success) {
     return {
       valid: false,
+      reason: 'shape',
+      error: 'Invalid user ID format.'
+    }
+  }
+
+  const validatedUserId = userValidation.data
+  if (!isAdmin(validatedUserId)) {
+    return {
+      valid: false,
+      reason: 'permission',
       error:
         'You do not have permission to create custom slugs. Only administrators can use custom slugs.'
     }
   }
 
-  return validateCustomSlugShape(slug, userId)
+  return validateCustomSlugShape(slug, validatedUserId)
 }

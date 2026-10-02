@@ -59,6 +59,17 @@ describe('getUserHash ownership digest', () => {
     expect(/^[0-9a-z_-]+$/.test(slug)).toBe(true)
     expect(slug).toHaveLength(config.RANDOM_SLUG_LENGTH + 1 + USER_HASH_LENGTH)
   })
+
+  it('throws on invalid user IDs and denies ownership for non-snowflake user IDs', () => {
+    expect(() => getUserHash('')).toThrow('Invalid Discord user ID')
+    expect(() => getUserHash('123456')).toThrow('Invalid Discord user ID')
+    expect(() => getUserHash('abc')).toThrow('Invalid Discord user ID')
+    expect(() => getUserHash('123456789012345678901')).toThrow(
+      'Invalid Discord user ID'
+    )
+    expect(verifyOwnership('test-hash', '')).toBe(false)
+    expect(verifyOwnership('test-hash', '123456')).toBe(false)
+  })
 })
 
 describe('known CRC32 collision pairs', () => {
@@ -207,6 +218,19 @@ describe('custom slug ownership suffix', () => {
     expect(validateCustomSlugShape('has space', OWNER).valid).toBe(false)
     expect(validateCustomSlugShape('has/slash', OWNER).valid).toBe(false)
     expect(validateCustomSlugShape('../etc', OWNER).valid).toBe(false)
+  })
+
+  it('rejects an invalid user ID format with a clear error', () => {
+    expect(validateCustomSlugShape('valid-slug', 'invalid-id')).toEqual({
+      valid: false,
+      reason: 'shape',
+      error: 'Invalid user ID format.'
+    })
+    expect(validateCustomSlugShape('valid-slug', '123')).toEqual({
+      valid: false,
+      reason: 'shape',
+      error: 'Invalid user ID format.'
+    })
   })
 })
 
