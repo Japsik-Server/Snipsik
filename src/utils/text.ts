@@ -21,8 +21,8 @@ export const MAX_STATUS_TEXT_LENGTH = 100
 /** Zero-width space, inserted to make a mention sigil unparseable. */
 const ZWSP = '​'
 
-/** Matches `@everyone`, `@here` and user/role/channel mention syntax. */
-const MENTION_PATTERN = /@(everyone|here)|<([@#])([!&]?\d+)>/gi
+/** Matches `@everyone`, `@here`, role mentions `<@&id>`, user mentions `<@id>`, and channel mentions `<#id>`. */
+const MENTION_PATTERN = /@(everyone|here)|<@&(\d+)>|<@(!?\d+)>|(<#\d+>)/gi
 
 /**
  * Strips C0/C1 control characters, which can be used to break out of a
@@ -39,15 +39,52 @@ function stripControlCharacters(text: string): string {
 }
 
 /**
+ * Drops a trailing lone high surrogate from a slice that was cut mid-pair.
+ *
+ * `substring` counts UTF-16 code units, so cutting an emoji in half leaves a
+ * high surrogate with no following low surrogate. Discord renders that as a
+ * replacement character, and the edit modal saves the truncated value back, so
+ * the corruption would become permanent.
+ */
+function dropLoneHighSurrogate(value: string): string {
+  if (value.length === 0) return value
+  const last = value.charCodeAt(value.length - 1)
+  return last >= 0xd800 && last <= 0xdbff ? value.slice(0, -1) : value
+}
+
+/**
+ * Drops a leading lone low surrogate from a slice that was cut mid-pair.
+ */
+function dropLoneLowSurrogate(value: string): string {
+  if (value.length === 0) return value
+  const first = value.charCodeAt(0)
+  return first >= 0xdc00 && first <= 0xdfff ? value.slice(1) : value
+}
+
+/**
  * Shortens a string to `maxLength`, keeping both ends so an identifier stays
  * recognisable (`https://example.com/.../path` -> `https://ex...path`).
+ *
+ * Cuts on code-point boundaries so an emoji is never split in half.
  */
 export function truncateMiddle(str: string, maxLength: number): string {
   if (str.length <= maxLength) return str
+  if (maxLength <= 0) return ''
+  if (maxLength < 3) {
+    const chars = Array.from(str)
+    let out = ''
+    for (const c of chars) {
+      if ((out + c).length > maxLength) break
+      out += c
+    }
+    return out
+  }
   const keep = Math.max(0, maxLength - 3)
   const front = Math.ceil(keep / 2)
   const back = Math.floor(keep / 2)
-  return `${str.substring(0, front)}...${str.substring(str.length - back)}`
+  const head = dropLoneHighSurrogate(str.substring(0, front))
+  const tail = dropLoneLowSurrogate(str.substring(str.length - back))
+  return `${head}...${tail}`
 }
 
 /**
@@ -60,10 +97,19 @@ export function truncateMiddle(str: string, maxLength: number): string {
 export function neutralizeMentions(text: string): string {
   return text.replace(
     MENTION_PATTERN,
-    (_match, keyword: string | undefined, sigil?: string, id?: string) =>
-      keyword
-        ? `@${keyword[0]}${ZWSP}${keyword.slice(1)}`
-        : `<${sigil}${ZWSP}${id}`
+    (
+      match,
+      keyword?: string,
+      roleId?: string,
+      userId?: string,
+      channelMention?: string
+    ) => {
+      if (keyword) return `@${keyword[0]}${ZWSP}${keyword.slice(1)}`
+      if (roleId) return `<@&${ZWSP}${roleId}>`
+      if (userId) return `<@${ZWSP}${userId}>`
+      if (channelMention) return channelMention
+      return match
+    }
   )
 }
 

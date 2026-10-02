@@ -45,9 +45,10 @@ const DOMAIN_BUDGET_SHARE = 0.6
 const MIN_NOTICE_BODY_LENGTH = 40
 
 function safeDescription(text: unknown, maxLen = 3800): string {
-  const str = typeof text === 'string' ? text : String(text || '')
+  const str = typeof text === 'string' ? text : String(text ?? '')
   if (str.length > maxLen) {
-    return `${str.substring(0, maxLen - 30)}\n\n...*(내용이 너무 길어 일부 생략됨)*`
+    const head = truncateMiddle(str, Math.max(0, maxLen - 30))
+    return `${head}\n\n...*(내용이 너무 길어 일부 생략됨)*`
   }
   return str
 }
@@ -71,7 +72,7 @@ function formatTagDisplay(tags?: readonly string[]): string {
  */
 function formatTitleDisplay(title?: string | null): string {
   return title?.trim()
-    ? truncateMiddle(title.trim(), MAX_LINK_TITLE_LENGTH)
+    ? neutralizeMentions(truncateMiddle(title.trim(), MAX_LINK_TITLE_LENGTH))
     : '*설정 안 됨*'
 }
 
@@ -148,6 +149,7 @@ export function createIgnoredDomainsContent(
 
 export const ui = {
   formatClicks,
+  formatTitleDisplay,
 
   formatPartialOwnedLinksNotice(
     scannedRecords: number,
@@ -569,7 +571,7 @@ export const ui = {
     container.addTextDisplayComponents(
       new TextDisplayBuilder().setContent(
         `### ❌ ${neutralizeMentions(title)}\n${neutralizeMentions(
-          safeDescription(description || '오류가 발생했습니다.')
+          safeDescription(description ?? '오류가 발생했습니다.')
         )}`
       )
     )
@@ -701,9 +703,13 @@ export const ui = {
         0,
         noticeBudget - noticeHead.length - MIN_NOTICE_BODY_LENGTH
       )
-      const body = safeDescription(notice.description, bodyBudget)
+      const body = neutralizeMentions(
+        safeDescription(notice.description, bodyBudget)
+      )
       container.addTextDisplayComponents(
-        new TextDisplayBuilder().setContent(noticeHead + body)
+        new TextDisplayBuilder().setContent(
+          neutralizeMentions(noticeHead) + body
+        )
       )
       container.addSeparatorComponents(new SeparatorBuilder().setDivider(true))
     }

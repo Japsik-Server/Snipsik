@@ -13,11 +13,14 @@ import { getUserHash } from '@/services/slugManager'
 import type { UserDashboardStats } from '@/types/bot'
 import { CustomId } from '@/types/bot'
 import type { SinkLink } from '@/types/sink'
+import { createEditLinkModal } from '@/utils/modals'
 import { safeHttpGet } from '@/utils/safeHttp'
 import { parseTagsInput } from '@/utils/tags'
-import { MAX_LINK_TITLE_LENGTH, MAX_MESSAGE_TEXT_CONTENT } from '@/utils/text'
+import { MAX_MESSAGE_TEXT_CONTENT } from '@/utils/text'
 import { parseExpiration } from '@/utils/time'
 import { createIgnoredDomainsContent, sumViewTextLength, ui } from '@/utils/ui'
+
+const TEST_SINK_TOKEN = process.env.SINK_API_TOKEN ?? 'mock-test-sink-token'
 
 afterEach(() => {
   clearDashboardLinkSnapshots()
@@ -446,7 +449,7 @@ describe('dashboard rendering with hostile link metadata', () => {
     const hostileTitle = 'T'.repeat(50_000)
     const client = new SinkClient({
       baseUrl: 'https://sink.example',
-      token: 'token',
+      token: TEST_SINK_TOKEN,
       fetchImpl: async () =>
         new Response(
           JSON.stringify({
@@ -459,9 +462,10 @@ describe('dashboard rendering with hostile link metadata', () => {
     })
 
     const result = await client.queryLink({ slug: 'hostile' })
-    expect(result.link?.title?.length).toBeLessThanOrEqual(
-      MAX_LINK_TITLE_LENGTH
-    )
+    expect(result.link?.title).toBe(hostileTitle)
+
+    const editModal = createEditLinkModal(result.link as SinkLink)
+    expect(editModal).toBeDefined()
 
     const view = ui.createDashboardView(
       { id: '123456789012345678', username: 'Tester' } as never,
@@ -479,6 +483,32 @@ describe('dashboard rendering with hostile link metadata', () => {
     expect(view.components.length).toBe(2)
     expect(() => view.components[1]?.toJSON()).not.toThrow()
   })
+
+  it('neutralizes mentions in the title rendered on dashboard', () => {
+    const view = ui.createDashboardView(
+      { id: '123456789012345678', username: 'Tester' } as never,
+      {
+        totalLinks: 1,
+        activeLinks: 1,
+        expiredLinks: 0,
+        totalClicks: 0,
+        displayedLinks: 1,
+        linksComplete: true,
+        links: [
+          {
+            slug: 'test-slug',
+            url: 'https://example.com',
+            title: '@everyone title with <@&123456> and <@98765>'
+          } as SinkLink
+        ]
+      },
+      'test-slug'
+    )
+    const rendered = JSON.stringify(view.components[0]?.toJSON())
+    expect(rendered).not.toContain('@everyone')
+    expect(rendered).not.toContain('<@&123456>')
+    expect(rendered).not.toContain('<@98765>')
+  })
 })
 
 describe('third-party error text reaching Discord', () => {
@@ -487,7 +517,7 @@ describe('third-party error text reaching Discord', () => {
   it('does not surface a hostile non-2xx body or its mentions', async () => {
     const client = new SinkClient({
       baseUrl: 'https://sink.example',
-      token: 'token',
+      token: TEST_SINK_TOKEN,
       fetchImpl: async () =>
         new Response(HOSTILE_BODY, {
           status: 502,
@@ -512,7 +542,7 @@ describe('third-party error text reaching Discord', () => {
   it('does not surface a hostile JSON error field', async () => {
     const client = new SinkClient({
       baseUrl: 'https://sink.example',
-      token: 'token',
+      token: TEST_SINK_TOKEN,
       fetchImpl: async () =>
         new Response(JSON.stringify({ message: HOSTILE_BODY }), {
           status: 400
@@ -534,7 +564,7 @@ describe('third-party error text reaching Discord', () => {
   it('caps and defuses a network exception message', async () => {
     const client = new SinkClient({
       baseUrl: 'https://sink.example',
-      token: 'token',
+      token: TEST_SINK_TOKEN,
       fetchImpl: async () => {
         throw new Error(`@everyone ${'x'.repeat(5_000)}`)
       }

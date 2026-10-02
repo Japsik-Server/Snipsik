@@ -15,11 +15,7 @@ import type {
 } from '@/types/sink'
 import { logger } from '@/utils/logger'
 import { safeHttpGet } from '@/utils/safeHttp'
-import {
-  MAX_LINK_TITLE_LENGTH,
-  sanitizeExternalText,
-  truncateMiddle
-} from '@/utils/text'
+import { sanitizeExternalText } from '@/utils/text'
 import { expirationToUnixSeconds } from '@/utils/time'
 
 /**
@@ -43,6 +39,9 @@ function userFacingSinkError(status: number): string {
   if (status === 408 || status === 504) {
     return 'Sink 서버 응답 시간이 초과되었습니다. 잠시 후 다시 시도해주세요.'
   }
+  if (status === 409) {
+    return '이미 사용 중인 슬러그이거나 요청이 유효하지 않습니다 (409 Conflict).'
+  }
   if (status === 429) {
     return '요청이 너무 많습니다 (429 Too Many Requests). 잠시 후 다시 시도해주세요.'
   }
@@ -55,11 +54,33 @@ function userFacingSinkError(status: number): string {
   return `Sink 요청이 실패했습니다 (HTTP ${status}).`
 }
 
-/** Builds a log-only diagnostic from a raw error body, capped so logs stay readable. */
-function extractRawErrorDetail(text: string, isHtml: boolean): string {
-  const kind = isHtml ? 'html body' : 'body'
-  const body = truncateMiddle(text.replace(/\s+/g, ' ').trim(), 500)
-  return body ? `${kind}=${body}` : `${kind}=<empty>`
+/**
+ * Builds a log-only diagnostic from a raw error body.
+ *
+ * The body itself is *not* included. An upstream error page can echo back
+ * whatever it was sent — a token, a cookie, a session id — and log retention
+ * reaches a far wider audience than the request that failed. The status already
+ * names the class of failure; length and content shape are enough to tell an
+ * empty response from an HTML error page from a JSON envelope.
+ */
+function describeErrorBody(text: string, isHtml: boolean): string {
+  return `shape=${isHtml ? 'html' : 'text'} length=${text.length}`
+}
+
+/**
+ * Strips the query string from a URL before it is logged.
+ *
+ * Sink endpoints carry credentials and identifiers as query parameters, so the
+ * full URL in a log line is a credential leak. Origin and path are enough to
+ * identify which call failed.
+ */
+function redactUrlForLog(rawUrl: string): string {
+  try {
+    const parsed = new URL(rawUrl)
+    return `${parsed.origin}${parsed.pathname}`
+  } catch {
+    return '<unparseable url>'
+  }
 }
 
 /**
@@ -228,8 +249,6 @@ function normalizeSinkLink(raw: unknown): SinkLink {
     meta.destination
   )
 
-  // A title is attacker/upstream-controlled text that the dashboard renders
-  // verbatim; cap it here so an over-long one cannot reach any view.
   const rawTitle =
     typeof obj.title === 'string' && obj.title.trim().length > 0
       ? obj.title.trim()
@@ -239,8 +258,6 @@ function normalizeSinkLink(raw: unknown): SinkLink {
           ? obj.name.trim()
           : null
   const title = rawTitle
-    ? truncateMiddle(rawTitle, MAX_LINK_TITLE_LENGTH)
-    : null
 
   const description =
     typeof obj.description === 'string' && obj.description.trim().length > 0
@@ -637,7 +654,9 @@ export class SinkClient {
       })
 
     try {
-      logger.debug(`Sink API Request: ${options.method || 'GET'} ${url}`)
+      logger.debug(
+        `Sink API Request: ${options.method ?? 'GET'} ${redactUrlForLog(url)}`
+      )
       const response = await this.fetchImpl(url, {
         ...options,
         headers,
@@ -662,7 +681,7 @@ export class SinkClient {
       if (!response.ok) {
         const userError = userFacingSinkError(response.status)
         logger.warn(
-          `Sink API Error (${response.status}) for ${url}: ${extractRawErrorDetail(text, isHtml)}`
+          `Sink API Error (${response.status}) for ${redactUrlForLog(url)}: ${describeErrorBody(text, isHtml)}`
         )
         return {
           success: false,
@@ -673,11 +692,11 @@ export class SinkClient {
 
       if (isHtml) {
         logger.warn(
-          `Sink API returned ${response.status} with HTML content for ${url} (expected JSON)`
+          `Sink API returned ${response.status} with HTML content for ${redactUrlForLog(url)} (expected JSON)`
         )
         return {
           success: false,
-          error: `Invalid Sink response contract for ${path}: unexpected HTML response`,
+          error: `Invalid Sink response contract for ${redactUrlForLog(url)}: unexpected HTML response`,
           status: 502
         }
       }
@@ -687,7 +706,9 @@ export class SinkClient {
       const errorMsg = timedOut
         ? `Sink request timed out after ${this.requestTimeoutMs}ms`
         : sanitizeExternalText(err instanceof Error ? err.message : String(err))
-      logger.error(`Sink API Network Exception for ${url}:`, err)
+      logger.error(
+        `Sink API Network Exception for ${redactUrlForLog(url)}: errorKind=${err instanceof Error ? err.name : 'UnknownError'}`
+      )
       return { success: false, error: errorMsg, status: 0 }
     } finally {
       clearTimeout(timeoutId)

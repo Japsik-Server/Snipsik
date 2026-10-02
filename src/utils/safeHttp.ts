@@ -210,6 +210,31 @@ const defaultTransport: SafeHttpTransport = (url, address, signal) =>
 
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308])
 
+/**
+ * The remote server controls the HTTP reason phrase, and `/link check` renders
+ * it back to the user, so every response leaving this module goes through here.
+ *
+ * Both terminating paths in `safeHttpGet` use it — a final response, and a
+ * redirect with no `Location` to follow — so a new exit cannot accidentally
+ * return an unsanitised phrase. Sanitising here rather than in `defaultTransport`
+ * also covers an injected transport, which bypasses that function entirely.
+ */
+function withSanitizedStatusText(response: SafeHttpResponse): SafeHttpResponse {
+  const rawContentType = response.headers['content-type']
+  const headers = { ...response.headers }
+  if (typeof rawContentType === 'string') {
+    headers['content-type'] = sanitizeExternalText(rawContentType, 100)
+  }
+  return {
+    ...response,
+    headers,
+    statusText: sanitizeExternalText(
+      response.statusText,
+      MAX_STATUS_TEXT_LENGTH
+    )
+  }
+}
+
 export async function safeHttpGet(
   rawUrl: string,
   options: SafeHttpOptions = {}
@@ -238,20 +263,14 @@ export async function safeHttpGet(
         controller.signal
       )
       if (!REDIRECT_STATUSES.has(response.status)) {
-        // The remote server controls the reason phrase and `/link check`
-        // renders it back to the user, so bound and defuse it at the single
-        // exit point — every transport, including an injected one, is covered.
-        return {
-          ...response,
-          statusText: sanitizeExternalText(
-            response.statusText,
-            MAX_STATUS_TEXT_LENGTH
-          )
-        }
+        return withSanitizedStatusText(response)
       }
 
       const location = response.headers.location
-      if (!location) return response
+      // A redirect with no Location cannot be followed, so it terminates the
+      // loop. The reason phrase is still remote-controlled, so it goes through
+      // the same sanitiser as a final response rather than being returned raw.
+      if (!location) return withSanitizedStatusText(response)
       if (redirectCount >= maxRedirects) {
         throw new SafeHttpError(
           `Too many redirects (maximum ${maxRedirects})`,

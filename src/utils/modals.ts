@@ -7,7 +7,7 @@ import {
 import { CustomId } from '@/types/bot'
 import type { SinkLink } from '@/types/sink'
 import { formatTags } from '@/utils/tags'
-import { MAX_LINK_TITLE_LENGTH } from '@/utils/text'
+import { MAX_LINK_TITLE_LENGTH, truncateMiddle } from '@/utils/text'
 
 export function createLinkModal(): ModalBuilder {
   const modal = new ModalBuilder()
@@ -86,7 +86,7 @@ export function createEditLinkModal(link: SinkLink): ModalBuilder {
     .setMaxLength(MAX_LINK_TITLE_LENGTH)
     .setRequired(false)
   if (link.title) {
-    titleInput.setValue(link.title)
+    titleInput.setValue(truncateMiddle(link.title, MAX_LINK_TITLE_LENGTH))
   }
 
   const tagInput = new TextInputBuilder()
