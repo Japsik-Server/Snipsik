@@ -9,7 +9,7 @@ import {
   storeDashboardLinkSnapshots
 } from '@/services/dashboardLinkSnapshot'
 import { SinkClient, sinkClient } from '@/services/sinkClient'
-import { getUserHash } from '@/services/slugManager'
+import { getUserHash, verifyOwnership } from '@/services/slugManager'
 import { CustomId } from '@/types/bot'
 import { parseTagsInput } from '@/utils/tags'
 import { parseExpiration } from '@/utils/time'
@@ -270,13 +270,97 @@ describe('dashboard snapshot and Discord ACK', () => {
     }
   })
 
+  // The delete paths used to be the only ones parsing a customId without zod:
+  // they ran an `includes(':')` truthiness check and forwarded whatever came
+  // after the prefix straight into sinkClient.deleteLink. Every case below is
+  // crafted to PASS `verifyOwnership` (it ends in the caller's real hash), so
+  // under the old code these reached Sink; only the zod boundary stops them.
+  const OWNER = '723319776407191633'
+  const OWNED = `-${getUserHash(OWNER)}`
+  const FORGED_SLUGS = [
+    `../../etc${OWNED}`,
+    `foo/bar${OWNED}`,
+    `foo bar${OWNED}`,
+    `foo\nbar${OWNED}`,
+    `${'x'.repeat(101)}${OWNED}`,
+    `foo:${OWNED}`,
+    `foo?x=1${OWNED}`
+  ]
+
+  it.each(FORGED_SLUGS)(
+    'never calls Sink for a malformed confirm-delete id (%p)',
+    async forged => {
+      // Premise: ownership alone would have allowed this through to Sink.
+      expect(verifyOwnership(forged, OWNER)).toBe(true)
+
+      const originalDelete = sinkClient.deleteLink
+      const deleteMock = mock(async () => ({ success: true }))
+      sinkClient.deleteLink = deleteMock
+      let replyPayload: unknown
+      const interaction = {
+        customId: `${CustomId.DASHBOARD_CONFIRM_DELETE_BTN}:${forged}`,
+        user: { id: OWNER },
+        isAutocomplete: () => false,
+        isChatInputCommand: () => false,
+        isButton: () => true,
+        isStringSelectMenu: () => false,
+        isModalSubmit: () => false,
+        reply: async (payload: unknown) => {
+          replyPayload = payload
+        }
+      }
+
+      try {
+        await onInteractionCreate(interaction as never)
+        expect(deleteMock).not.toHaveBeenCalled()
+        expect(replyPayload).toBeDefined()
+      } finally {
+        sinkClient.deleteLink = originalDelete
+      }
+    }
+  )
+
+  it.each(FORGED_SLUGS)(
+    'never opens the confirm dialog for a malformed delete id (%p)',
+    async forged => {
+      // Premise: ownership alone would have allowed this through.
+      expect(verifyOwnership(forged, OWNER)).toBe(true)
+
+      // Track the calls rather than throwing from `update`: onInteractionCreate
+      // catches handler errors and logs them, so a throwing stub would let this
+      // test pass no matter which branch ran.
+      let updated = false
+      let replied = false
+      const interaction = {
+        customId: `${CustomId.DASHBOARD_DELETE_BTN}:${forged}`,
+        user: { id: OWNER },
+        isAutocomplete: () => false,
+        isChatInputCommand: () => false,
+        isButton: () => true,
+        isStringSelectMenu: () => false,
+        isModalSubmit: () => false,
+        reply: async () => {
+          replied = true
+        },
+        update: async () => {
+          updated = true
+        }
+      }
+
+      await onInteractionCreate(interaction as never)
+
+      expect(updated).toBe(false)
+      expect(replied).toBe(true)
+    }
+  )
+
   it('acknowledges dashboard refresh before external reads', async () => {
     const events: string[] = []
     const originalCount = sinkClient.countLinks
     const originalList = sinkClient.listLinks
     sinkClient.countLinks = mock(async () => {
       events.push('external')
-      return { success: true, count: 0 }
+      return { success: true, count: 0, status: 200 }
     })
     sinkClient.listLinks = mock(async () => {
       events.push('external')

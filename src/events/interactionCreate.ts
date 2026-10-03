@@ -25,14 +25,134 @@ import { parseTagsInput } from '@/utils/tags'
 import { parseExpiration } from '@/utils/time'
 import { ui } from '@/utils/ui'
 
-const dashboardSlugSchema = z.string().trim().min(1).max(100)
+/**
+ * Characters that break the slug's *transport*, not its spelling.
+ *
+ * The slug is carried inside a Discord `customId` and is used as a single URL
+ * path segment (`getFullShortUrl` -> `${baseUrl}/${slug}`, `deleteLink` ->
+ * `encodeURIComponent(slug)`), and the select menu re-embeds it as
+ * `slug:{slug}:{page}`. So the set that has to be rejected is the set of
+ * characters that would change the *meaning* of that transport:
+ *
+ * - `/` and `\` — path separators, i.e. traversal. This is the original
+ *   vulnerability: a forged `dash:delete_btn:../../etc` reached
+ *   `sinkClient.deleteLink` verbatim.
+ * - `:` — the customId / select-menu field delimiter. The menu value is parsed
+ *   with `split(':')`, so a slug containing one round-trips to a *different*
+ *   slug and could forge the `nav:page:` / `slug:` grammar.
+ * - `?` and `#` — start the query / fragment of the rendered short URL, so the
+ *   URL the card shows stops being the URL that is managed.
+ * - whitespace and C0/C1 control characters (including NUL and `\n`) — make the
+ *   `customId`, the embed text, and log lines ambiguous or invalid.
+ *
+ * This is deliberately a deny-list rather than an allow-list. Ownership
+ * (`verifyOwnership` / `isOwnedSlug`) inspects only the slug *tail*, so any
+ * allow-list narrower than the bot's own `[A-Za-z0-9_-]` charset newly rejects
+ * links that ownership accepts — a link created outside the bot whose body
+ * contains `.`, `~`, or non-ASCII stays owned and listed in `/link list` and
+ * the dashboard, yet pressing edit or delete would answer
+ * "잘못된 링크 식별자입니다". That is the "exists but you cannot manage it" state the ownership
+ * suffix exists to prevent, and a deny-list can never recreate it: every entry
+ * above is a transport hazard, not a guess about what this bot mints.
+ */
+const DANGEROUS_SLUG_CHARS = /[/\\:?#\s]/
 
+/**
+ * C0 and C1 control ranges, which includes NUL. Expressed as char codes
+ * because `noControlCharactersInRegex` correctly flags a control character
+ * inside a character class, and a literal one in source is unreadable.
+ */
+function hasControlChar(value: string): boolean {
+  for (let i = 0; i < value.length; i++) {
+    const code = value.charCodeAt(i)
+    if (code <= 0x1f || (code >= 0x7f && code <= 0x9f)) return true
+  }
+  return false
+}
+
+/**
+ * True when a character would break the slug's transport rather than merely
+ * differ from what this bot mints. See {@link DANGEROUS_SLUG_CHARS}.
+ */
+function hasTransportHazard(value: string): boolean {
+  return DANGEROUS_SLUG_CHARS.test(value) || hasControlChar(value)
+}
+
+/**
+ * Shape check for a slug arriving from a dashboard `customId` or select-menu
+ * value. Length is Discord's own 100-character `customId` bound (a platform
+ * limit, not one this bot imposes), so a longer slug could never have reached
+ * a button in the first place.
+ */
+const dashboardSlugSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(100)
+  .refine(value => !hasTransportHazard(value), {
+    message: 'slug contains characters that are unsafe in a link identifier'
+  })
+
+/**
+ * Reads the slug out of a `{prefix}:{slug}` button `customId`.
+ */
 function parseCustomIdSlug(customId: string, prefix: string): string | null {
   const marker = `${prefix}:`
   const candidate = customId.startsWith(marker)
     ? customId.substring(marker.length)
     : undefined
   const parsed = dashboardSlugSchema.safeParse(candidate)
+  return parsed.success ? parsed.data : null
+}
+
+/**
+ * Upper bound accepted for a dashboard page number. The view renders 20 links
+ * per page and clamps anything past the last one, so this only has to reject
+ * values that could not name a page at all — `0`, negatives, fractions, and
+ * non-numeric text.
+ */
+const MAX_DASHBOARD_PAGE = 100_000
+
+/**
+ * Shape check for the page number carried in a `slug:{slug}:{page}` select-menu
+ * value. A page is only ever minted by this bot as `1..totalPages` for a
+ * 20-link page, so the upper bound is generous headroom rather than a guess
+ * about the current link count; the view clamps a larger page anyway. Without
+ * this, `parseInt` silently accepted `slug:ok:abc`, `slug:ok:0`, and
+ * `slug:ok:1e9`, all of which reach `createDashboardView` and are rendered
+ * back into fresh `customId`s.
+ */
+const selectMenuPageSchema = z.coerce
+  .number()
+  .int()
+  .min(1)
+  .max(MAX_DASHBOARD_PAGE)
+
+/**
+ * Reads the slug out of a `slug:{slug}:{page}` select-menu value.
+ * Rejects a value whose slug part is not a well-formed slug instead of
+ * forwarding raw attacker-shaped text into the dashboard view.
+ */
+function parseSelectMenuSlug(value: string): string | null {
+  if (!value.startsWith('slug:')) return null
+  // The slug may not contain `:` (see DANGEROUS_SLUG_CHARS), so the page is
+  // always the third field and the slug is always the second.
+  const parts = value.split(':')
+  if (parts.length !== 3) return null
+  const parsed = dashboardSlugSchema.safeParse(parts[1])
+  return parsed.success ? parsed.data : null
+}
+
+/**
+ * Reads the page out of a `slug:{slug}:{page}` select-menu value. Parsed with
+ * the same zod schema as the slug so a malformed page is reported to the user
+ * instead of being silently coerced to page 1.
+ */
+function parseSelectMenuPage(value: string): number | null {
+  if (!value.startsWith('slug:')) return null
+  const parts = value.split(':')
+  if (parts.length !== 3) return null
+  const parsed = selectMenuPageSchema.safeParse(parts[2])
   return parsed.success ? parsed.data : null
 }
 
@@ -149,15 +269,10 @@ export async function onInteractionCreate(
 
       // Delete Button -> Show Confirm Dialog
       if (customId.startsWith(CustomId.DASHBOARD_DELETE_BTN)) {
-        const slug = customId.includes(':')
-          ? customId.substring(CustomId.DASHBOARD_DELETE_BTN.length + 1)
-          : undefined
+        const slug = parseCustomIdSlug(customId, CustomId.DASHBOARD_DELETE_BTN)
         if (!slug) {
           await interaction.reply({
-            ...ui.createErrorMessage(
-              '오류',
-              '삭제할 링크를 먼저 선택해주세요.'
-            ),
+            ...ui.createErrorMessage('오류', '잘못된 링크 식별자입니다.'),
             ephemeral: true
           })
           return
@@ -181,10 +296,19 @@ export async function onInteractionCreate(
 
       // Confirm Delete Button -> Execute Delete
       if (customId.startsWith(CustomId.DASHBOARD_CONFIRM_DELETE_BTN)) {
-        const slug = customId.includes(':')
-          ? customId.substring(CustomId.DASHBOARD_CONFIRM_DELETE_BTN.length + 1)
-          : undefined
-        if (!slug || !verifyOwnership(slug, interaction.user.id)) {
+        const slug = parseCustomIdSlug(
+          customId,
+          CustomId.DASHBOARD_CONFIRM_DELETE_BTN
+        )
+        if (!slug) {
+          await interaction.reply({
+            ...ui.createErrorMessage('오류', '잘못된 링크 식별자입니다.'),
+            ephemeral: true
+          })
+          return
+        }
+
+        if (!verifyOwnership(slug, interaction.user.id)) {
           await interaction.reply({
             ...ui.createErrorMessage(
               '권한 없음',
@@ -499,9 +623,37 @@ export async function onInteractionCreate(
         let currentPage = 1
 
         if (val?.startsWith('slug:')) {
-          const parts = val.split(':')
-          selectedSlug = parts[1] || ''
-          currentPage = parseInt(parts[2] || '1', 10) || 1
+          // Validate before the slug and page reach the dashboard view: a
+          // malformed value would otherwise be rendered back into fresh
+          // customIds. A parse failure used to be substituted with `''` and
+          // `parseInt(...) || 1`, which silently dropped the user's selection
+          // and answered with an unselected dashboard. Reply instead, matching
+          // the `!slug -> reply error` pattern the button branches above use.
+          const parsedSlug = parseSelectMenuSlug(val)
+          const parsedPage = parseSelectMenuPage(val)
+          if (!parsedSlug || parsedPage === null) {
+            await interaction.editReply(
+              ui.createErrorMessage(
+                '오류',
+                '잘못된 링크 식별자입니다. 대시보드를 새로고침한 뒤 다시 시도해주세요.'
+              )
+            )
+            return
+          }
+          selectedSlug = parsedSlug
+          currentPage = parsedPage
+        } else if (val) {
+          const parsedRaw = dashboardSlugSchema.safeParse(val)
+          if (!parsedRaw.success) {
+            await interaction.editReply(
+              ui.createErrorMessage(
+                '오류',
+                '잘못된 링크 식별자입니다. 대시보드를 새로고침한 뒤 다시 시도해주세요.'
+              )
+            )
+            return
+          }
+          selectedSlug = parsedRaw.data
         }
 
         const stats = await fetchUserDashboardStats(interaction.user.id)
