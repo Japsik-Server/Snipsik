@@ -4,6 +4,42 @@ import {
   firstConfiguredValue
 } from '@/db/connectionConfig'
 
+/**
+ * Local SQLite forms that cannot reach a remote server: `file::memory:` and
+ * `file:<path>`. `file://host/path` is rejected because a host component can
+ * resolve to a network location (e.g. a UNC share on Windows), so it is not
+ * treated as inert.
+ */
+function isInertTestDatabaseUrl(val: string | undefined): val is string {
+  if (typeof val !== 'string') return false
+  const trimmed = val.trim()
+  const rawRemainder = trimmed.slice(5)
+
+  // file:\\host\share 및 file:/\host 형태는 Windows UNC 경로일 수 있다.
+  if (rawRemainder.startsWith('\\') || rawRemainder.startsWith('/\\')) {
+    return false
+  }
+
+  const normalized = trimmed.toLowerCase().replace(/\\/g, '/')
+  if (!normalized.startsWith('file:')) {
+    return false
+  }
+
+  const remainder = normalized.slice(5)
+  if (!remainder || /^[/\\.?#]+$/.test(remainder)) return false
+
+  try {
+    const u = new URL(normalized)
+    if (u.protocol !== 'file:') return false
+    if (u.host !== '' && u.host !== 'localhost') return false
+    if (!u.pathname || u.pathname === '/') return false
+  } catch {
+    return normalized === 'file::memory:'
+  }
+
+  return true
+}
+
 export const envSchema = z.object({
   DISCORD_TOKEN: z.string().min(1, 'DISCORD_TOKEN is required'),
   DISCORD_CLIENT_ID: z.string().min(1, 'DISCORD_CLIENT_ID is required'),
@@ -11,11 +47,13 @@ export const envSchema = z.object({
     .string()
     .optional()
     .transform(val => {
-      // In test mode, default to isolated in-memory SQLite database if omitted or if a legacy postgres URL is present in local .env
-      if (
-        process.env.NODE_ENV === 'test' &&
-        (!val || val.startsWith('postgres:') || val.startsWith('postgresql:'))
-      ) {
+      // In test mode the database must be inert: only a local `file:` form is
+      // honoured (e.g. 'file::memory:' or 'file:./test.db'). Any other scheme
+      // (libsql:, https:, http:, ws:, wss:, ...) is ignored outright, because
+      // @/db opens a client at module load and would otherwise let a test run
+      // reach a real remote database.
+      if (process.env.NODE_ENV === 'test') {
+        if (isInertTestDatabaseUrl(val)) return val
         return 'file::memory:'
       }
       return firstConfiguredValue(val, process.env.TURSO_DATABASE_URL) ?? ''

@@ -59,12 +59,47 @@ describe('Config Schema AUTO_SHORTEN_MIN_URL_LENGTH parsing', () => {
   })
 
   describe('DATABASE_URL validation', () => {
-    it('accepts valid libsql URL', () => {
-      const parsed = envSchema.parse({
-        ...baseEnv,
-        DATABASE_URL: 'libsql://my-db-org.turso.io'
-      })
-      expect(parsed.DATABASE_URL).toBe('libsql://my-db-org.turso.io')
+    it('forces every non-file URL to the in-memory database in test mode', () => {
+      // @/db opens its client at module load, so a test run must never be able
+      // to keep a remote URL: anything that is not a local `file:` form is
+      // discarded in favour of an inert in-memory database.
+      //
+      // NODE_ENV is pinned rather than inherited. config.ts keys this branch on
+      // `NODE_ENV === 'test'`, so a test that claimed to check test mode while
+      // reading the ambient value would silently pass (or fail) depending on
+      // the developer's shell.
+      const originalNodeEnv = process.env.NODE_ENV
+      try {
+        process.env.NODE_ENV = 'test'
+        for (const remoteUrl of [
+          'libsql://my-db-org.turso.io',
+          '  LIBSQL://my-db-org.turso.io  ',
+          'https://my-db-org.turso.io',
+          'ws://my-db-org.turso.io',
+          'postgresql://localhost:5432/db',
+          'invalid://some-host'
+        ]) {
+          expect(
+            envSchema.parse({ ...baseEnv, DATABASE_URL: remoteUrl })
+              .DATABASE_URL
+          ).toBe('file::memory:')
+        }
+      } finally {
+        process.env.NODE_ENV = originalNodeEnv
+      }
+    })
+
+    it('falls back to the in-memory database when DATABASE_URL is omitted in test mode', () => {
+      const originalNodeEnv = process.env.NODE_ENV
+      try {
+        process.env.NODE_ENV = 'test'
+        const { DATABASE_URL: _omitted, ...envWithoutDatabaseUrl } = baseEnv
+        expect(envSchema.parse(envWithoutDatabaseUrl).DATABASE_URL).toBe(
+          'file::memory:'
+        )
+      } finally {
+        process.env.NODE_ENV = originalNodeEnv
+      }
     })
 
     it('accepts valid file URL for local SQLite', () => {
@@ -75,12 +110,18 @@ describe('Config Schema AUTO_SHORTEN_MIN_URL_LENGTH parsing', () => {
       expect(parsed.DATABASE_URL).toBe('file:local.db')
     })
 
-    it('normalizes whitespace and protocol case in DATABASE_URL', () => {
-      const parsed = envSchema.parse({
-        ...baseEnv,
-        DATABASE_URL: '  LIBSQL://my-db-org.turso.io  '
-      })
-      expect(parsed.DATABASE_URL).toBe('libsql://my-db-org.turso.io')
+    it('normalizes whitespace and protocol case in DATABASE_URL outside test mode', () => {
+      const originalNodeEnv = process.env.NODE_ENV
+      try {
+        process.env.NODE_ENV = 'production'
+        const parsed = envSchema.parse({
+          ...baseEnv,
+          DATABASE_URL: '  LIBSQL://my-db-org.turso.io  '
+        })
+        expect(parsed.DATABASE_URL).toBe('libsql://my-db-org.turso.io')
+      } finally {
+        process.env.NODE_ENV = originalNodeEnv
+      }
     })
 
     it('rejects unsupported URL scheme in production environment', () => {
