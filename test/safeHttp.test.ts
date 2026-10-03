@@ -129,4 +129,41 @@ describe('safe HTTP URL checks', () => {
       })
     ).rejects.toThrow('Request Timeout')
   })
+
+  it('neutralises mentions and strips a Location-less redirect phrase', async () => {
+    const hostilePhrase = '@everyone redirected'
+    let called = false
+    const transport: SafeHttpTransport = async () => {
+      called = true
+      return {
+        status: 302,
+        statusText: hostilePhrase,
+        headers: {} // no Location
+      }
+    }
+
+    const result = await safeHttpGet('https://example.test', {
+      resolver: publicResolver,
+      transport
+    })
+
+    expect(called).toBe(true)
+    expect(result.status).toBe(302)
+    expect(result.statusText).not.toContain('@everyone')
+  })
+
+  it('bounds an overlong Location-less reason phrase', async () => {
+    const transport: SafeHttpTransport = async () => ({
+      status: 302,
+      statusText: 'x'.repeat(500),
+      headers: {}
+    })
+
+    const result = await safeHttpGet('https://example.test', {
+      resolver: publicResolver,
+      transport
+    })
+
+    expect(result.statusText.length).toBeLessThanOrEqual(100)
+  })
 })

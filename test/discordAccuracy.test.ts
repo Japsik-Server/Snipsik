@@ -10,10 +10,17 @@ import {
 } from '@/services/dashboardLinkSnapshot'
 import { SinkClient, sinkClient } from '@/services/sinkClient'
 import { getUserHash } from '@/services/slugManager'
+import type { UserDashboardStats } from '@/types/bot'
 import { CustomId } from '@/types/bot'
+import type { SinkLink } from '@/types/sink'
+import { createEditLinkModal } from '@/utils/modals'
+import { safeHttpGet } from '@/utils/safeHttp'
 import { parseTagsInput } from '@/utils/tags'
+import { MAX_MESSAGE_TEXT_CONTENT } from '@/utils/text'
 import { parseExpiration } from '@/utils/time'
-import { createIgnoredDomainsContent, ui } from '@/utils/ui'
+import { createIgnoredDomainsContent, sumViewTextLength, ui } from '@/utils/ui'
+
+const TEST_SINK_TOKEN = process.env.SINK_API_TOKEN ?? 'mock-test-sink-token'
 
 afterEach(() => {
   clearDashboardLinkSnapshots()
@@ -368,5 +375,221 @@ describe('configuration display budget', () => {
       }
     )
     expect(() => view.components[0]?.toJSON()).not.toThrow()
+  })
+
+  it('keeps the summed text of a fully-populated panel inside the 4000 cap', () => {
+    // 50 max-length domains (253 chars each) plus a notice far past any
+    // single-block limit. discord.js does not validate the combined length, so
+    // asserting only `toJSON()` cannot catch the HTTP 400 the server returns.
+    const domains = Array.from({ length: 50 }, (_, index) =>
+      `${`sub${index}`.padEnd(250, 'a')}.example.com`.slice(0, 253)
+    )
+    const view = ui.createConfigPanelView(
+      { id: 'user', username: 'Tester' } as never,
+      {
+        autoDmMode: 'inherit',
+        dmFormat: 'replace',
+        fixupxEnabled: true,
+        autoShortenMinUrlLength: null,
+        ignoredDomains: domains
+      },
+      {
+        title: '설정 변경 완료',
+        description: 'N'.repeat(20_000),
+        type: 'info'
+      },
+      70
+    )
+
+    const total = sumViewTextLength(view)
+    expect(total).toBeLessThanOrEqual(MAX_MESSAGE_TEXT_CONTENT)
+    expect(total).toBeGreaterThan(1_000)
+    expect(() => view.components[0]?.toJSON()).not.toThrow()
+  })
+})
+
+describe('dashboard rendering with hostile link metadata', () => {
+  it('renders an over-long title and description without throwing', () => {
+    const stats = {
+      totalLinks: 1,
+      activeLinks: 1,
+      expiredLinks: 0,
+      totalClicks: 0,
+      displayedLinks: 1,
+      linksComplete: true,
+      links: [
+        {
+          slug: 'long-title',
+          url: `https://example.com/${'p'.repeat(500)}`,
+          title: 'T'.repeat(50_000),
+          description: 'D'.repeat(50_000),
+          tags: ['x'],
+          clicks: 0,
+          createdAt: new Date().toISOString()
+        }
+      ]
+    } as UserDashboardStats
+
+    const view = ui.createDashboardView(
+      { id: '123456789012345678', username: 'Tester' } as never,
+      stats,
+      'long-title'
+    )
+
+    expect(view.components.length).toBe(2)
+    const json = view.components[1]?.toJSON()
+    expect(() => JSON.stringify(json)).not.toThrow()
+    // The edit/delete row that lives in the same container must survive.
+    const customIds = JSON.stringify(json)
+    expect(customIds).toContain(`${CustomId.DASHBOARD_EDIT_BTN}:long-title`)
+    expect(customIds).toContain(`${CustomId.DASHBOARD_DELETE_BTN}:long-title`)
+  })
+
+  it('caps a title that Sink returns at length and renders a usable dashboard', async () => {
+    const hostileTitle = 'T'.repeat(50_000)
+    const client = new SinkClient({
+      baseUrl: 'https://sink.example',
+      token: TEST_SINK_TOKEN,
+      fetchImpl: async () =>
+        new Response(
+          JSON.stringify({
+            slug: 'hostile',
+            url: 'https://example.com',
+            title: hostileTitle
+          }),
+          { status: 200 }
+        )
+    })
+
+    const result = await client.queryLink({ slug: 'hostile' })
+    expect(result.link?.title).toBe(hostileTitle)
+
+    const editModal = createEditLinkModal(result.link as SinkLink)
+    expect(editModal).toBeDefined()
+
+    const view = ui.createDashboardView(
+      { id: '123456789012345678', username: 'Tester' } as never,
+      {
+        totalLinks: 1,
+        activeLinks: 1,
+        expiredLinks: 0,
+        totalClicks: 0,
+        displayedLinks: 1,
+        linksComplete: true,
+        links: [result.link as SinkLink]
+      },
+      'hostile'
+    )
+    expect(view.components.length).toBe(2)
+    expect(() => view.components[1]?.toJSON()).not.toThrow()
+  })
+
+  it('neutralizes mentions in the title rendered on dashboard', () => {
+    const view = ui.createDashboardView(
+      { id: '123456789012345678', username: 'Tester' } as never,
+      {
+        totalLinks: 1,
+        activeLinks: 1,
+        expiredLinks: 0,
+        totalClicks: 0,
+        displayedLinks: 1,
+        linksComplete: true,
+        links: [
+          {
+            slug: 'test-slug',
+            url: 'https://example.com',
+            title: '@everyone title with <@&123456> and <@98765>'
+          } as SinkLink
+        ]
+      },
+      'test-slug'
+    )
+    const rendered = JSON.stringify(view.components[0]?.toJSON())
+    expect(rendered).not.toContain('@everyone')
+    expect(rendered).not.toContain('<@&123456>')
+    expect(rendered).not.toContain('<@98765>')
+  })
+})
+
+describe('third-party error text reaching Discord', () => {
+  const HOSTILE_BODY = `@everyone https://discord.gg/phish <@&123456789> grab it`
+
+  it('does not surface a hostile non-2xx body or its mentions', async () => {
+    const client = new SinkClient({
+      baseUrl: 'https://sink.example',
+      token: TEST_SINK_TOKEN,
+      fetchImpl: async () =>
+        new Response(HOSTILE_BODY, {
+          status: 502,
+          statusText: HOSTILE_BODY
+        })
+    })
+
+    const result = await client.queryLink({ slug: 'anything' })
+    expect(result.success).toBe(false)
+    expect(result.error).not.toContain('discord.gg')
+    expect(result.error).not.toContain('@everyone')
+    expect(result.error).not.toContain('<@&123456789>')
+
+    const view = ui.createErrorMessage('링크 조회 실패', result.error ?? '')
+    const rendered = JSON.stringify(view.components[0]?.toJSON())
+    expect(rendered).not.toContain('@everyone')
+    expect(rendered).not.toContain('discord.gg')
+    // A fixed, human-readable message still reaches the user.
+    expect(rendered).toContain('Sink')
+  })
+
+  it('does not surface a hostile JSON error field', async () => {
+    const client = new SinkClient({
+      baseUrl: 'https://sink.example',
+      token: TEST_SINK_TOKEN,
+      fetchImpl: async () =>
+        new Response(JSON.stringify({ message: HOSTILE_BODY }), {
+          status: 400
+        })
+    })
+
+    const result = await client.queryLink({ slug: 'anything' })
+    expect(result.error).not.toContain('@everyone')
+    expect(result.error).not.toContain('discord.gg')
+  })
+
+  it('defuses a mention that reaches createErrorMessage by another route', () => {
+    const view = ui.createErrorMessage('실패', `잔여 시도 <@&42> @here`)
+    const rendered = JSON.stringify(view.components[0]?.toJSON())
+    expect(rendered).not.toContain('@here')
+    expect(rendered).not.toContain('<@&42>')
+  })
+
+  it('caps and defuses a network exception message', async () => {
+    const client = new SinkClient({
+      baseUrl: 'https://sink.example',
+      token: TEST_SINK_TOKEN,
+      fetchImpl: async () => {
+        throw new Error(`@everyone ${'x'.repeat(5_000)}`)
+      }
+    })
+
+    const result = await client.queryLink({ slug: 'anything' })
+    expect(result.error?.length).toBeLessThanOrEqual(300)
+    const rendered = JSON.stringify(
+      ui.createErrorMessage('실패', result.error ?? '').components[0]?.toJSON()
+    )
+    expect(rendered).not.toContain('@everyone')
+  })
+
+  it('bounds an over-long HTTP reason phrase from safeHttp', async () => {
+    const hostile = `Bad Gateway @everyone ${'y'.repeat(2_000)}`
+    const response = await safeHttpGet('https://example.com', {
+      resolver: async () => [{ address: '93.184.216.34', family: 4 }],
+      transport: async () => ({
+        status: 502,
+        statusText: hostile,
+        headers: {}
+      })
+    })
+
+    expect(response.statusText.length).toBeLessThanOrEqual(100)
+    expect(response.statusText).not.toContain('@everyone')
   })
 })

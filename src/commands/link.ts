@@ -1476,7 +1476,9 @@ async function handleAdminCommand(
 
     const lines = paginated.map((l, idx) => {
       const full = sinkClient.getFullShortUrl(l.slug)
-      const titlePart = l.title ? ` - **${l.title}**` : ''
+      const titlePart = l.title?.trim()
+        ? ` - **${ui.formatTitleDisplay(l.title)}**`
+        : ''
       const clickPart = `(${ui.formatClicks(l.clicks, ' clicks')})`
       const truncated =
         l.url.length > 50 ? `${l.url.substring(0, 47)}...` : l.url
@@ -1559,7 +1561,9 @@ async function handleAdminCommand(
 
     const lines = paginated.map((l, idx) => {
       const full = sinkClient.getFullShortUrl(l.slug)
-      const titlePart = l.title ? ` - **${l.title}**` : ''
+      const titlePart = l.title?.trim()
+        ? ` - **${ui.formatTitleDisplay(l.title)}**`
+        : ''
       const clickPart = `(${ui.formatClicks(l.clicks, ' clicks')})`
       const truncated =
         l.url.length > 50 ? `${l.url.substring(0, 47)}...` : l.url

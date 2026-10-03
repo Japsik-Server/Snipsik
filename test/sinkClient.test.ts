@@ -247,7 +247,7 @@ describe('SinkClient New API Tests', () => {
       expect(legacyCalled).toBe(true)
       expect(res.success).toBe(false)
       expect(res.status).toBe(404)
-      expect(res.error).toBe('Link not found')
+      expect(res.error).toBe('리소스를 찾을 수 없습니다 (404 Not Found).')
     } finally {
       globalThis.fetch = originalFetch
     }
@@ -422,9 +422,13 @@ describe('SinkClient New API Tests', () => {
 
     const res = await client.getStats('some-slug')
     expect(res.success).toBe(false)
+    // The HTML body and reason phrase are infrastructure detail; the user
+    // gets a fixed message instead.
     expect(res.error).toBe(
-      'HTTP 500: Internal Server Error (HTML error response)'
+      'Sink 서버에서 내부 오류가 발생했습니다. 잠시 후 다시 시도해주세요.'
     )
+    expect(res.error).not.toContain('Crash')
+    expect(res.error).not.toContain('HTML error response')
   })
 
   it('should report fallback error over original 404 in deleteLink when fallback fails', async () => {
@@ -462,7 +466,9 @@ describe('SinkClient New API Tests', () => {
 
     const res = await client.deleteLink('fallback-target')
     expect(res.success).toBe(false)
-    expect(res.error).toBe('Fallback permission denied')
+    expect(res.error).toBe(
+      '접근 거부 (403 Forbidden): API 접근 권한이 없습니다.'
+    )
   })
 
   it('should find exact match in search fallback when other search results exist', async () => {
@@ -608,7 +614,9 @@ describe('SinkClient New API Tests', () => {
     })
 
     expect(result.success).toBe(false)
-    expect(result.error).toBe('page failed')
+    expect(result.error).toBe(
+      'Sink 서버에서 내부 오류가 발생했습니다. 잠시 후 다시 시도해주세요.'
+    )
     expect(requestedUrls).toHaveLength(1)
     expect(requestedUrls[0]).toContain('cursor=page-2')
     expect(requestedUrls[0]).toContain('tag=news')
@@ -1808,5 +1816,78 @@ describe('Never-Queried Ids Are Not Zero', () => {
     } finally {
       sinkClient.getCountersByIds = originalCounters
     }
+  })
+})
+
+describe('SinkClient error logging strips bodies and query strings', () => {
+  const MOCK_TOKEN = 'test-token-fixture'
+  const CAPTURED: string[] = []
+
+  async function captureWarn(run: () => Promise<void>): Promise<string[]> {
+    CAPTURED.length = 0
+    const logger = (await import('@/utils/logger')).logger
+    const original = logger.warn
+    logger.warn = ((message: unknown, ...rest: unknown[]) => {
+      CAPTURED.push(
+        [message, ...rest]
+          .map(part =>
+            typeof part === 'string' ? part : JSON.stringify(part ?? '')
+          )
+          .join(' ')
+      )
+    }) as never
+    try {
+      await run()
+    } finally {
+      logger.warn = original
+    }
+    return CAPTURED
+  }
+
+  function makeClient(): SinkClient {
+    return new SinkClient({
+      baseUrl: 'https://sink.example.test',
+      token: MOCK_TOKEN,
+      fetchImpl: async () =>
+        new Response(
+          JSON.stringify({ error: `token=${MOCK_TOKEN}`, session: 'sid-abc' }),
+          { status: 500, headers: { 'content-type': 'application/json' } }
+        )
+    })
+  }
+
+  it('keeps a token in the request query string out of the log', async () => {
+    const client = makeClient()
+    const lines = await captureWarn(async () => {
+      await client.countLinks({ q: `token=${MOCK_TOKEN}` })
+    })
+
+    expect(lines.length).toBeGreaterThan(0)
+    for (const line of lines) {
+      expect(line).not.toContain(MOCK_TOKEN)
+      expect(line).not.toContain('token=')
+    }
+    expect(lines.join('\n')).toContain('500')
+    expect(lines.join('\n')).toContain('/api/link/count')
+  })
+
+  it('keeps an echoed token and session id out of the log body', async () => {
+    const client = makeClient()
+    const lines = await captureWarn(async () => {
+      await client.createLink({
+        url: 'https://example.com',
+        slug: 'abc',
+        title: 't',
+        description: 'd',
+        tags: [],
+        expiration: undefined,
+        password: undefined
+      })
+    })
+
+    const joined = lines.join('\n')
+    expect(joined).not.toContain(MOCK_TOKEN)
+    expect(joined).not.toContain('sid-abc')
+    expect(joined).toMatch(/shape=json|length=/)
   })
 })
