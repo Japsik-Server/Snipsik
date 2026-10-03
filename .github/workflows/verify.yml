@@ -1,0 +1,87 @@
+name: Verify
+
+# Runs the same quality gate CONTRIBUTING.md asks contributors to run locally:
+# typecheck, lint, tests, build. Until this workflow existed, `main` was merged
+# and deployed with no gate at all, so a TypeScript error, a lint failure, or a
+# failing test shipped straight to production.
+#
+# Triggers:
+#  - `pull_request`: gates every PR before it merges.
+#  - `workflow_call`: deploy.yml calls this so production rollout is gated on a
+#    green run of the exact commit it is about to ship. Reusing one definition
+#    keeps the two from drifting apart.
+#
+# Deliberately NOT `pull_request_target`, and deliberately NOT `workflow_run`:
+# both run code derived from untrusted forks in a privileged context with
+# secrets or write scopes, which is the classic pwn-request shape and would
+# weaken this repo's least-privilege posture.
+on:
+  pull_request:
+  workflow_call:
+
+concurrency:
+  # The event name is part of the group so the `pull_request` run and the
+  # `workflow_call` run from a deploy on the same ref cannot cancel each other.
+  # Rapid pushes to the same ref still cancel the stale run.
+  group: verify-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Typecheck, lint, test, build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Resolve Bun version from the Dockerfile
+        id: bun-version
+        # The Dockerfile decides which Bun actually builds and runs the shipped
+        # image. Hardcoding a version here instead would let a Bun minor bump
+        # land in the image while this gate stayed green on an older Bun:
+        # typecheck and tests would pass and only `bun run build` or the runtime
+        # would fail in production, which is exactly the class of failure this
+        # gate exists to catch. Deriving it here makes the two agree by
+        # construction. The script exits non-zero if the Dockerfile tag is not
+        # an exact version, so the pin cannot quietly regress to a floating tag.
+        run: node scripts/bun-version.mjs
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: ${{ steps.bun-version.outputs.version }}
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Typecheck
+        run: bun run typecheck
+
+      - name: Lint and format check
+        run: bun run check
+
+      - name: Test
+        # src/config.ts parses process.env at module load and calls
+        # process.exit(1) on failure, so a CI runner with no .env cannot even
+        # import the config. These are non-functional placeholders, not
+        # secrets:
+        #   - DATABASE_URL is explicitly set to an inert in-memory SQLite
+        #     database ('file::memory:') to ensure tests never reach a
+        #     remote database.
+        #   - .invalid is reserved by RFC 2606, so SINK_BASE_URL can never
+        #     resolve to a real host.
+        env:
+          DATABASE_URL: "file::memory:"
+          DISCORD_TOKEN: ci-placeholder
+          DISCORD_CLIENT_ID: "1234567890"
+          SINK_BASE_URL: "https://sinks.invalid"
+          SINK_API_TOKEN: ci-placeholder
+        run: bun test
+
+      - name: Build
+        run: bun run build

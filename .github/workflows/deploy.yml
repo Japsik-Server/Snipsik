@@ -9,8 +9,8 @@ on:
       - "docs/**"
       - ".gitignore"
       - ".env.example"
-      - "test/**"
       - "docker-compose.yml"
+      - "test/**"
   workflow_dispatch:
     inputs:
       force_build:
@@ -41,7 +41,19 @@ env:
   DEPLOY_DIR: /opt/snipsik
 
 jobs:
+  # A reusable-workflow call rather than a second copy of the checks, so
+  # verify.yml stays the single owner of the quality gate and the deploy waits
+  # on a green run of the exact commit it is about to ship.
+  #
+  # `permissions` on a reusable-workflow call cannot be tightened below what the
+  # called workflow declares; verify.yml asks for only `contents: read`, so this
+  # grants nothing extra — notably it does not inherit `id-token: write`.
+  verify:
+    name: Verify
+    uses: ./.github/workflows/verify.yml
+
   build-and-deploy:
+    needs: verify
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -67,8 +79,12 @@ jobs:
         env:
           FORCE_BUILD: ${{ inputs.force_build }}
         run: |
-          # Resolve base image digest from Docker Hub to capture upstream base image updates
-          BASE_DIGEST=$(docker buildx imagetools inspect oven/bun:1-alpine --format '{{.Manifest.Digest}}' 2>/dev/null || echo "oven/bun:1-alpine")
+          # Resolve base image digest from Docker Hub to capture upstream base image updates.
+          # The tag is read from the Dockerfile rather than hardcoded so this cache key tracks
+          # the exact base image the build will actually pull; a stale literal here would
+          # keep hashing a different image than the one being built.
+          BASE_IMAGE=$(node scripts/bun-version.mjs --tag)
+          BASE_DIGEST=$(docker buildx imagetools inspect "$BASE_IMAGE" --format '{{.Manifest.Digest}}' 2>/dev/null || echo "$BASE_IMAGE")
 
           # Compute deterministic content hash of files affecting the container image and base image digest
           BUILD_HASH=$( (git ls-files -s Dockerfile .dockerignore package.json "bun.lock*" tsconfig.json src; echo "$BASE_DIGEST") | sha256sum | awk '{print substr($1, 1, 12)}')

@@ -217,13 +217,13 @@ export const userConfigs = sqliteTable(
 
 ## 5. Docker 배포 가이드
 
-### 5.1 Dockerfile (`oven/bun:1-alpine`)
+### 5.1 Dockerfile (`oven/bun:1.4.2-alpine`)
 
 Multi-stage 빌드를 통해 이미지 용량을 최소화하고 보안을 위해 `bun` 비루트 사용자로 구동합니다.
 
 ```dockerfile
 # Build Stage
-FROM oven/bun:1-alpine AS builder
+FROM oven/bun:1.4.2-alpine AS builder
 WORKDIR /app
 COPY package.json bun.lock* ./
 RUN bun install --frozen-lockfile
@@ -232,7 +232,7 @@ COPY src/ ./src/
 RUN bun build src/index.ts --outdir dist --target bun
 
 # Production Stage
-FROM oven/bun:1-alpine AS runner
+FROM oven/bun:1.4.2-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 COPY package.json bun.lock* ./
